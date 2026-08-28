@@ -1,0 +1,137 @@
+"""End-to-end ingestion against the real samples."""
+
+from __future__ import annotations
+
+import pandas as pd
+import pytest
+
+from app.db import crud
+from app.ingestion.pipeline import confirm_mapping, ingest_upload
+from app.storage import parquet_store
+from tests.conftest import ERA5_CSV, GEFS_CSV, find_sample
+
+
+def _slice_csv(src, tmp_path, n):
+    df = pd.read_csv(src, nrows=n)
+    dst = tmp_path / src.name
+    df.to_csv(dst, index=False)
+    return dst
+
+
+def _confirm_all(res):
+    return [
+        {"source_column": p["source_column"], "variable": p["suggested_variable"],
+         "value_type": p["suggested_value_type"], "unit_conversion": p["unit_conversion"]}
+        for p in res.mapping_proposals
+        if p["role"] == "measurement" and p["decision"] == "needs_confirmation"
+        and p["suggested_variable"]
+    ]
+
+
+def test_gefs_then_era5_ingest_and_join(session, tmp_path):
+    gefs = _slice_csv(GEFS_CSV, tmp_path, 4000)
+    era5 = _slice_csv(ERA5_CSV, tmp_path, 4000)
+
+    r1 = ingest_upload(session, gefs, gefs.name)
+    if r1.status == "pending_confirmation":
+        # dedupe collisions: keep first per (variable, value_type)
+        seen, conf = set(), []
+        for c in sorted(_confirm_all(r1), key=lambda x: x["source_column"]):
+            key = (c["variable"], c["value_type"])
+            if key not in seen:
+                seen.add(key); conf.append(c)
+        r1 = confirm_mapping(session, r1.batch_id, conf)
+    assert r1.status == "ingested"
+    assert r1.row_count_ingested > 0
+    assert "forecast" not in r1.canonical_variables_found  # it's a list of variables
+    assert r1.region_resolution_rate > 0.8
+
+    r2 = ingest_upload(session, era5, era5.name)
+    if r2.status == "pending_confirmation":
+        r2 = confirm_mapping(session, r2.batch_id, _confirm_all(r2))
+    assert r2.status == "ingested"
+
+    df = parquet_store.read_dataset(variables=["temperature_c"])
+    f = df[df.value_type == "forecast"]
+    o = df[df.value_type == "observed"][["region_id", "valid_date", "value"]]
+    joined = f.merge(o, on=["region_id", "valid_date"], suffixes=("_fc", "_obs"))
+    assert len(joined) > 100
+    err = (joined["value_fc"] - joined["value_obs"]).abs()
+    assert 0.2 < err.mean() < 8.0  # sane GEFS-vs-ERA5 2m-temp error band
+
+
+def test_forecast_rows_have_lead_and_init(session, tmp_path):
+    gefs = _slice_csv(GEFS_CSV, tmp_path, 2000)
+    r = ingest_upload(session, gefs, gefs.name)
+    if r.status == "pending_confirmation":
+        seen, conf = set(), []
+        for c in _confirm_all(r):
+            key = (c["variable"], c["value_type"])
+            if key not in seen:
+                seen.add(key); conf.append(c)
+        r = confirm_mapping(session, r.batch_id, conf)
+
+    df = parquet_store.read_dataset()
+    fc = df[df.value_type == "forecast"]
+    assert fc["lead_time_days"].between(1, 10).all()
+    assert fc["init_date"].notna().all()
+    assert (pd.to_datetime(fc["valid_date"]) > pd.to_datetime(fc["init_date"])).all()
+
+
+def test_reupload_hits_source_profile(session, tmp_path):
+    era5 = _slice_csv(ERA5_CSV, tmp_path, 1500)
+    r1 = ingest_upload(session, era5, era5.name)
+    if r1.status == "pending_confirmation":
+        r1 = confirm_mapping(session, r1.batch_id, _confirm_all(r1))
+    assert r1.status == "ingested"
+    assert len(crud.all_source_profiles(session)) == 1
+
+    r2 = ingest_upload(session, era5, era5.name)
+    assert r2.status == "ingested"          # auto-applied, no confirmation needed
+    assert r2.profile_match == "exact"
+    # both batches present, each its own partition
+    assert parquet_store.dataset_summary()["batches"] == 2
+
+
+def test_row_without_valid_date_is_skipped_not_dropped(session, tmp_path):
+    df = pd.DataFrame({
+        "region": ["Bihar", "Bihar", "Odisha", "Kerala"],
+        "valid_date": ["2019-06-01", None, "2019-06-03", "2019-06-04"],
+        "temp_c": [30.1, 29.4, 31.0, 28.7],
+        "data_type": ["observed", "observed", "observed", "observed"],
+    })
+    src = tmp_path / "tiny.csv"
+    df.to_csv(src, index=False)
+    r = ingest_upload(session, src, src.name)
+    if r.status == "pending_confirmation":
+        r = confirm_mapping(session, r.batch_id, _confirm_all(r))
+    assert r.status == "ingested"
+    assert r.row_count_ingested == 3           # the dateless row is not canonicalised
+    assert r.skipped_rows == 1
+    assert any("skipped" in n.lower() for n in r.notes)
+
+
+def test_power_monthly_ingests_as_monthly_grain(session):
+    path = find_sample("POWER_Regional_Monthly")
+    if path is None:
+        pytest.skip("no NASA POWER monthly file available")
+    r = ingest_upload(session, path, path.name)
+    if r.status == "pending_confirmation":
+        r = confirm_mapping(session, r.batch_id, _confirm_all(r))
+    assert r.status == "ingested"
+    df = parquet_store.read_dataset()
+    assert (df["grain"] == "monthly").all()
+    assert (pd.to_datetime(df["valid_date"]).dt.day == 1).all()
+
+
+def test_power_daily_doy_dates_and_gridded_resolution(session):
+    path = find_sample("POWER_Regional_Daily")
+    if path is None:
+        pytest.skip("no NASA POWER daily file available")
+    r = ingest_upload(session, path, path.name)
+    if r.status == "pending_confirmation":
+        r = confirm_mapping(session, r.batch_id, _confirm_all(r))
+    assert r.status == "ingested"
+    df = parquet_store.read_dataset(variables=["temperature_c"])
+    assert df["value_type"].eq("observed").all()
+    assert pd.to_datetime(df["valid_date"]).dt.year.between(2000, 2035).all()

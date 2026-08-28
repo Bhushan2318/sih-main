@@ -1,0 +1,26 @@
+# Backend
+backend/.venv/
+backend/__pycache__/
+backend/**/__pycache__/
+backend/*.db
+backend/data/raw_uploads/*
+backend/data/canonical/*
+backend/data/models/*
+!backend/data/raw_uploads/.gitkeep
+!backend/data/canonical/.gitkeep
+!backend/data/models/.gitkeep
+backend/.env
+
+# Sample data: keep the compact parquet + the fetch scripts as source of truth,
+# ignore the bulky CSV mirrors and the fetch checkpoint dir.
+backend/data/samples/*.csv
+backend/data/samples/_gefs_parts/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+
+# OS / editor
+.DS_Store
+*.swp

@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -s \"https://api.github.com/repos/Subhash9325/GeoJson-Data-of-Indian-States/contents/\")",
+      "Bash(python3 -c 'import json,sys *)",
+      "Bash(curl -s \"https://api.github.com/repos/udit-001/india-maps-data/contents/\")",
+      "Bash(curl -s \"https://api.github.com/repos/udit-001/india-maps-data/contents/geojson\")",
+      "Bash(curl -s \"https://api.github.com/repos/udit-001/india-maps-data/contents/topojson\")",
+      "Bash(curl -sL \"https://raw.githubusercontent.com/udit-001/india-maps-data/main/topojson/india.json\" -o /Users/bhushanananth/Desktop/sih-main/frontend/src/assets/geo/india_states.topojson)",
+      "Bash(python3 -c ' *)"
+    ]
+  }
+}

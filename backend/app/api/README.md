@@ -1,0 +1,77 @@
+# API surface
+
+Run it:
+
+```bash
+cd backend
+source .venv/bin/activate
+uvicorn app.main:app --reload --port 8000
+# interactive docs: http://localhost:8000/docs
+```
+
+## Endpoints
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/api/health` | liveness + whether a model exists |
+| `POST` | `/api/upload` | multipart file upload → ingest (+ background retrain) |
+| `POST` | `/api/upload/{batch_id}/confirm-mapping` | resolve ambiguous columns, then ingest |
+| `GET` | `/api/regions?lead_time_days=N` | choropleth payload: one row per region for lead day N |
+| `GET` | `/api/regions/{region_id}` | detail panel: per-variable series, bust curve, top factors |
+| `GET` | `/api/alerts?limit&risk_band` | medium/high-risk (region, lead) events, riskiest first |
+| `GET` | `/api/model/status` | what is trained, on how much data, and how well it scored |
+| `GET` | `/api/model/runs` | every persisted run id + the current one |
+| `WS` | `/ws` | typed events: `connected`, `upload_received`, `mapping_pending`, `training_started`, `training_complete`, `training_failed`, `new_alert` |
+
+## The honesty contract
+
+Every response distinguishes "no model / no data" from "a real number":
+
+- No trained model → `model_trained: false`, **empty** `regions` / `alerts` / `variables`,
+  and a `message` explaining what to do. Never a placeholder or example value.
+- A variable the model could not train (too few paired rows) → `available: false` with an
+  empty `points` list, and it is listed under `skipped_variables` in `/api/model/status`.
+- `top_factors` carries `top_factors_method` (`shap` or `feature_importance_fallback`), so
+  the UI never implies SHAP ran when it did not.
+- `analog_cases` is `[]` because similarity search is not implemented — it is empty rather
+  than invented.
+- `risk_band_definitions.basis` states that the bands are percentiles of the current run's
+  validation-split probabilities, not fixed cutoffs.
+- `/api/model/status.validation_metrics` reports which `split` each number came from,
+  preferring the held-out `test` split.
+
+## Upload → training lifecycle
+
+```
+POST /api/upload
+  ├─ columns all auto-accepted (or an exact SourceProfile match)
+  │    → 200 {status: "training_started"}  + BackgroundTask retrain
+  └─ anything ambiguous
+       → 200 {status: "pending_confirmation", mapping_proposals: [...]}
+         POST /api/upload/{batch_id}/confirm-mapping
+           → 200 {status: "training_started"} + BackgroundTask retrain
+
+WebSocket during a retrain:
+  upload_received → [mapping_pending] → training_started → training_complete | training_failed
+```
+
+Retraining is **full**, never warm-start, and runs against the whole accumulated canonical
+store. `data/models/current.json` is rewritten atomically and only after a run finishes
+completely, so a failed retrain leaves the previously-good model serving.
+
+A second upload while a retrain is running does not queue a duplicate — `run_retrain`
+holds a non-blocking lock and skips, and `/api/model/status.training_in_progress` reports it.
+
+## Frontend contract note
+
+WS payloads are intentionally small and carry no measurements. The frontend reacts to the
+**event name** by invalidating the matching TanStack Query keys (`['regions']`,
+`['regions', id]`, `['alerts']`, `['modelStatus']`) and refetching over REST — that keeps
+the socket and REST shapes decoupled.
+
+## Performance
+
+`/api/regions` and `/api/regions/{id}` are served from an in-process cache of the scored
+forecast cycle (~0.2 s warm; ~1.7 s on the first request after a retrain). The cache key is
+`(run_id, latest init_date, canonical row count)`, so it invalidates by itself when a
+retrain lands or new data is ingested.
