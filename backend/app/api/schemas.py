@@ -96,6 +96,21 @@ class RegionsResponse(Schema):
     available_lead_days: list = Field(default_factory=list)
 
 
+class AllRegionsResponse(Schema):
+    """Every lead day's map payload in one response. The cycle is scored once regardless,
+    so this costs no more to compute than a single day - it just saves the dashboard a
+    round-trip (and a loading flash) every time the lead-day selector moves."""
+
+    model_trained: bool
+    last_trained_at: Optional[datetime] = None
+    current_run_id: Optional[str] = None
+    init_date: Optional[date] = None
+    risk_band_definitions: dict = Field(default_factory=dict)
+    available_lead_days: list = Field(default_factory=list)
+    days: list = Field(default_factory=list)   # one RegionsResponse per lead day 1..10
+    message: Optional[str] = None
+
+
 class VariablePoint(Schema):
     lead_time_days: int
     valid_date: Optional[date] = None
@@ -188,4 +203,75 @@ class ModelStatusResponse(Schema):
     thresholds: dict = Field(default_factory=dict)
     explanation_method: Optional[str] = None
     websocket_clients: int = 0
+    message: Optional[str] = None
+
+
+# --------------------------------------------------------------------------- replay
+# Guided replay: step through one real historical forecast cycle lead day by lead day
+# and show how a bust developed. Every field is a scored number from that cycle or a
+# sentence generated from those numbers - nothing here is scripted or synthetic.
+
+
+class ReplayCycleSummary(Schema):
+    init_date: date
+    lead_days: list = Field(default_factory=list)
+    n_regions: int = 0
+    peak_bust_probability: Optional[float] = None
+    peak_lead_day: Optional[int] = None
+    peak_region_id: Optional[str] = None
+    peak_region_name: Optional[str] = None
+    n_high_regions_peak: int = 0
+    verified: bool = False                 # at least one lead day has an observed value
+    verified_lead_days: int = 0
+    peak_region_abs_error: Optional[float] = None   # realised |forecast - observed| on the dominant var
+    medium_range_growth: float = 0.0       # mean P(bust) days 4-10 minus days 1-3
+
+
+class ReplayRegionStep(Schema):
+    region_id: str
+    region_name: Optional[str] = None
+    bust_probability: float
+    risk_band: str
+    confidence: Optional[float] = None
+    dominant_variable: Optional[str] = None
+
+
+class ReplayLeadStep(Schema):
+    lead_time_days: int
+    valid_date: Optional[date] = None
+    regions: list = Field(default_factory=list)     # ReplayRegionStep, desc by bust probability
+    n_high: int = 0
+    n_medium: int = 0
+    mean_bust_probability: Optional[float] = None
+    narration: str = ""                             # generated from this step's real numbers
+
+
+class ReplayFocusPoint(Schema):
+    lead_time_days: int
+    valid_date: Optional[date] = None
+    predicted_value: Optional[float] = None
+    observed_value: Optional[float] = None
+    observed_status: Optional[str] = None
+    ensemble_spread: Optional[float] = None
+
+
+class ReplayFocusSeries(Schema):
+    region_id: str
+    region_name: Optional[str] = None
+    variable: str
+    unit: Optional[str] = None
+    bust_threshold: Optional[float] = None
+    points: list = Field(default_factory=list)
+
+
+class ReplayResponse(Schema):
+    model_trained: bool
+    current_run_id: Optional[str] = None
+    init_date: Optional[date] = None
+    available_cycles: list = Field(default_factory=list)    # ReplayCycleSummary, most demo-worthy first
+    steps: list = Field(default_factory=list)               # ReplayLeadStep, ascending lead day
+    focus: Optional[ReplayFocusSeries] = None               # charted region (peak region by default)
+    focus_options: list = Field(default_factory=list)       # ReplayFocusSeries for each worst-list region, so the UI can swap the chart
+    risk_band_definitions: dict = Field(default_factory=dict)
+    summary_narration: Optional[str] = None
     message: Optional[str] = None

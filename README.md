@@ -39,6 +39,11 @@ phased build order.
   them and trigger a retrain. `GET /api/ingest/status` reports real feed freshness, and
   the dashboard shows which cycle is actually loaded rather than implying "now". Off by
   default (`LIVE_INGEST_ENABLED`). See [`backend/app/live/README.md`](backend/app/live/README.md).
+- **Guided replay** — a "Replay a real bust" tab picks a historical forecast cycle where
+  a bust actually developed and steps through its lead days: the map recolours day by day
+  while a narration — assembled from that cycle's own scored numbers, nothing scripted —
+  explains which region climbed, by how much, and which variable drove it, alongside the
+  forecast-vs-observed trajectory for the variable that diverged most. `GET /api/replay`.
 
 Real sample data (`backend/data/samples/`, built by `backend/scripts/`) is NOAA GEFSv12
 reforecast (forecast) + ERA5 (observations), now joined by live operational cycles — no

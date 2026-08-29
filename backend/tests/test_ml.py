@@ -180,3 +180,78 @@ def _ingested_slice(request):
     yield
     Base.metadata.drop_all(engine)
     shutil.rmtree(parquet_store.CANONICAL_DIR, ignore_errors=True)
+
+
+# ------------------------------------------------------------------- guided replay
+# score_cycle can score any historical cycle, not just the latest, and replay_service
+# turns one into a narrated lead-day-by-lead-day walkthrough - every number scored from
+# that cycle, every sentence generated from those numbers.
+
+def test_score_cycle_targets_an_arbitrary_historical_init(_retrain):
+    from app.ml import inference
+
+    inference.invalidate_caches()
+    state = inference.load_model_state()
+    assert state is not None
+
+    cycles = inference.available_cycles()
+    assert len(cycles) >= 2, "the 8-cycle slice should expose several init dates"
+
+    latest = inference.score_cycle(state, None)
+    assert latest is not None
+    assert latest.init_date == max(cycles)
+
+    older = inference.score_cycle(state, cycles[-1])
+    assert older is not None
+    assert older.init_date == cycles[-1]
+    assert not older.events.empty
+    assert older.events["bust_probability"].between(0.0, 1.0).all()
+
+    # an init date that is not in the store yields nothing rather than a guess
+    missing = pd.Timestamp(cycles[0]) - pd.Timedelta(days=3650)
+    assert inference.score_cycle(state, missing) is None
+
+
+def test_replay_service_narrates_from_real_numbers(_retrain):
+    from app.services import replay_service
+
+    replay_service.invalidate()
+    cycles = replay_service.list_cycles()
+    assert cycles, "at least one scoreable cycle"
+    # verified cycles must rank ahead of unverified ones
+    verified_flags = [c.verified for c in cycles]
+    assert verified_flags == sorted(verified_flags, reverse=True)
+
+    rep = replay_service.get_replay()
+    assert rep.model_trained
+    assert rep.init_date is not None
+    assert 1 <= len(rep.steps) <= 10
+    assert rep.summary_narration and rep.summary_narration.strip()
+
+    leads = [s.lead_time_days for s in rep.steps]
+    assert leads == sorted(leads)
+    for s in rep.steps:
+        assert s.narration.startswith(f"Day {s.lead_time_days}")
+        assert s.regions, "each step lists its scored regions"
+        assert all(0.0 <= r.bust_probability <= 1.0 for r in s.regions)
+        # regions are ordered worst-first
+        probs = [r.bust_probability for r in s.regions]
+        assert probs == sorted(probs, reverse=True)
+
+    if rep.focus is not None:
+        assert rep.focus.variable != "wind_direction_deg"  # excluded: 0/360 wraparound
+        assert rep.focus.points
+        # the chart follows the screen: default focus is the cycle's peak-bust-risk region
+        peak_rid = max(
+            (r for s in rep.steps for r in s.regions), key=lambda r: r.bust_probability
+        ).region_id
+        assert rep.focus.region_id == peak_rid
+        # every worst-list region offered as a focus option resolves to a real series
+        assert rep.focus_options
+        assert all(o.points for o in rep.focus_options)
+        assert rep.focus.region_id in {o.region_id for o in rep.focus_options}
+        # a caller can pin the chart to another region
+        other = next((o.region_id for o in rep.focus_options if o.region_id != peak_rid), None)
+        if other:
+            pinned = replay_service.get_replay(str(rep.init_date), focus_region=other)
+            assert pinned.focus is not None and pinned.focus.region_id == other

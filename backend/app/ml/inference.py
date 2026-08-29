@@ -60,7 +60,8 @@ class ScoredCycle:
 
 _lock = threading.Lock()
 _state_cache: tuple | None = None      # (run_id, ModelState)
-_score_cache: tuple | None = None      # (cache_key, ScoredCycle)
+_score_cache: "dict[tuple, ScoredCycle]" = {}   # cache_key -> ScoredCycle (bounded)
+_SCORE_CACHE_MAX = 24                  # guided replay flips between many historical cycles
 
 
 def load_model_state(run_id: Optional[str] = None) -> Optional[ModelState]:
@@ -106,18 +107,67 @@ def load_model_state(run_id: Optional[str] = None) -> Optional[ModelState]:
 
 def invalidate_caches() -> None:
     """Called after a retrain or a new ingest."""
-    global _state_cache, _score_cache
+    global _state_cache
     with _lock:
         _state_cache = None
-        _score_cache = None
+        _score_cache.clear()
+    try:  # deferred: replay_service imports this module
+        from app.services import replay_service
+        replay_service.invalidate()
+    except Exception:  # noqa: BLE001 - never let cache cleanup break an ingest
+        pass
 
 
 def score_latest_cycle(state: Optional[ModelState] = None) -> Optional[ScoredCycle]:
     """Score every (region, lead day) of the most recent forecast cycle in the store."""
-    global _score_cache
+    return score_cycle(state, init_date=None)
+
+
+def available_cycles() -> list[pd.Timestamp]:
+    """Every forecast ``init_date`` in the canonical store, newest first. Drives the
+    guided-replay cycle picker."""
+    canonical = parquet_store.read_dataset(columns=["value_type", "init_date"])
+    if canonical.empty:
+        return []
+    fc = canonical[canonical["value_type"] == "forecast"]
+    if fc.empty:
+        return []
+    return sorted(pd.to_datetime(fc["init_date"]).dropna().unique(), reverse=True)
+
+
+def score_cycle(
+    state: Optional[ModelState] = None,
+    init_date: "Optional[pd.Timestamp | str]" = None,
+) -> Optional[ScoredCycle]:
+    """Score every (region, lead day) of one forecast cycle.
+
+    ``init_date=None`` scores the most recent cycle in the store (the live-dashboard
+    path). Passing an explicit ``init_date`` scores that historical cycle instead - the
+    guided replay steps through such a cycle lead day by lead day. Results are memoised
+    per (run_id, init_date, store fingerprint), and the cache is probed *before* the
+    parquet read so a warm call is essentially free - the dashboard leans on this for
+    every lead-day switch.
+    """
     state = state or load_model_state()
     if state is None:
         return None
+
+    # Resolve the target init and probe the cache without touching the row data. The
+    # fingerprint is dir names + mtimes; latest_forecast_init_date reads one column.
+    fp = parquet_store.store_fingerprint()
+    if init_date is None:
+        latest = parquet_store.latest_forecast_init_date()
+        if latest is None:
+            return None
+        target_init = pd.Timestamp(latest).normalize()
+    else:
+        target_init = pd.Timestamp(init_date).normalize()
+
+    cache_key = (state.run_id, str(target_init), fp)
+    with _lock:
+        hit = _score_cache.get(cache_key)
+        if hit is not None:
+            return hit
 
     canonical = parquet_store.read_dataset()
     if canonical.empty:
@@ -125,17 +175,14 @@ def score_latest_cycle(state: Optional[ModelState] = None) -> Optional[ScoredCyc
     fc_rows = canonical[canonical["value_type"] == "forecast"]
     if fc_rows.empty:
         return None
-
-    latest_init = pd.to_datetime(fc_rows["init_date"]).max()
-    cache_key = (state.run_id, str(latest_init), len(canonical))
-    with _lock:
-        if _score_cache and _score_cache[0] == cache_key:
-            return _score_cache[1]
+    inits = pd.to_datetime(fc_rows["init_date"])
+    if init_date is not None and not (inits.dt.normalize() == target_init).any():
+        return None
 
     # Keep the target cycle plus every observation, so features that look back at earlier
     # valid_dates (rate-of-change, verified error lag) can still be computed.
     keep = ((canonical["value_type"] == "forecast")
-            & (pd.to_datetime(canonical["init_date"]) == latest_init)) \
+            & (pd.to_datetime(canonical["init_date"]).dt.normalize() == target_init)) \
         | (canonical["value_type"] == "observed")
     # pd.DataFrame(...) pins the type: boolean-mask indexing is typed as Series | DataFrame
     # by the pandas stubs. Runtime no-op - build_training_frame copies its argument anyway.
@@ -179,13 +226,15 @@ def score_latest_cycle(state: Optional[ModelState] = None) -> Optional[ScoredCyc
 
     result = ScoredCycle(
         run_id=state.run_id,
-        init_date=latest_init,
+        init_date=target_init,
         events=events,
         per_variable=per_variable,
         n_rows_scored=len(scored),
     )
     with _lock:
-        _score_cache = (cache_key, result)
+        if len(_score_cache) >= _SCORE_CACHE_MAX:
+            _score_cache.pop(next(iter(_score_cache)))   # drop oldest insert
+        _score_cache[cache_key] = result
     return result
 
 

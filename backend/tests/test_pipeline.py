@@ -75,7 +75,11 @@ def test_forecast_rows_have_lead_and_init(session, tmp_path):
     fc = df[df.value_type == "forecast"]
     assert fc["lead_time_days"].between(1, 10).all()
     assert fc["init_date"].notna().all()
-    assert (pd.to_datetime(fc["valid_date"]) > pd.to_datetime(fc["init_date"])).all()
+    # valid_date = init_date + (lead - 1): lead day 1 is the init day itself (equal, not
+    # strictly after), lead day k is k-1 days later. See test_live.py's dedicated check
+    # and scripts/fix_forecast_valid_date_offset.py for why the -1 is load-bearing.
+    offset_days = (pd.to_datetime(fc["valid_date"]) - pd.to_datetime(fc["init_date"])).dt.days
+    assert (offset_days == fc["lead_time_days"] - 1).all()
 
 
 def test_reupload_hits_source_profile(session, tmp_path):

@@ -100,6 +100,20 @@ def drop_batch(batch_id: str) -> None:
         shutil.rmtree(part_dir)
 
 
+def store_fingerprint() -> str:
+    """A cheap change-token for the canonical store: sorted partition-dir names plus their
+    mtimes, no data read. Lets callers key a cache without a multi-hundred-ms parquet
+    scan just to notice nothing changed."""
+    if not CANONICAL_DIR.exists():
+        return "empty"
+    parts = sorted(
+        f"{p.name}:{int(p.stat().st_mtime_ns)}"
+        for p in CANONICAL_DIR.glob("batch_id=*")
+        if p.is_dir()
+    )
+    return "|".join(parts) if parts else "empty"
+
+
 def _dataset() -> ds.Dataset | None:
     if not CANONICAL_DIR.exists() or not any(CANONICAL_DIR.glob("batch_id=*/*.parquet")):
         return None
