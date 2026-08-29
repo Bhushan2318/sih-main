@@ -253,6 +253,26 @@ def test_regions_served_from_real_model(trained_client):
     assert body["risk_band_definitions"]["basis"]
 
 
+def test_regions_all_matches_per_day_and_covers_1_to_10(trained_client):
+    """The all-days endpoint must return exactly what the per-day endpoint does for each
+    lead day - it is the dashboard's only regions call, so any drift is a visible bug."""
+    all_body = trained_client.get("/api/regions/all").json()
+    assert all_body["model_trained"] is True
+    days = all_body["days"]
+    assert [d["lead_time_days"] for d in days] == list(range(1, 11))
+
+    for d in days:
+        single = trained_client.get(f"/api/regions?lead_time_days={d['lead_time_days']}").json()
+        assert [r["region_id"] for r in d["regions"]] == [r["region_id"] for r in single["regions"]]
+        assert [r["bust_probability"] for r in d["regions"]] == [
+            r["bust_probability"] for r in single["regions"]
+        ]
+        assert d["valid_date"] == single["valid_date"]
+
+    # 'all' must not be captured by the /{region_id} route
+    assert trained_client.get("/api/regions/all").status_code == 200
+
+
 def test_region_detail_served_from_real_model(trained_client):
     regions = trained_client.get("/api/regions?lead_time_days=1").json()["regions"]
     rid = regions[0]["region_id"]

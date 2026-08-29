@@ -19,6 +19,12 @@ def list_regions(
     return region_service.get_regions(lead_time_days)
 
 
+@router.get("/all", response_model=schemas.AllRegionsResponse)
+def list_regions_all_lead_days() -> schemas.AllRegionsResponse:
+    """All 10 lead days at once - lets the dashboard switch lead day with no request."""
+    return region_service.get_all_regions()
+
+
 @router.get("/{region_id}", response_model=schemas.RegionDetailResponse)
 def region_detail(region_id: str) -> schemas.RegionDetailResponse:
     if india_state_codes.resolve_by_region_id(region_id) is None:

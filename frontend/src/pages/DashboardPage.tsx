@@ -10,27 +10,33 @@ import { EmptyState, ErrorState, LoadingState } from "../components/common/State
 import { IndiaChoroplethMap, loadTopology } from "../components/map/IndiaChoroplethMap";
 import { LeadDaySelector } from "../components/map/LeadDaySelector";
 import { MapLegend } from "../components/map/MapLegend";
+import { ReplayView } from "../components/replay/ReplayView";
 import { UploadPanel } from "../components/upload/UploadPanel";
-import { useModelStatus, useRegions } from "../hooks/useDashboardData";
+import { useAllRegions, useModelStatus } from "../hooks/useDashboardData";
 import { useLiveSocket } from "../hooks/useLiveSocket";
 
 export function DashboardPage() {
   useLiveSocket();
 
+  const [view, setView] = useState<"live" | "replay">("live");
   const [leadDay, setLeadDay] = useState(1);
   const [selectedRegion, setSelectedRegion] = useState<string | null>(null);
   const [alertFilter, setAlertFilter] = useState<RiskBand | undefined>(undefined);
   const [topology, setTopology] = useState<Topology | null>(null);
   const [topoError, setTopoError] = useState<unknown>(null);
 
-  const regionsQuery = useRegions(leadDay);
+  const regionsQuery = useAllRegions();
   const statusQuery = useModelStatus();
 
   useEffect(() => {
     loadTopology().then(setTopology).catch(setTopoError);
   }, []);
 
-  const regions = regionsQuery.data;
+  // All 10 lead days arrive in one payload; picking the current one is a local lookup, so
+  // moving the lead-day selector never triggers a request or a loading state.
+  const allRegions = regionsQuery.data;
+  const regions =
+    allRegions?.days.find((d) => d.lead_time_days === leadDay) ?? allRegions?.days[0];
   const riskCuts = statusQuery.data?.thresholds?.risk_band_cuts;
 
   // A 06/12/18 UTC cycle has no day-1 forecast, so the default lead day can point at
@@ -53,16 +59,43 @@ export function DashboardPage() {
             Medium-range forecast bust detection · SIH 2026 PS 26079 (NCMRWF)
           </p>
         </div>
-        {regions?.model_trained && regions.init_date ? (
-          <p className="muted small">
-            Forecast cycle <b>{regions.init_date}</b>
-            {regions.valid_date ? ` → valid ${regions.valid_date}` : ""}
-          </p>
-        ) : null}
+        <div className="app__headright">
+          {view === "live" && regions?.model_trained && regions.init_date ? (
+            <p className="muted small">
+              Forecast cycle <b>{regions.init_date}</b>
+              {regions.valid_date ? ` → valid ${regions.valid_date}` : ""}
+            </p>
+          ) : null}
+          <div className="viewtabs" role="tablist" aria-label="View">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={view === "live"}
+              className={view === "live" ? "viewtab is-active" : "viewtab"}
+              onClick={() => setView("live")}
+            >
+              Live
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={view === "replay"}
+              className={view === "replay" ? "viewtab is-active" : "viewtab"}
+              onClick={() => setView("replay")}
+            >
+              Replay a real bust
+            </button>
+          </div>
+        </div>
       </header>
 
-      <FeedFreshness />
+      {view === "live" ? <FeedFreshness /> : null}
 
+      {view === "replay" ? (
+        <main className="app__body app__body--replay">
+          <ReplayView topology={topology} />
+        </main>
+      ) : (
       <main className="app__body">
         <section className="map-column">
           <div className="map-toolbar">
@@ -124,6 +157,7 @@ export function DashboardPage() {
           riskCuts={riskCuts}
         />
       </main>
+      )}
     </div>
   );
 }

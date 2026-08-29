@@ -2,7 +2,8 @@ import { useQuery } from "@tanstack/react-query";
 import { fetchAlerts } from "../api/alerts";
 import { fetchIngestStatus } from "../api/ingest";
 import { fetchModelStatus } from "../api/modelStatus";
-import { fetchRegionDetail, fetchRegions } from "../api/regions";
+import { fetchAllRegions, fetchRegionDetail, fetchRegions } from "../api/regions";
+import { fetchReplay, fetchReplayCycles } from "../api/replay";
 import type { RiskBand } from "../api/types";
 
 // A retrain lands via the WebSocket, so polling is only a safety net for a missed frame.
@@ -13,6 +14,17 @@ export const useRegions = (leadTimeDays: number) =>
     queryKey: ["regions", leadTimeDays],
     queryFn: () => fetchRegions(leadTimeDays),
     refetchInterval: SAFETY_REFETCH_MS,
+  });
+
+// All 10 lead days in one payload so the lead-day selector switches with zero requests.
+// A scored cycle only changes on retrain / ingest, and the WebSocket invalidates
+// ["regions"] then - so there is nothing to poll for and staleTime can be generous.
+export const useAllRegions = () =>
+  useQuery({
+    queryKey: ["regions", "all"],
+    queryFn: fetchAllRegions,
+    staleTime: 5 * 60_000,
+    refetchInterval: 5 * 60_000,
   });
 
 export const useRegionDetail = (regionId: string | null) =>
@@ -34,6 +46,24 @@ export const useModelStatus = () =>
     queryKey: ["modelStatus"],
     queryFn: fetchModelStatus,
     refetchInterval: SAFETY_REFETCH_MS,
+  });
+
+// Guided replay. A cycle's scored numbers never change unless the model is retrained, so
+// there is nothing to poll - the WebSocket retrain event invalidates the cache instead.
+export const useReplayCycles = (enabled: boolean) =>
+  useQuery({
+    queryKey: ["replay", "cycles"],
+    queryFn: fetchReplayCycles,
+    enabled,
+    staleTime: Infinity,
+  });
+
+export const useReplay = (initDate: string | undefined, enabled: boolean) =>
+  useQuery({
+    queryKey: ["replay", initDate ?? "default"],
+    queryFn: () => fetchReplay(initDate),
+    enabled,
+    staleTime: Infinity,
   });
 
 // Feed freshness. Polled a little faster than the rest: a cycle landing is the one change

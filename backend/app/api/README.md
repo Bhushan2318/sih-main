@@ -27,6 +27,8 @@ uvicorn app.main:app --reload --port 8000
 | `GET` | `/api/alerts?limit&risk_band` | medium/high-risk (region, lead) events, riskiest first |
 | `GET` | `/api/model/status` | what is trained, on how much data, and how well it scored |
 | `GET` | `/api/model/runs` | every persisted run id + the current one |
+| `GET` | `/api/replay/cycles` | every scoreable forecast cycle, most demo-worthy (a real verified bust that grows into the medium range) first |
+| `GET` | `/api/replay?init_date=YYYY-MM-DD` | guided replay of one cycle: per lead-day region scores + a narration string generated from those numbers, plus the one variable that diverged most. Omit `init_date` for the top-ranked cycle |
 | `WS` | `/ws` | typed events: `connected`, `upload_received`, `mapping_pending`, `training_started`, `training_complete`, `training_failed`, `new_alert` |
 
 ## The honesty contract
@@ -41,6 +43,10 @@ Every response distinguishes "no model / no data" from "a real number":
   the UI never implies SHAP ran when it did not.
 - `analog_cases` is `[]` because similarity search is not implemented — it is empty rather
   than invented.
+- `/api/replay` narration strings are assembled from the cycle's own scored numbers
+  (which region climbed, by how much, its dominant variable, how many crossed into
+  `high`). Nothing is scripted; an unverified cycle says so rather than showing an
+  observed line.
 - `risk_band_definitions.basis` states that the bands are percentiles of the current run's
   validation-split probabilities, not fixed cutoffs.
 - `/api/model/status.validation_metrics` reports which `split` each number came from,
@@ -79,8 +85,13 @@ the socket and REST shapes decoupled.
 
 `/api/regions` and `/api/regions/{id}` are served from an in-process cache of the scored
 forecast cycle (~0.2 s warm; ~1.7 s on the first request after a retrain). The cache key is
-`(run_id, latest init_date, canonical row count)`, so it invalidates by itself when a
-retrain lands or new data is ingested.
+`(run_id, init_date, canonical row count)`, so it invalidates by itself when a retrain
+lands or new data is ingested. The cache holds the last ~24 scored cycles, so guided
+replay flipping between historical cycles stays warm.
+
+`/api/replay/cycles` scores every historical cycle once to rank them (~1–2 min the first
+time), so the app warms it in a background thread at startup — the endpoint is instant by
+the time anyone opens the replay tab. `/api/replay` for a single cycle is ~2 s cold.
 
 ## Live ingestion (Phase 6)
 

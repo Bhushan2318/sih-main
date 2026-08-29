@@ -42,12 +42,14 @@ export function VariableTrajectoryChart({ series }: { series: VariableSeries }) 
             formatter={(v: number) => (v == null ? "—" : `${formatTick(v)}${series.unit ? ` ${series.unit}` : ""}`)}
           />
           <Legend />
-          <Line type="monotone" dataKey="forecast" name="Forecast (ens. mean)" strokeWidth={2} dot={{ r: 2 }} />
+          <Line type="monotone" dataKey="forecast" name="Forecast (ens. mean)"
+                stroke="#2f6fb0" strokeWidth={2} dot={{ r: 2 }} />
           {anyObserved ? (
-            <Line type="monotone" dataKey="observed" name="Observed" strokeWidth={2}
-                  strokeDasharray="5 4" dot={{ r: 2 }} connectNulls={false} />
+            <Line type="monotone" dataKey="observed" name="Observed"
+                  stroke="#111827" strokeWidth={2} strokeDasharray="6 4" dot={{ r: 2 }} connectNulls={false} />
           ) : null}
-          <Line type="monotone" dataKey="error" name="Predicted |error|" strokeWidth={1.5} dot={false} />
+          <Line type="monotone" dataKey="error" name="Predicted |error|"
+                stroke="#cf5c46" strokeWidth={1.5} dot={false} />
         </LineChart>
       </ResponsiveContainer>
       {series.unit ? <p className="muted small axis-unit">Values in {series.unit}</p> : null}

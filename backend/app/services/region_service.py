@@ -65,24 +65,23 @@ def _risk_band_definitions(state) -> dict:
 
 # --------------------------------------------------------------------------- map view
 
-def get_regions(lead_time_days: int) -> schemas.RegionsResponse:
-    state = inference.load_model_state()
-    if state is None:
-        return schemas.RegionsResponse(
-            lead_time_days=lead_time_days, model_trained=False,
-            regions=[], message=NOT_TRAINED_MSG,
-        )
+def _not_trained_day(lead_time_days: int) -> schemas.RegionsResponse:
+    return schemas.RegionsResponse(
+        lead_time_days=lead_time_days, model_trained=False,
+        regions=[], message=NOT_TRAINED_MSG,
+    )
 
-    scored = inference.score_latest_cycle(state)
-    if scored is None or scored.events.empty:
-        return schemas.RegionsResponse(
-            lead_time_days=lead_time_days, model_trained=True,
-            current_run_id=state.run_id, last_trained_at=_last_trained_at(),
-            regions=[], message=NO_SCORE_MSG,
-        )
 
-    available = sorted(int(d) for d in scored.events["lead_time_days"].dropna().unique())
+def _no_score_day(state, lead_time_days: int) -> schemas.RegionsResponse:
+    return schemas.RegionsResponse(
+        lead_time_days=lead_time_days, model_trained=True,
+        current_run_id=state.run_id, last_trained_at=_last_trained_at(),
+        regions=[], message=NO_SCORE_MSG,
+    )
 
+
+def _day_response(state, scored, available: list, lead_time_days: int) -> schemas.RegionsResponse:
+    """One lead day's map payload from an already-scored cycle - no scoring, no I/O."""
     ev = scored.events[scored.events["lead_time_days"] == lead_time_days]
     if ev.empty:
         # Say which days this cycle does cover rather than only what it lacks: a 06/12/18Z
@@ -126,6 +125,49 @@ def get_regions(lead_time_days: int) -> schemas.RegionsResponse:
         risk_band_definitions=_risk_band_definitions(state),
         regions=regions,
         available_lead_days=available,
+    )
+
+
+def _available_leads(scored) -> list:
+    return sorted(int(d) for d in scored.events["lead_time_days"].dropna().unique())
+
+
+def get_regions(lead_time_days: int) -> schemas.RegionsResponse:
+    state = inference.load_model_state()
+    if state is None:
+        return _not_trained_day(lead_time_days)
+    scored = inference.score_latest_cycle(state)
+    if scored is None or scored.events.empty:
+        return _no_score_day(state, lead_time_days)
+    return _day_response(state, scored, _available_leads(scored), lead_time_days)
+
+
+def get_all_regions() -> schemas.AllRegionsResponse:
+    """Every lead day 1-10 in one payload. The cycle is scored exactly once; each day is
+    then a pure filter over that result, so the dashboard's lead-day selector needs no
+    request and shows no loading state after the first load."""
+    state = inference.load_model_state()
+    if state is None:
+        return schemas.AllRegionsResponse(
+            model_trained=False, message=NOT_TRAINED_MSG,
+            days=[_not_trained_day(d) for d in range(1, 11)],
+        )
+    scored = inference.score_latest_cycle(state)
+    if scored is None or scored.events.empty:
+        return schemas.AllRegionsResponse(
+            model_trained=True, current_run_id=state.run_id,
+            last_trained_at=_last_trained_at(), message=NO_SCORE_MSG,
+            days=[_no_score_day(state, d) for d in range(1, 11)],
+        )
+    available = _available_leads(scored)
+    return schemas.AllRegionsResponse(
+        model_trained=True,
+        current_run_id=state.run_id,
+        last_trained_at=_last_trained_at(),
+        init_date=scored.init_date.date(),
+        risk_band_definitions=_risk_band_definitions(state),
+        available_lead_days=available,
+        days=[_day_response(state, scored, available, d) for d in range(1, 11)],
     )
 
 
