@@ -12,12 +12,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routers import alerts, ingest, model_status, regions, upload, ws
+from app.api.routers import alerts, ingest, model_status, regions, replay, upload, ws
 from app.config import settings
 from app.db.base import init_db
 from app.ml import registry
@@ -40,6 +41,20 @@ async def lifespan(_app: FastAPI):
         log.exception("geo index failed to build; region resolution will degrade")
 
     log.info("current model run: %s", registry.current_run_id() or "none (no model trained yet)")
+
+    # Guided replay scores every historical cycle once and memoises the ranking; that is
+    # ~1-2 min of XGBoost the first time. Warm it off the request path so the first
+    # /api/replay/cycles call is instant. No model -> nothing to warm.
+    if registry.current_run_id():
+        def _warm_replay() -> None:
+            try:
+                from app.services import replay_service
+                n = len(replay_service.list_cycles())
+                log.info("guided-replay cache warm: %d cycles ranked", n)
+            except Exception:  # noqa: BLE001
+                log.exception("guided-replay warm failed (endpoint still works, just cold)")
+
+        threading.Thread(target=_warm_replay, name="replay-warm", daemon=True).start()
 
     # Live ingestion is opt-in (LIVE_INGEST_ENABLED); start() is a no-op when it is off,
     # so a fresh clone never reaches out to NOAA just by running the server.
@@ -75,6 +90,7 @@ app.include_router(regions.router)
 app.include_router(alerts.router)
 app.include_router(model_status.router)
 app.include_router(ingest.router)
+app.include_router(replay.router)
 app.include_router(ws.router)
 
 

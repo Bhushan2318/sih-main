@@ -66,6 +66,17 @@ export interface RegionsResponse {
   available_lead_days: number[];
 }
 
+export interface AllRegionsResponse {
+  model_trained: boolean;
+  last_trained_at: string | null;
+  current_run_id: string | null;
+  init_date: string | null;
+  risk_band_definitions: Record<string, string>;
+  available_lead_days: number[];
+  days: RegionsResponse[]; // one per lead day 1..10
+  message: string | null;
+}
+
 export interface VariablePoint {
   lead_time_days: number;
   valid_date: string | null;
@@ -222,4 +233,75 @@ export interface IngestStatus {
     last_tick: string | null;
     next_tick: string | null;
   };
+}
+
+
+// --------------------------------------------------------------------------- replay
+// Mirrors backend/app/api/schemas.py replay models. Guided replay steps through one real
+// historical forecast cycle; every value is scored from that cycle, every narration
+// string is generated from those values.
+
+export interface ReplayCycleSummary {
+  init_date: string;
+  lead_days: number[];
+  n_regions: number;
+  peak_bust_probability: number | null;
+  peak_lead_day: number | null;
+  peak_region_id: string | null;
+  peak_region_name: string | null;
+  n_high_regions_peak: number;
+  verified: boolean;
+  verified_lead_days: number;
+  peak_region_abs_error: number | null;
+  medium_range_growth: number;
+}
+
+export interface ReplayRegionStep {
+  region_id: string;
+  region_name: string | null;
+  bust_probability: number;
+  risk_band: RiskBand;
+  confidence: number | null;
+  dominant_variable: string | null;
+}
+
+export interface ReplayLeadStep {
+  lead_time_days: number;
+  valid_date: string | null;
+  regions: ReplayRegionStep[];
+  n_high: number;
+  n_medium: number;
+  mean_bust_probability: number | null;
+  narration: string;
+}
+
+export interface ReplayFocusPoint {
+  lead_time_days: number;
+  valid_date: string | null;
+  predicted_value: number | null;
+  observed_value: number | null;
+  observed_status: "final" | "provisional" | null;
+  ensemble_spread: number | null;
+}
+
+export interface ReplayFocusSeries {
+  region_id: string;
+  region_name: string | null;
+  variable: string;
+  unit: string | null;
+  bust_threshold: number | null;
+  points: ReplayFocusPoint[];
+}
+
+export interface ReplayResponse {
+  model_trained: boolean;
+  current_run_id: string | null;
+  init_date: string | null;
+  available_cycles: ReplayCycleSummary[];
+  steps: ReplayLeadStep[];
+  focus: ReplayFocusSeries | null;
+  focus_options: ReplayFocusSeries[];
+  risk_band_definitions: Record<string, string>;
+  summary_narration: string | null;
+  message: string | null;
 }
