@@ -11,6 +11,16 @@ backend/data/models/*
 !backend/data/models/.gitkeep
 backend/.env
 
+# Live ingestion (Phase 6): fetched cycles and observation pulls are reproducible from
+# app/live/ against the public NOAA and Open-Meteo endpoints, so the CSVs are build
+# output, not source. Same for the scratch dir GRIB messages are decoded in.
+backend/data/live/
+backend/data/_live_scratch/
+
+# Timestamped safety copies written by scripts/fix_forecast_valid_date_offset.py before
+# it rewrites partitions in place.
+backend/data/canonical_backup_*/
+
 # Sample data: keep the compact parquet + the fetch scripts as source of truth,
 # ignore the bulky CSV mirrors and the fetch checkpoint dir.
 backend/data/samples/*.csv
@@ -20,6 +30,8 @@ backend/data/samples/_gefs_parts/
 frontend/node_modules/
 frontend/dist/
 frontend/.env
+# incremental-build cache: machine-specific, churns on every build
+frontend/tsconfig.tsbuildinfo
 
 # OS / editor
 .DS_Store

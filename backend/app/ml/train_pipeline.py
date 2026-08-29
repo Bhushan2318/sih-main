@@ -76,7 +76,11 @@ def full_retrain(triggered_by_batch_id: str | None = None, make_current: bool = 
     report = TrainReport(run_id=run_id, status="failed")
 
     try:
-        canonical = parquet_store.read_dataset()
+        # Provisional (near-real-time) observations are deliberately withheld from
+        # training: the models measure error against ERA5, and verifying against a
+        # different product shifts both the error and the bust label derived from it.
+        # They are still served to the dashboard, badged as provisional.
+        canonical = parquet_store.read_dataset(exclude_provisional=True)
         report.data_rows = len(canonical)
         if canonical.empty or "forecast" not in set(canonical["value_type"].unique()):
             report.status = "no_data"

@@ -90,6 +90,10 @@ class RegionsResponse(Schema):
     risk_band_definitions: dict = Field(default_factory=dict)
     regions: list = Field(default_factory=list)
     message: Optional[str] = None
+    # Which lead days the current cycle actually covers. A 00Z run covers 1-10, but a
+    # 06/12/18Z run cannot produce a whole-calendar-day forecast for its own init day, so
+    # it starts at day 2. The dashboard reads this instead of assuming day 1 exists.
+    available_lead_days: list = Field(default_factory=list)
 
 
 class VariablePoint(Schema):
@@ -97,6 +101,9 @@ class VariablePoint(Schema):
     valid_date: Optional[date] = None
     predicted_value: Optional[float] = None
     observed_value: Optional[float] = None
+    # "final" (ERA5, what the models were trained against), "provisional" (near-real-time,
+    # subject to revision) or None when nothing has verified this lead yet.
+    observed_status: Optional[str] = None
     predicted_error: Optional[float] = None
     confidence: Optional[float] = None
     ensemble_spread: Optional[float] = None

@@ -51,6 +51,7 @@ ARROW_SCHEMA = pa.schema(
         ("ingested_at", pa.timestamp("us")),
         ("grain", pa.string()),
         ("region_resolution_method", pa.string()),
+        ("verification_status", pa.string()),
     ]
 )
 
@@ -102,29 +103,171 @@ def drop_batch(batch_id: str) -> None:
 def _dataset() -> ds.Dataset | None:
     if not CANONICAL_DIR.exists() or not any(CANONICAL_DIR.glob("batch_id=*/*.parquet")):
         return None
-    return ds.dataset(CANONICAL_DIR, format="parquet", partitioning="hive")
+    # Partitions written before a schema addition simply lack the newer columns; giving
+    # pyarrow the explicit schema makes those read back as null instead of failing on a
+    # schema mismatch between partitions.
+    schema = ARROW_SCHEMA.append(pa.field("batch_id", pa.string()))
+    return ds.dataset(CANONICAL_DIR, format="parquet", partitioning="hive", schema=schema)
+
+
+# Identity of a single reading. Two rows sharing this key are the same measurement, so a
+# later ingest of it is a revision (provisional observation superseded by final ERA5, or
+# a forecast cycle re-pulled) rather than an additional data point.
+#
+# source_column is part of the identity on purpose. A file can legitimately map two
+# different columns onto one canonical variable - both ERA5 and GEFS carry mslp_hpa AND
+# psfc_hpa - and those are two distinct measurements, not a duplicate. Without this,
+# deduplication would silently keep one and discard the other. Resolving that ambiguity
+# belongs to the schema mapper, which already routes such collisions to confirmation.
+#
+# The trade-off: the same data re-uploaded under DIFFERENT column names is not recognised
+# as a repeat. That is accepted - every path that needs revision semantics (the live
+# observation tiers, a re-pulled cycle) emits identical headers each time.
+_DEDUPE_KEY = [
+    "region_id", "valid_date", "variable", "value_type",
+    "init_date", "lead_time_days", "ensemble_member_id", "source_column",
+]
+
+
+def _dedupe(df: pd.DataFrame) -> pd.DataFrame:
+    """Collapse superseded rows, keeping the most authoritative version of each reading.
+
+    Batches are separate partitions, so re-ingesting a day's observations adds rows
+    rather than replacing them. Left alone, a provisional and a final observation for the
+    same (region, date, variable) would BOTH survive and the forecast/observation merge in
+    feature engineering would double every matching forecast row. Precedence is
+    final > provisional, then most recently ingested.
+    """
+    if df.empty or not set(_DEDUPE_KEY).issubset(df.columns):
+        return df
+
+    rank = (
+        (df["verification_status"] != "provisional").astype(int)
+        if "verification_status" in df.columns
+        else pd.Series(1, index=df.index)
+    )
+    order = pd.to_datetime(df.get("ingested_at"), errors="coerce")
+
+    # Sort so the winner of each group is its last row, then take that row per group.
+    tmp = df.assign(_rank=rank, _order=order).sort_values(
+        ["_rank", "_order"], kind="mergesort"
+    )
+
+    # NaN never compares equal to itself, so a key column that is null for a whole class
+    # of rows (observations carry no init_date, lead_time_days or member) would put every
+    # such row in its own group and defeat deduplication entirely. Substitute a sentinel
+    # for grouping only. Keys are built from `tmp` so they cannot mis-align with it.
+    keys = []
+    for col in _DEDUPE_KEY:
+        s = tmp[col]
+        if col == "region_id":
+            # A null region_id means the point never resolved to a state - it does NOT
+            # mean two such rows are the same reading. Falling back to the sentinel here
+            # would merge genuinely different cities into one row and silently lose data,
+            # so unresolved rows are identified by their coordinates instead.
+            s = s.astype(object).where(
+                s.notna(),
+                tmp["lat"].astype(str) + "," + tmp["lon"].astype(str),
+            )
+        keys.append(s.astype(object).where(s.notna(), "\x00"))
+
+    deduped = tmp.groupby(keys, sort=False, dropna=False).tail(1)
+    return deduped.drop(columns=["_rank", "_order"]).sort_index()
 
 
 def read_dataset(
     variables: Sequence[str] | None = None,
     value_types: Sequence[str] | None = None,
     columns: Sequence[str] | None = None,
+    init_dates: Sequence | None = None,
+    valid_date_min: date | None = None,
+    exclude_provisional: bool = False,
+    dedupe: bool = True,
 ) -> pd.DataFrame:
     """Read the accumulated canonical dataset, optionally filtered. Empty DataFrame with
-    the right columns if nothing has been ingested yet."""
+    the right columns if nothing has been ingested yet.
+
+    `exclude_provisional` drops near-real-time observations that have not yet been
+    replaced by ERA5 - training uses it so the models keep learning against the same
+    baseline they were built on.
+    """
     dataset = _dataset()
     if dataset is None:
         return pd.DataFrame(columns=list(CANONICAL_COLUMNS))
 
     filt = None
-    if variables:
-        filt = ds.field("variable").isin(list(variables))
-    if value_types:
-        vt = ds.field("value_type").isin(list(value_types))
-        filt = vt if filt is None else (filt & vt)
 
-    table = dataset.to_table(filter=filt, columns=list(columns) if columns else None)
-    return table.to_pandas()
+    def _and(expr):
+        nonlocal filt
+        filt = expr if filt is None else (filt & expr)
+
+    if variables:
+        _and(ds.field("variable").isin(list(variables)))
+    if value_types:
+        _and(ds.field("value_type").isin(list(value_types)))
+    if init_dates:
+        _and(ds.field("init_date").isin([_as_date(d) for d in init_dates]))
+    if valid_date_min is not None:
+        _and(ds.field("valid_date") >= _as_date(valid_date_min))
+    if exclude_provisional:
+        # None (legacy / not applicable) must survive - only an explicit provisional goes.
+        # `field != "provisional"` alone is NOT enough: in Arrow, as in SQL, comparing a
+        # null yields null rather than true, so a bare inequality silently discards every
+        # legacy row. The is_null() arm is what keeps them.
+        _and(ds.field("verification_status").is_null()
+             | (ds.field("verification_status") != "provisional"))
+
+    # Deduplication needs the key columns even if the caller asked for a subset.
+    want = list(columns) if columns else None
+    read_cols = want
+    if want and dedupe:
+        read_cols = list(dict.fromkeys(
+            # lat/lon are needed too: they stand in for region_id when a point never
+            # resolved to a state (see _dedupe).
+            want + _DEDUPE_KEY + ["lat", "lon", "verification_status", "ingested_at"]
+        ))
+        read_cols = [c for c in read_cols if c in ARROW_SCHEMA.names]
+
+    df = dataset.to_table(filter=filt, columns=read_cols).to_pandas()
+    if dedupe:
+        df = _dedupe(df)
+    return df[want] if want else df
+
+
+def _as_date(v) -> date:
+    if isinstance(v, date) and not isinstance(v, datetime):
+        return v
+    return pd.to_datetime(v).date()
+
+
+def has_forecast_cycle(init_date: date, min_rows: int = 1) -> bool:
+    """Has a forecast cycle for this init_date already been ingested?
+
+    The idempotency guard for the scheduler: partitions are keyed by batch_id, so a
+    blindly repeated pull would write a *second* partition for the same cycle rather than
+    overwrite the first.
+    """
+    dataset = _dataset()
+    if dataset is None:
+        return False
+    n = dataset.count_rows(
+        filter=(ds.field("value_type") == "forecast")
+        & (ds.field("init_date") == _as_date(init_date))
+    )
+    return n >= min_rows
+
+
+def latest_forecast_init_date() -> date | None:
+    dataset = _dataset()
+    if dataset is None:
+        return None
+    tbl = dataset.to_table(
+        filter=(ds.field("value_type") == "forecast"), columns=["init_date"]
+    )
+    if tbl.num_rows == 0:
+        return None
+    s = tbl.to_pandas()["init_date"].dropna()
+    return None if s.empty else _as_date(s.max())
 
 
 def dataset_summary() -> dict:

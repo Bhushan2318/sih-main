@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Topology } from "topojson-specification";
 import type { RiskBand } from "../api/types";
 import { AlertsPanel } from "../components/dashboard/AlertsPanel";
 import { BustSummaryChart } from "../components/dashboard/BustSummaryChart";
+import { FeedFreshness } from "../components/dashboard/FeedFreshness";
 import { ModelStatusCard } from "../components/dashboard/ModelStatusCard";
 import { RegionDetailPanel } from "../components/detail/RegionDetailPanel";
 import { EmptyState, ErrorState, LoadingState } from "../components/common/States";
@@ -32,6 +33,17 @@ export function DashboardPage() {
   const regions = regionsQuery.data;
   const riskCuts = statusQuery.data?.thresholds?.risk_band_cuts;
 
+  // A 06/12/18 UTC cycle has no day-1 forecast, so the default lead day can point at
+  // nothing. Move once, to the first day this cycle actually covers, rather than showing
+  // an empty map. The ref keeps this from fighting a deliberate choice afterwards.
+  const autoLeadPicked = useRef(false);
+  const available = regions?.available_lead_days;
+  useEffect(() => {
+    if (autoLeadPicked.current || !available?.length) return;
+    if (!available.includes(leadDay)) setLeadDay(available[0]);
+    autoLeadPicked.current = true;
+  }, [available, leadDay]);
+
   return (
     <div className="app">
       <header className="app__head">
@@ -49,10 +61,17 @@ export function DashboardPage() {
         ) : null}
       </header>
 
+      <FeedFreshness />
+
       <main className="app__body">
         <section className="map-column">
           <div className="map-toolbar">
-            <LeadDaySelector value={leadDay} onChange={setLeadDay} disabled={!regions?.model_trained} />
+            <LeadDaySelector
+              value={leadDay}
+              onChange={setLeadDay}
+              disabled={!regions?.model_trained}
+              available={regions?.available_lead_days}
+            />
             {regions ? <MapLegend definitions={regions.risk_band_definitions} /> : null}
           </div>
 

@@ -160,3 +160,31 @@ p { margin: 0.4rem 0; }
 .btn { border: 1px solid var(--line); background: var(--panel); border-radius: 6px; padding: 0.35rem 0.8rem; cursor: pointer; font: inherit; }
 .btn--primary { background: var(--accent); color: #fff; border-color: var(--accent); }
 .btn--ghost { border: 0; background: none; font-size: 1.1rem; line-height: 1; }
+
+/* ---------------------------------------------------------------- live feed strip */
+.feed-strip {
+  display: flex; flex-wrap: wrap; align-items: center; gap: .75rem;
+  justify-content: space-between;
+  padding: .5rem .9rem; margin: 0 0 .75rem;
+  border: 1px solid var(--line, #d8dee6); border-radius: 6px;
+  background: var(--surface-2, #f6f8fa);
+}
+.feed-strip__main { display: flex; align-items: center; gap: .5rem; }
+.feed-strip__meta { display: flex; align-items: center; gap: .75rem; }
+.feed-strip__text { font-size: .9rem; }
+.feed-strip__error { flex-basis: 100%; margin: .25rem 0 0; }
+.feed-dot { width: .6rem; height: .6rem; border-radius: 50%; flex: none; }
+.feed-dot--live { background: #1a7f37; box-shadow: 0 0 0 3px rgba(26,127,55,.15); }
+.feed-dot--idle { background: #8b949e; }
+.feed-dot--bad  { background: #b42318; box-shadow: 0 0 0 3px rgba(180,35,24,.15); }
+.btn--sm { padding: .2rem .55rem; font-size: .8rem; }
+
+/* A lead day the current cycle cannot cover: visibly absent, not silently missing. */
+.lead-btn--missing { opacity: .35; text-decoration: line-through; cursor: not-allowed; }
+
+/* Observations that ERA5 has not settled yet. */
+.provisional-note { margin-top: .25rem; }
+.badge--provisional {
+  background: #fff4e5; color: #8a4b08; border: 1px solid #f0c48a;
+  border-radius: 4px; padding: 0 .35rem; font-size: .72rem; white-space: nowrap;
+}

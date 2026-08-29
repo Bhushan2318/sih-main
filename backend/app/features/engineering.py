@@ -69,11 +69,27 @@ def build_training_frame(
     df = canonical.copy()
     df = df[df["region_id"].notna()]
     fc = df[df["value_type"] == FORECAST].copy()
-    ob = df[df["value_type"] == OBSERVED][["region_id", "valid_date", "variable", "value"]].copy()
-    ob = (ob.groupby(["region_id", "valid_date", "variable"], as_index=False)["value"]
-            .mean().rename(columns={"value": "observed_value"}))
+    ob_cols = ["region_id", "valid_date", "variable", "value"]
+    has_vs = "verification_status" in df.columns
+    if has_vs:
+        ob_cols.append("verification_status")
+    ob = df[df["value_type"] == OBSERVED][ob_cols].copy()
+    agg = {"value": "mean"}
+    if has_vs:
+        # Carried through so the UI can badge a value that ERA5 has not settled yet.
+        # "provisional" wins the aggregate: if any contributing row is unsettled, the
+        # observation as a whole is not yet final.
+        agg["verification_status"] = (
+            lambda s: "provisional" if (s == "provisional").any() else "final"
+        )
+    ob = (ob.groupby(["region_id", "valid_date", "variable"], as_index=False)
+            .agg(agg).rename(columns={"value": "observed_value"}))
 
     fc = fc.rename(columns={"value": "forecast_value"})
+    # verification_status describes an observation; forecast rows always carry null. Left
+    # in place it collides on the merge and both sides come back suffixed _x/_y, so the
+    # column the UI reads would silently not exist.
+    fc = fc.drop(columns=["verification_status"], errors="ignore")
     paired = fc.merge(
         ob, on=["region_id", "valid_date", "variable"],
         how="inner" if require_observed else "left",
@@ -140,13 +156,16 @@ def _add_rate_of_change(paired: pd.DataFrame) -> pd.DataFrame:
         sub = paired[paired["variable"] == var].sort_values(
             ["region_id", "init_date", "ensemble_member_id", "valid_date"]
         )
-        roc = (
-            sub.groupby(["region_id", "init_date", "ensemble_member_id"], observed=True)
-            .apply(lambda g: g["forecast_value"].diff() /
-                   g["valid_date"].diff().dt.days.replace(0, np.nan))
-            .reset_index(level=[0, 1, 2], drop=True)
-        )
-        sub_roc = pd.Series(roc, index=sub.index, name=colname)
+        if sub.empty:
+            paired[colname] = np.nan
+            continue
+        # Column-wise diff() rather than groupby.apply(): when every group holds a single
+        # row - which happens whenever only one lead day has verified, the normal state
+        # for a live cycle in its first days - apply() returns a DataFrame instead of a
+        # Series and the downstream Series() construction raises.
+        grouped = sub.groupby(["region_id", "init_date", "ensemble_member_id"], observed=True)
+        days = grouped["valid_date"].diff().dt.days.replace(0, np.nan)
+        sub_roc = (grouped["forecast_value"].diff() / days).rename(colname)
         # map that per-event roc onto every row of the same event (all variables)
         ev = sub.assign(**{colname: sub_roc})[EVENT_KEYS + ["ensemble_member_id", colname]]
         paired = paired.merge(ev, on=EVENT_KEYS + ["ensemble_member_id"], how="left")

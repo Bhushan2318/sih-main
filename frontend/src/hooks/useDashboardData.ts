@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { fetchAlerts } from "../api/alerts";
+import { fetchIngestStatus } from "../api/ingest";
 import { fetchModelStatus } from "../api/modelStatus";
 import { fetchRegionDetail, fetchRegions } from "../api/regions";
 import type { RiskBand } from "../api/types";
@@ -33,4 +34,16 @@ export const useModelStatus = () =>
     queryKey: ["modelStatus"],
     queryFn: fetchModelStatus,
     refetchInterval: SAFETY_REFETCH_MS,
+  });
+
+// Feed freshness. Polled a little faster than the rest: a cycle landing is the one change
+// the WebSocket cannot always attribute to a query key.
+export const useIngestStatus = () =>
+  useQuery({
+    queryKey: ["ingestStatus"],
+    queryFn: fetchIngestStatus,
+    refetchInterval: 30_000,
+    // The feed is optional: a deployment with live ingestion switched off should render
+    // the dashboard normally rather than surfacing an error banner.
+    retry: false,
   });

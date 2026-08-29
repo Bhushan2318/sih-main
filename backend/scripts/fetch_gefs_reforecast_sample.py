@@ -350,7 +350,14 @@ def pull_one_file(var_prefix: str, init: str, member: str, cities: pd.DataFrame)
         # which lands at 00:00 of the next day, into the following lead day.)
         agg = DAILY_AGG[var_prefix]
         daily = long.groupby("city", as_index=False)["raw_value"].agg(agg)
-        daily["valid_date"] = pd.Timestamp(init) + pd.Timedelta(days=lead)
+        # Day k is built from forecast hours ((k-1)*24, k*24]. For a 00 UTC init those
+        # valid times are calendar day init+(k-1) - hour 3 through hour 24 all fall on the
+        # init day itself, with only the closing +24 h sample landing at the next
+        # midnight. Labelling it init+k (as this script originally did) put every forecast
+        # a day later than its own contents, so each row was verified against the wrong
+        # day's observation: measured over the 2019 sample that cost ~8% MAE on average,
+        # and 15-16% on pressure and precipitable water.
+        daily["valid_date"] = pd.Timestamp(init) + pd.Timedelta(days=lead - 1)
         daily["init_date"] = pd.Timestamp(init)
         daily["member"] = member
         daily["lead_day"] = lead

@@ -24,6 +24,10 @@ export function VariableTrajectoryChart({ series }: { series: VariableSeries }) 
     confidence: p.confidence,
   }));
   const anyObserved = data.some((d) => d.observed != null);
+  // Near-real-time observations are shown as soon as they exist so the chart is not blank
+  // for days, but they are ERA5's provisional stand-in and will be revised - so they are
+  // labelled, and the models are never trained on them.
+  const provisional = series.points.filter((p) => p.observed_status === "provisional");
 
   return (
     <>
@@ -47,6 +51,14 @@ export function VariableTrajectoryChart({ series }: { series: VariableSeries }) 
         </LineChart>
       </ResponsiveContainer>
       {series.unit ? <p className="muted small axis-unit">Values in {series.unit}</p> : null}
+      {provisional.length ? (
+        <p className="muted small provisional-note">
+          <span className="badge--provisional">provisional</span>{" "}
+          {provisional.length === 1 ? "Day" : "Days"}{" "}
+          {provisional.map((p) => p.lead_time_days).join(", ")} verified against
+          near-real-time analysis, not final ERA5 — these values may be revised.
+        </p>
+      ) : null}
       {!anyObserved ? (
         <p className="muted small">
           This cycle has not verified yet, so no observed values are drawn.

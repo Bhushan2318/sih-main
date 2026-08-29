@@ -8,7 +8,7 @@ FastAPI + XGBoost backend, React dashboard centered on a clickable India map. Se
 [`docs/plan.md`](docs/plan.md) for the full architecture, canonical data schema, and
 phased build order.
 
-**Status**: Phases 1–4 complete.
+**Status**: Phases 1–4 and 6 complete (Phase 5, the design pass, is still deferred).
 
 - **Phase 1** — stack, folder scaffolding, canonical schema.
 - **Phase 2** — ingestion + schema-mapping. Format-agnostic parsers (CSV/TSV/XLSX/JSON,
@@ -32,14 +32,29 @@ phased build order.
   trajectories, SHAP factors), alerts panel, and an upload + column-confirmation flow —
   all live over the WebSocket. Styling is deliberately plain; design is Phase 5. See
   [`frontend/README.md`](frontend/README.md).
+- **Phase 6** — live ingestion. A background scheduler pulls each published NOAA GEFS
+  operational cycle (0.25°, Day 1–10, the same 5 members the models were trained on) and
+  refreshes observations in two tiers: near-real-time *provisional* values that fill the
+  charts within hours but are never trained on, and ERA5 *final* values that supersede
+  them and trigger a retrain. `GET /api/ingest/status` reports real feed freshness, and
+  the dashboard shows which cycle is actually loaded rather than implying "now". Off by
+  default (`LIVE_INGEST_ENABLED`). See [`backend/app/live/README.md`](backend/app/live/README.md).
 
 Real sample data (`backend/data/samples/`, built by `backend/scripts/`) is NOAA GEFSv12
-reforecast (forecast) + ERA5 (observations) — no synthetic data anywhere. `pytest`
-(117 tests) runs against the real files.
+reforecast (forecast) + ERA5 (observations), now joined by live operational cycles — no
+synthetic data anywhere. `pytest` (136 tests) runs against the real files.
 
-Held-out test metrics on the 2019 sample: temperature MAE 0.80 °C (R² 0.73), pressure
-0.96 hPa (R² 0.52), rainfall 3.5 mm (R² 0.39); bust classifier ROC-AUC 0.76 / F1 0.64.
-Small-sample — one year, 17 forecast cycles, 30 points — so directional.
+Held-out test metrics on the 2019 sample: temperature MAE 0.68 °C (R² 0.79), pressure
+0.74 hPa (R² 0.56), humidity 4.45 %RH (R² 0.64), rainfall 2.95 mm (R² 0.41); bust
+classifier ROC-AUC 0.76 / F1 0.65. Small-sample — one year, 17 forecast cycles, 30 points
+— so directional.
+
+> Regressor errors dropped ~17% on 2026-08-29 when a one-day forecast/observation
+> misalignment was found and fixed: lead day *k* was built from forecast hours
+> ((k−1)·24, k·24] but labelled `valid_date = init + k`, so every forecast was verified
+> against the following day's observation. The convention is now
+> `valid_date = init + (lead − 1)`; see
+> [`backend/scripts/fix_forecast_valid_date_offset.py`](backend/scripts/fix_forecast_valid_date_offset.py).
 
 Run both halves together:
 

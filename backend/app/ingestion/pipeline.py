@@ -357,6 +357,7 @@ def _finish_canonicalization(
     batch,
     parsed: ParsedTable,
     result: sm.MappingResult,
+    verification_status: Optional[str] = None,
 ) -> IngestResult:
     canon_df, skipped, notes = to_canonical_rows(
         parsed.df,
@@ -365,6 +366,12 @@ def _finish_canonicalization(
         source_file=batch.original_filename,
         grain=parsed.grain,
     )
+    # Stamped after canonicalisation rather than mapped from a column: how settled an
+    # observation is comes from which endpoint served it, not from anything in the file.
+    if verification_status and not canon_df.empty:
+        canon_df["verification_status"] = canon_df["value_type"].map(
+            lambda vt: verification_status if vt == "observed" else None
+        )
     n = parquet_store.append_batch(batch.id, canon_df)
     variables = sorted(canon_df["variable"].unique().tolist()) if not canon_df.empty else []
 
@@ -426,6 +433,7 @@ def ingest_upload(
     path: Path | str,
     original_filename: Optional[str] = None,
     confirmed_mappings: Optional[list] = None,
+    verification_status: Optional[str] = None,
 ) -> IngestResult:
     path = Path(path)
     original_filename = original_filename or path.name
@@ -466,7 +474,7 @@ def ingest_upload(
                 notes=parsed.parse_notes + result.notes,
             )
 
-        return _finish_canonicalization(session, batch, parsed, result)
+        return _finish_canonicalization(session, batch, parsed, result, verification_status)
 
     except Exception as exc:  # noqa: BLE001 - record then re-raise
         crud.update_batch(session, batch, status="failed", error=f"{type(exc).__name__}: {exc}")
@@ -494,6 +502,25 @@ def confirm_mapping(session: Session, batch_id: str, mappings: list) -> IngestRe
 
 def _apply_confirmations(result: sm.MappingResult, mappings: list) -> None:
     by_col = {m["source_column"]: m for m in mappings}
+
+    # Excluding the detected value_type column must actually stop it being used. The
+    # per-row value read from that column takes precedence over every column's confirmed
+    # value_type (see to_canonical_rows: `vt = row_vt or col_vt`), so leaving it set would
+    # let a mis-detected discriminator silently override an explicit confirmation. That is
+    # not hypothetical: a free-text provenance column reading "...Open-Meteo forecast-api..."
+    # was detected as a discriminator and relabelled a whole file of observations as
+    # forecasts.
+    vt_col = result.value_type_column
+    if vt_col is not None:
+        m = by_col.get(vt_col)
+        if m is not None and (m.get("role") == sm.ROLE_UNMAPPED
+                              or m.get("variable") in (None, "", "unmapped")):
+            result.value_type_column = None
+            result.notes.append(
+                f"value_type column '{vt_col}' was excluded by confirmation; "
+                "value_type now comes from each column's confirmed mapping"
+            )
+
     for p in result.proposals:
         m = by_col.get(p.source_column)
         if not m:

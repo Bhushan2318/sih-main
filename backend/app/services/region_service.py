@@ -81,14 +81,22 @@ def get_regions(lead_time_days: int) -> schemas.RegionsResponse:
             regions=[], message=NO_SCORE_MSG,
         )
 
+    available = sorted(int(d) for d in scored.events["lead_time_days"].dropna().unique())
+
     ev = scored.events[scored.events["lead_time_days"] == lead_time_days]
     if ev.empty:
+        # Say which days this cycle does cover rather than only what it lacks: a 06/12/18Z
+        # run legitimately has no day-1, and the dashboard uses this to land on a lead day
+        # that exists instead of an empty map.
+        covered = (f" This cycle covers day {available[0]}-{available[-1]}."
+                   if available else "")
         return schemas.RegionsResponse(
             lead_time_days=lead_time_days, model_trained=True,
             current_run_id=state.run_id, last_trained_at=_last_trained_at(),
             init_date=scored.init_date.date(),
             risk_band_definitions=_risk_band_definitions(state), regions=[],
-            message=f"The current forecast cycle has no day-{lead_time_days} data.",
+            available_lead_days=available,
+            message=f"The current forecast cycle has no day-{lead_time_days} data.{covered}",
         )
 
     conf_cols = [c for c in ev.columns if c.startswith("conf_")]
@@ -117,6 +125,7 @@ def get_regions(lead_time_days: int) -> schemas.RegionsResponse:
         valid_date=pd.to_datetime(valid).date() if pd.notna(valid) else None,
         risk_band_definitions=_risk_band_definitions(state),
         regions=regions,
+        available_lead_days=available,
     )
 
 
@@ -166,6 +175,8 @@ def get_region_detail(region_id: str) -> schemas.RegionDetailResponse:
                 valid_date=pd.to_datetime(r.valid_date).date() if pd.notna(r.valid_date) else None,
                 predicted_value=_f(r.predicted_value),
                 observed_value=_f(r.observed_value),
+                observed_status=(getattr(r, "verification_status", None)
+                                 if pd.notna(getattr(r, "observed_value", None)) else None),
                 predicted_error=_f(r.predicted_error),
                 confidence=_f(r.confidence),
                 ensemble_spread=_f(r.ensemble_spread),

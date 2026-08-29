@@ -1,11 +1,12 @@
 """ORM models for the metadata DB.
 
-Five tables:
+Six tables:
   * UploadBatch    - one row per uploaded file, its parse result and ingest status
   * ColumnMapping  - one row per source column per batch: how it was interpreted
   * SourceProfile  - a reusable confirmed mapping, keyed by a header fingerprint
   * TrainingRun    - one row per retrain (populated in Phase 3)
   * Alert          - one row per generated bust alert (populated in Phase 4)
+  * IngestRun      - one row per automated live-ingestion attempt (Phase 6)
 
 TrainingRun and Alert are defined now, with minimal columns, so later phases never have
 to alter the schema - `init_db()` creates everything up front.
@@ -150,3 +151,31 @@ class Alert(Base):
     risk_band: Mapped[str] = mapped_column(String(16))
     dominant_variable: Mapped[Optional[str]] = mapped_column(String(48), default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now, index=True)
+
+
+class IngestRun(Base):
+    """One row per automated live-ingestion attempt (Phase 6).
+
+    Kept separate from UploadBatch: a single run may produce several batches (a forecast
+    cycle plus an observation refresh), skip entirely because the cycle was already
+    present, or fail before any file exists. This is also what /api/ingest/status reads,
+    so the dashboard can show real feed freshness instead of implying the data is current.
+    """
+
+    __tablename__ = "ingest_run"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    kind: Mapped[str] = mapped_column(String(24), index=True)  # forecast|observations_provisional|observations_final
+    # For forecast runs: the cycle, as "YYYY-MM-DD HH" UTC. For observation runs: the window end.
+    target: Mapped[Optional[str]] = mapped_column(String(32), default=None, index=True)
+    status: Mapped[str] = mapped_column(String(16), default="running")  # running|complete|skipped|failed
+    trigger: Mapped[str] = mapped_column(String(16), default="schedule")  # schedule|manual|backfill
+
+    upload_batch_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("upload_batch.id"), default=None
+    )
+    rows_ingested: Mapped[int] = mapped_column(Integer, default=0)
+    detail: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    error: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=_now, index=True)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, default=None)

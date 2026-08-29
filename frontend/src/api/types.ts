@@ -61,6 +61,9 @@ export interface RegionsResponse {
   risk_band_definitions: Record<string, string>;
   regions: RegionSummary[];
   message: string | null;
+  // Lead days this cycle actually covers. A 00Z run covers 1-10; a 06/12/18Z run cannot
+  // produce a whole-calendar-day forecast for its own init day, so it starts at day 2.
+  available_lead_days: number[];
 }
 
 export interface VariablePoint {
@@ -68,6 +71,9 @@ export interface VariablePoint {
   valid_date: string | null;
   predicted_value: number | null;
   observed_value: number | null;
+  // "final" = ERA5 (what the models were trained against); "provisional" = near-real-time
+  // and subject to revision; null when this lead has not verified yet.
+  observed_status: "final" | "provisional" | null;
   predicted_error: number | null;
   confidence: number | null;
   ensemble_spread: number | null;
@@ -183,4 +189,37 @@ export interface LiveEvent {
   event: LiveEventType;
   timestamp: string;
   payload: Record<string, unknown>;
+}
+
+
+// --------------------------------------------------------------------------- live feed
+
+export interface IngestRunInfo {
+  target: string | null;
+  status: "running" | "complete" | "skipped" | "failed";
+  trigger: string;
+  rows_ingested: number;
+  started_at: string | null;
+  finished_at: string | null;
+  detail: string | null;
+  error: string | null;
+}
+
+export interface IngestStatus {
+  enabled: boolean;
+  cycles_watched: string[];
+  members: string[];
+  last_forecast: IngestRunInfo | null;
+  last_observations_provisional: IngestRunInfo | null;
+  last_observations_final: IngestRunInfo | null;
+  last_cycle_ingested: string | null;
+  latest_forecast_init_date: string | null;
+  scheduler: {
+    running: boolean;
+    enabled: boolean;
+    tick_seconds: number;
+    ticks_completed: number;
+    last_tick: string | null;
+    next_tick: string | null;
+  };
 }

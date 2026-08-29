@@ -89,8 +89,25 @@ def test_reupload_hits_source_profile(session, tmp_path):
     r2 = ingest_upload(session, era5, era5.name)
     assert r2.status == "ingested"          # auto-applied, no confirmation needed
     assert r2.profile_match == "exact"
-    # both batches present, each its own partition
-    assert parquet_store.dataset_summary()["batches"] == 2
+
+    # Each ingest writes its own partition: re-ingesting never overwrites the first.
+    assert len(list(parquet_store.CANONICAL_DIR.glob("batch_id=*/part-*.parquet"))) == 2
+    assert parquet_store.read_dataset(dedupe=False)["upload_batch_id"].nunique() == 2
+
+    # ...but the same file twice is the same readings twice, and a deduplicated read must
+    # not double-count them: a duplicated observation would double every forecast row it
+    # merges with in feature engineering, silently reweighting training.
+    deduped = parquet_store.read_dataset()
+    raw = parquet_store.read_dataset(dedupe=False)
+    assert len(deduped) == len(raw) // 2
+    assert not deduped.duplicated(subset=parquet_store._DEDUPE_KEY).any()
+
+    # Two source columns mapping onto one canonical variable is NOT duplication: this file
+    # carries both mslp_hpa and psfc_hpa and _confirm_all accepts both as pressure_hpa.
+    # Deduplication must leave those alone - picking one silently would discard a real
+    # measurement. Disambiguating them is the schema mapper's job (it flags the collision).
+    pressure = deduped[deduped["variable"] == "pressure_hpa"]
+    assert set(pressure["source_column"]) == {"mslp_hpa", "psfc_hpa"}
 
 
 def test_row_without_valid_date_is_skipped_not_dropped(session, tmp_path):

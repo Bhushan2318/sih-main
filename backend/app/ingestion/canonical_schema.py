@@ -104,6 +104,16 @@ class CanonicalRow(BaseModel):
     grain: str = "native"  # "native" (daily/sub-daily) or "monthly" (coarse aggregate)
     region_resolution_method: Optional[str] = None  # name | point_in_polygon | nearest_polygon | unresolved
 
+    # How settled an observed value is (Phase 6 two-tier verification).
+    #   None          - not applicable (forecast rows) or ingested before Phase 6, in
+    #                   which case it came from the ERA5 archive and is already final.
+    #   "provisional" - near-real-time analysis, available within hours but subject to
+    #                   revision. Shown badged in the UI and EXCLUDED from training.
+    #   "final"       - ERA5/ERA5T reanalysis; the baseline the models were trained on.
+    # Downstream code must test `!= "provisional"` rather than `== "final"`, so legacy
+    # rows carrying None are not silently dropped from training.
+    verification_status: Optional[str] = None
+
 
 # Column order for the canonical parquet partitions. parquet_store writes exactly these,
 # in this order, so every batch's partition is schema-compatible for pyarrow.dataset.

@@ -75,3 +75,23 @@ the socket and REST shapes decoupled.
 forecast cycle (~0.2 s warm; ~1.7 s on the first request after a retrain). The cache key is
 `(run_id, latest init_date, canonical row count)`, so it invalidates by itself when a
 retrain lands or new data is ingested.
+
+## Live ingestion (Phase 6)
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/ingest/status` | feed health: last cycle ingested, last observation refresh, scheduler state |
+| `POST /api/ingest/run-cycle` | pull the newest published GEFS cycle now; `?wait=true` runs inline |
+| `POST /api/ingest/refresh-observations?tier=final\|provisional` | pull one observation tier now |
+| `POST /api/ingest/backfill?cycles=N` | pull N past cycles, oldest first, resumable |
+
+`/api/regions` gained **`available_lead_days`**: a 06/12/18Z cycle cannot produce a
+whole-calendar-day forecast for its own init day, so it has no day 1. The dashboard reads
+this rather than assuming day 1 exists.
+
+`/api/regions/{id}` variable points gained **`observed_status`** — `"final"` (ERA5, the
+training baseline), `"provisional"` (near-real-time, subject to revision) or `null` when
+that lead has not verified yet. Provisional values are shown badged and are never trained on.
+
+See [`app/live/README.md`](../live/README.md) for the feed itself and the consistency rules
+that keep live data on the same footing as the training data.

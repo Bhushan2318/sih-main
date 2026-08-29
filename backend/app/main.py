@@ -17,7 +17,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routers import alerts, model_status, regions, upload, ws
+from app.api.routers import alerts, ingest, model_status, regions, upload, ws
 from app.config import settings
 from app.db.base import init_db
 from app.ml import registry
@@ -40,12 +40,20 @@ async def lifespan(_app: FastAPI):
         log.exception("geo index failed to build; region resolution will degrade")
 
     log.info("current model run: %s", registry.current_run_id() or "none (no model trained yet)")
-    yield
+
+    # Live ingestion is opt-in (LIVE_INGEST_ENABLED); start() is a no-op when it is off,
+    # so a fresh clone never reaches out to NOAA just by running the server.
+    from app.live.scheduler import scheduler
+    scheduler.start()
+    try:
+        yield
+    finally:
+        scheduler.stop()
 
 
 app = FastAPI(
     title="ForecastGuard AI",
-    version="0.4.0",
+    version="0.6.0",
     lifespan=lifespan,
     description=(
         "Medium-range (Day 1-10) forecast-bust detection for Indian regions. "
@@ -66,6 +74,7 @@ app.include_router(upload.router)
 app.include_router(regions.router)
 app.include_router(alerts.router)
 app.include_router(model_status.router)
+app.include_router(ingest.router)
 app.include_router(ws.router)
 
 
