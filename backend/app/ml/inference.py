@@ -19,6 +19,7 @@ from typing import Optional
 
 import numpy as np
 import pandas as pd
+import xgboost as xgb
 
 from app.features import engineering as fe
 from app.features import pivot as pv
@@ -33,7 +34,7 @@ class ModelState:
 
     run_id: str
     regressors: dict                      # variable -> (model, feature_columns)
-    classifier: object
+    classifier: xgb.XGBClassifier
     classifier_columns: list
     thresholds: Thresholds
     historical_bust_freq: dict
@@ -133,10 +134,12 @@ def score_latest_cycle(state: Optional[ModelState] = None) -> Optional[ScoredCyc
 
     # Keep the target cycle plus every observation, so features that look back at earlier
     # valid_dates (rate-of-change, verified error lag) can still be computed.
-    cycle_mask = (canonical["value_type"] == "forecast") & (
-        pd.to_datetime(canonical["init_date"]) == latest_init
-    )
-    subset = canonical[cycle_mask | (canonical["value_type"] == "observed")]
+    keep = ((canonical["value_type"] == "forecast")
+            & (pd.to_datetime(canonical["init_date"]) == latest_init)) \
+        | (canonical["value_type"] == "observed")
+    # pd.DataFrame(...) pins the type: boolean-mask indexing is typed as Series | DataFrame
+    # by the pandas stubs. Runtime no-op - build_training_frame copies its argument anyway.
+    subset = pd.DataFrame(canonical[keep])
 
     frame = fe.build_training_frame(
         subset,
@@ -156,7 +159,7 @@ def score_latest_cycle(state: Optional[ModelState] = None) -> Optional[ScoredCyc
         pred.loc[mask] = model.predict(X)
     frame["pred_err"] = pred
 
-    scored = frame[frame["pred_err"].notna()].copy()
+    scored = frame.loc[frame["pred_err"].notna()].copy()
     if scored.empty:
         return None
 
@@ -212,7 +215,7 @@ def _dominant_variable(events: pd.DataFrame, bust_threshold: dict) -> list:
     if not ratio_cols:
         return [None] * len(events)
     ratios = pd.DataFrame(ratio_cols, index=events.index)
-    if ratios.isna().all(axis=1).all():
+    if bool(ratios.isna().to_numpy().all()):
         return [None] * len(events)
     return ratios.idxmax(axis=1, skipna=True).where(ratios.notna().any(axis=1)).tolist()
 
@@ -233,7 +236,7 @@ def _per_variable_table(scored: pd.DataFrame, state: ModelState) -> pd.DataFrame
         .reset_index()
     )
     p90 = g["variable"].map(state.thresholds.p90_error)
-    g["confidence"] = (1.0 - g["predicted_error"] / p90).clip(0.0, 1.0)
+    g["confidence"] = g["predicted_error"].div(p90).rsub(1.0).clip(0.0, 1.0)
     g["bust_threshold"] = g["variable"].map(state.thresholds.bust_threshold)
     return g
 

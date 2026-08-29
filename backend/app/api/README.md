@@ -3,10 +3,16 @@
 Run it:
 
 ```bash
-cd backend
-source .venv/bin/activate
+# macOS / Linux
+cd backend && source .venv/bin/activate
 uvicorn app.main:app --reload --port 8000
 # interactive docs: http://localhost:8000/docs
+```
+
+```powershell
+# Windows (PowerShell)
+cd backend; .\.venv\Scripts\Activate.ps1
+uvicorn app.main:app --reload --port 8000
 ```
 
 ## Endpoints

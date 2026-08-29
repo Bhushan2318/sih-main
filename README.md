@@ -56,14 +56,35 @@ classifier ROC-AUC 0.76 / F1 0.65. Small-sample — one year, 17 forecast cycles
 > `valid_date = init + (lead − 1)`; see
 > [`backend/scripts/fix_forecast_valid_date_offset.py`](backend/scripts/fix_forecast_valid_date_offset.py).
 
-Run both halves together:
+Run both halves together — two terminals.
+
+**macOS / Linux**
 
 ```bash
+# terminal 1 — backend
 cd backend && source .venv/bin/activate
-uvicorn app.main:app --reload --port 8000     # API + docs at /docs
+uvicorn app.main:app --reload --port 8000     # API + docs at http://localhost:8000/docs
 
-cd frontend && npm run dev                    # dashboard at :5173
+# terminal 2 — frontend
+cd frontend && npm run dev                    # dashboard at http://localhost:5173
 ```
+
+**Windows (PowerShell)**
+
+```powershell
+# terminal 1 — backend
+cd backend
+.\.venv\Scripts\Activate.ps1
+uvicorn app.main:app --reload --port 8000     # API + docs at http://localhost:8000/docs
+
+# terminal 2 — frontend
+cd frontend
+npm run dev                                   # dashboard at http://localhost:5173
+```
+
+If PowerShell blocks the activate script with an execution-policy error, run once:
+`Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned`. Or use
+**Command Prompt** instead, where activation is `.venv\Scripts\activate.bat`.
 
 Next: **Phase 5** — the design pass (palette, typography, layout polish).
 
@@ -72,20 +93,87 @@ Next: **Phase 5** — the design pass (palette, typography, layout polish).
 - `backend/` — FastAPI app, ingestion/schema-mapping, XGBoost training + inference, SQLite + parquet storage.
 - `frontend/` — React + Vite + TypeScript dashboard.
 
-## Backend setup (once dependencies are needed, from Phase 2 onward)
+## Backend setup
 
-```
+Python 3.9+ and, for the frontend, Node 18+.
+
+**macOS / Linux**
+
+```bash
 cd backend
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
 ```
 
+**Windows (PowerShell)**
+
+```powershell
+cd backend
+py -3 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+Copy-Item .env.example .env
+```
+
+**Windows (Command Prompt)**
+
+```bat
+cd backend
+py -3 -m venv .venv
+.venv\Scripts\activate.bat
+pip install -r requirements.txt
+copy .env.example .env
+```
+
+The venv only needs creating once; afterwards just re-run the activate line for your
+shell in each new terminal. `eccodes` (GRIB2 decoding) ships as a wheel with the binary
+bundled, so nothing extra is needed on Windows.
+
 ## Frontend setup
 
-```
+**macOS / Linux**
+
+```bash
 cd frontend
 npm install
 cp .env.example .env
 npm run dev
 ```
+
+**Windows (PowerShell)**
+
+```powershell
+cd frontend
+npm install
+Copy-Item .env.example .env
+npm run dev
+```
+
+(Command Prompt is identical except `copy .env.example .env`.)
+
+## Common tasks (all platforms)
+
+With the backend venv activated:
+
+| Task | Command |
+|---|---|
+| Run the test suite | `python -m pytest -q` |
+| Full model retrain | `python -m app.ml.train_pipeline` |
+| Rebuild the sample data | `python scripts/fetch_gefs_reforecast_sample.py` then `python scripts/fetch_era5_observations.py` |
+| Ingest a file from the CLI | `python -m app.ingestion.pipeline --file <path> --confirm-all` |
+
+**Enable live ingestion** (off by default — it reaches out to NOAA / Open-Meteo):
+
+```bash
+# macOS / Linux
+echo "LIVE_INGEST_ENABLED=true" >> backend/.env
+```
+```powershell
+# Windows PowerShell
+Add-Content backend\.env "LIVE_INGEST_ENABLED=true"
+```
+
+then restart `uvicorn`. A one-off pull without editing `.env`:
+`curl -X POST "http://localhost:8000/api/ingest/run-cycle?wait=true"` (PowerShell:
+`Invoke-RestMethod -Method Post "http://localhost:8000/api/ingest/run-cycle?wait=true"`).

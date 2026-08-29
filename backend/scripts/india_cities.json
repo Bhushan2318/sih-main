@@ -1,5 +1,12 @@
 [
   {
+    "city": "Agartala",
+    "state": "Tripura",
+    "region": "North-East",
+    "lat": 23.8315,
+    "lon": 91.2868
+  },
+  {
     "city": "Aizawl",
     "state": "Mizoram",
     "region": "North-East",
@@ -56,6 +63,13 @@
     "lon": 72.8328
   },
   {
+    "city": "Dehradun",
+    "state": "Uttarakhand",
+    "region": "North Himalayan",
+    "lat": 30.3165,
+    "lon": 78.0322
+  },
+  {
     "city": "Dispur / Guwahati",
     "state": "Assam",
     "region": "North-East",
@@ -105,6 +119,13 @@
     "lon": 75.7873
   },
   {
+    "city": "Karnal",
+    "state": "Haryana",
+    "region": "North India",
+    "lat": 29.6857,
+    "lon": 76.9905
+  },
+  {
     "city": "Kavaratti",
     "state": "Lakshadweep",
     "region": "Island / Arabian Sea",
@@ -119,11 +140,32 @@
     "lon": 94.1086
   },
   {
+    "city": "Kolkata",
+    "state": "West Bengal",
+    "region": "East India",
+    "lat": 22.5726,
+    "lon": 88.3639
+  },
+  {
     "city": "Leh",
     "state": "Ladakh",
     "region": "Trans-Himalayan",
     "lat": 34.1526,
     "lon": 77.577
+  },
+  {
+    "city": "Lucknow",
+    "state": "Uttar Pradesh",
+    "region": "North India",
+    "lat": 26.8467,
+    "lon": 80.9462
+  },
+  {
+    "city": "Ludhiana",
+    "state": "Punjab",
+    "region": "North India",
+    "lat": 30.901,
+    "lon": 75.8573
   },
   {
     "city": "Mumbai",

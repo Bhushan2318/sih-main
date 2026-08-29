@@ -3,9 +3,15 @@
 Automated ingestion of real operational forecasts and the observations that verify them.
 
 ```bash
-# off by default; switch on deliberately
+# macOS / Linux  — off by default; switch on deliberately
 echo "LIVE_INGEST_ENABLED=true" >> backend/.env
 uvicorn app.main:app --port 8000        # scheduler starts with the app
+```
+
+```powershell
+# Windows (PowerShell)
+Add-Content backend\.env "LIVE_INGEST_ENABLED=true"
+uvicorn app.main:app --port 8000
 ```
 
 Nothing here runs on import, and nothing runs in tests: a fresh clone never reaches out to

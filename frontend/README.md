@@ -4,9 +4,17 @@ React + Vite + TypeScript. Talks only to the FastAPI backend; it holds no data o
 and fabricates nothing.
 
 ```bash
+# macOS / Linux
 npm install
 cp .env.example .env          # VITE_API_BASE_URL, VITE_WS_URL
 npm run dev                   # http://localhost:5173  (backend must be on :8000)
+```
+
+```powershell
+# Windows (PowerShell)
+npm install
+Copy-Item .env.example .env
+npm run dev
 ```
 
 ## Layout
