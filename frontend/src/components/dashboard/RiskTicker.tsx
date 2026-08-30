@@ -1,12 +1,16 @@
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import type { RegionSummary } from "../../api/types";
 
 /**
  * Every scored region for the current lead day, worst first, on a slow rail.
  *
- * It exists so the dashboard states its whole hand at a glance rather than only the five
- * regions a top-N list has room for. Hovering pauses it, and it holds still entirely under
- * `prefers-reduced-motion`.
+ * Two identical halves are laid side by side and the track is translated by exactly one
+ * half-width (-50%); when the first half has fully left, the second is where it started,
+ * so the loop has no seam. `translate3d` + `backface-visibility: hidden` keep the moving
+ * text on its own GPU layer and crisp (a plain `%` translate on a text layer renders
+ * blurry and snaps a pixel at the loop). `overflow: clip` means the frame is not a scroll
+ * container, so tabbing to or clicking an item can never scroll the rail and look like a
+ * reset. Pause toggles only `animation-play-state`, freezing it in place.
  */
 export function RiskTicker({ regions, leadDay, onSelect }: {
   regions: RegionSummary[];
@@ -14,7 +18,7 @@ export function RiskTicker({ regions, leadDay, onSelect }: {
   onSelect: (regionId: string) => void;
 }) {
   const [paused, setPaused] = useState(false);
-  const boxRef = useRef<HTMLDivElement>(null);
+
   const items = useMemo(
     () =>
       regions
@@ -25,48 +29,36 @@ export function RiskTicker({ regions, leadDay, onSelect }: {
 
   if (items.length < 2) return null;
 
-  // The rail is rendered twice and translated by exactly half its width, so the loop has
-  // no visible seam.
-  const rail = [...items, ...items];
+  const half = (hidden: boolean) => (
+    <div className="ticker__half" aria-hidden={hidden || undefined}>
+      {items.map((r) => (
+        <button
+          key={r.region_id}
+          type="button"
+          className="ticker__item"
+          onClick={() => onSelect(r.region_id)}
+          tabIndex={hidden ? -1 : 0}
+        >
+          <i className={`ticker__dot ticker__dot--${r.risk_band ?? "none"}`} aria-hidden="true" />
+          <span className="ticker__name">{r.region_name ?? r.region_id}</span>
+          <span className="ticker__value">{(r.bust_probability as number).toFixed(2)}</span>
+          <span className="ticker__unit">P(bust) · D{leadDay}</span>
+        </button>
+      ))}
+    </div>
+  );
 
   return (
     <div
       className="ticker"
-      ref={boxRef}
       role="region"
       aria-label={`Bust probability by region, lead day ${leadDay}`}
       onMouseEnter={() => setPaused(true)}
       onMouseLeave={() => setPaused(false)}
-      onFocus={() => setPaused(true)}
-      onBlur={() => setPaused(false)}
-      // Focusing a button inside an overflow container makes the browser scroll it into
-      // view, which yanks the rail back to its start and looks like the ticker resetting.
-      // The rail is positioned purely by its animation, so any scroll here is unwanted.
-      onScroll={(e) => { e.currentTarget.scrollLeft = 0; }}
     >
-      <div
-        className="ticker__rail"
-        // Pausing from React rather than :hover keeps the running animation exactly where
-        // it is - toggling only play-state never restarts it.
-        style={{ animationPlayState: paused ? "paused" : "running" }}
-      >
-        {rail.map((r, i) => (
-          <button
-            key={`${r.region_id}-${i}`}
-            type="button"
-            className="ticker__item"
-            // Keep the click without taking focus, so the container is never scrolled.
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={() => onSelect(r.region_id)}
-            tabIndex={i < items.length ? 0 : -1}
-            aria-hidden={i >= items.length}
-          >
-            <i className={`ticker__dot ticker__dot--${r.risk_band ?? "none"}`} aria-hidden="true" />
-            <span className="ticker__name">{r.region_name ?? r.region_id}</span>
-            <span className="ticker__value">{(r.bust_probability as number).toFixed(2)}</span>
-            <span className="ticker__unit">P(bust) · D{leadDay}</span>
-          </button>
-        ))}
+      <div className="ticker__track" style={{ animationPlayState: paused ? "paused" : "running" }}>
+        {half(false)}
+        {half(true)}
       </div>
     </div>
   );
