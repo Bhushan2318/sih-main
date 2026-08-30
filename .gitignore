@@ -37,3 +37,6 @@ frontend/tsconfig.tsbuildinfo
 .DS_Store
 *.swp
 backend/app/static/
+
+# Session handoff notes: internal strategy, kept out of the public repo.
+HANDOFF.md
