@@ -70,7 +70,7 @@ HTTP_BACKOFF = 3.0
 POLITE_GAP_S = 1.2
 
 _session = requests.Session()
-_session.headers["User-Agent"] = "ForecastGuard-AI/phase6-live (SIH 2026; NCMRWF PS 26079)"
+_session.headers["User-Agent"] = "Sanket/phase6-live (SIH 2026; NCMRWF PS 26079)"
 
 
 @dataclass

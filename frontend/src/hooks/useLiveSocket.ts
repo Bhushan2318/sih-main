@@ -47,6 +47,8 @@ export function useLiveSocket() {
             queryClient.invalidateQueries({ queryKey: ["regions"] });
             queryClient.invalidateQueries({ queryKey: ["alerts"] });
             queryClient.invalidateQueries({ queryKey: ["modelStatus"] });
+            queryClient.invalidateQueries({ queryKey: ["ensemble"] });
+            queryClient.invalidateQueries({ queryKey: ["replay"] });
             break;
           case "training_started":
           case "training_failed":

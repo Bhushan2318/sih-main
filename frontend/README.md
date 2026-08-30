@@ -1,4 +1,4 @@
-# ForecastGuard AI — dashboard
+# Sanket — dashboard
 
 React + Vite + TypeScript. Talks only to the FastAPI backend; it holds no data of its own
 and fabricates nothing.

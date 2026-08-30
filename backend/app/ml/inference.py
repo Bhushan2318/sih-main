@@ -114,6 +114,8 @@ def invalidate_caches() -> None:
     try:  # deferred: replay_service imports this module
         from app.services import replay_service
         replay_service.invalidate()
+        from app.services import ensemble_service
+        ensemble_service.invalidate()
     except Exception:  # noqa: BLE001 - never let cache cleanup break an ingest
         pass
 

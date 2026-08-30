@@ -19,6 +19,8 @@ export function UploadPanel() {
     queryClient.invalidateQueries({ queryKey: ["modelStatus"] });
     queryClient.invalidateQueries({ queryKey: ["regions"] });
     queryClient.invalidateQueries({ queryKey: ["alerts"] });
+    queryClient.invalidateQueries({ queryKey: ["ensemble"] });
+    queryClient.invalidateQueries({ queryKey: ["replay"] });
   };
 
   const send = async (file: File) => {

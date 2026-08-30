@@ -6,6 +6,7 @@ import type { Topology } from "topojson-specification";
 import topoData from "../../assets/geo/india_states.topojson?url";
 import { REGION_ID_BY_ST_CODE } from "../../api/regionCodes";
 import type { RegionSummary } from "../../api/types";
+import { bandLabel } from "../../theme";
 
 const WIDTH = 620;
 const HEIGHT = 680;
@@ -71,7 +72,7 @@ export function IndiaChoroplethMap({
                 ].join(" ")}
                 tabIndex={region ? 0 : -1}
                 role={region ? "button" : undefined}
-                aria-label={`${f.properties.st_nm}${band ? `, ${band} risk` : ", no data"}`}
+                aria-label={`${f.properties.st_nm}${band ? `, ${bandLabel(band)} risk` : ", no data"}`}
                 onClick={() => regionId && onSelect(regionId)}
                 onKeyDown={(e) => {
                   if (regionId && (e.key === "Enter" || e.key === " ")) {
@@ -102,7 +103,7 @@ export function IndiaChoroplethMap({
             <>
               <div>
                 Bust probability:{" "}
-                <b>{((hover.region.bust_probability ?? 0) * 100).toFixed(1)}%</b> ({hover.region.risk_band})
+                <b>{((hover.region.bust_probability ?? 0) * 100).toFixed(1)}%</b> ({bandLabel(hover.region.risk_band)})
               </div>
               {hover.region.dominant_variable ? <div>Driver: {hover.region.dominant_variable}</div> : null}
               {hover.region.confidence != null ? (
