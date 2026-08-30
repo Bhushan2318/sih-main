@@ -36,6 +36,24 @@ GEFS_CSV = GENERATED_SAMPLES / "gefs_reforecast_india_2019.csv"
 ERA5_CSV = GENERATED_SAMPLES / "era5_observations_india_2019.csv"
 
 
+def _ensure_sample_csvs() -> None:
+    """Only the compact ``.parquet`` samples are committed (the ``.csv`` twins are
+    gitignored - the .gitignore note calls the parquet the source of truth). The tests
+    still read CSV, so on a fresh clone / CI they would fail on a missing file.
+    Materialise each CSV from its parquet once, here, rather than committing a 29 MB file.
+    """
+    import pandas as pd
+
+    for csv_path in (GEFS_CSV, ERA5_CSV):
+        parquet_path = csv_path.with_suffix(".parquet")
+        if csv_path.exists() or not parquet_path.exists():
+            continue
+        pd.read_parquet(parquet_path).to_csv(csv_path, index=False)
+
+
+_ensure_sample_csvs()
+
+
 def _resolve_sample_dir() -> Path:
     for cand in (
         os.environ.get("FORECASTGUARD_SAMPLE_DIR"),
