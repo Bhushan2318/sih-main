@@ -244,11 +244,16 @@ GitHub Actions (16 GB, every 6 h)          Render Free (512 MB, serve only)
 
    ```bash
    cd backend
-   tar -czf sanket-data.tar.gz data/models data/canonical data/geo metadata.db
-   gh release create data-latest sanket-data.tar.gz \
+   python -m scripts.package_for_deploy /tmp/sanket-data.tar.gz
+   gh release create data-latest /tmp/sanket-data.tar.gz \
      --title "Latest model and data" \
      --notes "Rolling artifact published by the refresh workflow."
    ```
+
+   No `gh`? Build the tarball with the same command, then create the release through the
+   web UI: **Releases → Draft a new release**, tag `data-latest`, and drag the file in.
+   The packager ships only the *current* model run — taring `data/models` wholesale would
+   grow the artifact by ~8 MB on every refresh.
 
    Skip this and the first build still succeeds — the site just reports
    `model_trained: false` and renders its empty state until the workflow runs.

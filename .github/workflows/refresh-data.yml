@@ -89,11 +89,11 @@ jobs:
       - name: Package
         id: pack
         working-directory: backend
-        # Only what the serving box needs to answer a request: the trained model, the
-        # canonical store it scores against, the metadata db, and the geo index.
+        # Packs ONLY the current model run. Naively taring data/models would compound: this
+        # job restores the previous asset, trains a new run beside the old ones, and
+        # repacks - so the artifact would grow ~8 MB every six hours and never shrink.
         run: |
-          tar -czf "/tmp/$ASSET" \
-            data/models data/canonical data/geo metadata.db
+          python -m scripts.package_for_deploy "/tmp/$ASSET"
           echo "size=$(du -h "/tmp/$ASSET" | cut -f1)" >> "$GITHUB_OUTPUT"
           echo "run_id=$(python -c 'from app.ml import registry; print(registry.current_run_id())')" >> "$GITHUB_OUTPUT"
 
