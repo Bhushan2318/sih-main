@@ -36,3 +36,4 @@ frontend/tsconfig.tsbuildinfo
 # OS / editor
 .DS_Store
 *.swp
+backend/app/static/

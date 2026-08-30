@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { API_BASE } from "../../api/client";
 import { bandLabel } from "../../theme";
 
 /**
@@ -29,7 +30,7 @@ export function ErrorState({ error }: { error: unknown }) {
     <div className="state state--error">
       <strong>Could not reach the API</strong>
       <p>{message}</p>
-      <p className="muted">Is the backend running on {import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000"}?</p>
+      <p className="muted">{API_BASE ? `Is the backend running on ${API_BASE}?` : "The API is served from this same origin, so this is a server-side problem rather than a misconfigured address."}</p>
     </div>
   );
 }
