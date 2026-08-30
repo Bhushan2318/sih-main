@@ -306,8 +306,13 @@ def _traces(scored, init: pd.Timestamp, region_id: str, variable: str):
         if pd.notna(getattr(r, "observed_value", None))
     ]
 
+    # Only the five columns a member trace is drawn from. Without the projection this read
+    # returns 1,620 rows but costs ~130 MB: a filter on value columns cannot prune row
+    # groups, so Arrow decodes every column of every candidate group before discarding
+    # them. Narrowing the projection narrows what is decoded, not just what is returned.
     raw = parquet_store.read_dataset(
         variables=[variable], value_types=["forecast"], init_dates=[init.date()],
+        columns=["region_id", "ensemble_member_id", "lead_time_days", "valid_date", "value"],
     )
     members: list = []
     if not raw.empty:

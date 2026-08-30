@@ -128,13 +128,32 @@ def score_latest_cycle(state: Optional[ModelState] = None) -> Optional[ScoredCyc
 def available_cycles() -> list[pd.Timestamp]:
     """Every forecast ``init_date`` in the canonical store, newest first. Drives the
     guided-replay cycle picker."""
-    canonical = parquet_store.read_dataset(columns=["value_type", "init_date"])
-    if canonical.empty:
-        return []
-    fc = canonical[canonical["value_type"] == "forecast"]
+    # dedupe=False is the point. Deduplication collapses duplicate *readings*; it can
+    # never remove an init_date that some surviving forecast row still carries, so the set
+    # of distinct init_dates is identical either way. Leaving it on made this pull the
+    # dedupe key columns for all 331k rows and run the grouping over them - a full-store
+    # scan and sort to answer a question about one column.
+    fc = parquet_store.read_dataset(
+        value_types=["forecast"], columns=["init_date"], dedupe=False,
+    )
     if fc.empty:
         return []
     return sorted(pd.to_datetime(fc["init_date"]).dropna().unique(), reverse=True)
+
+
+# A cycle covers leads 1-10, so its forecasts span valid_date [init, init + 9]. The pad is
+# slack either side of that window - widen it, never narrow it, if leads ever grow.
+_MAX_LEAD_DAYS = 10
+_OBS_PAD_DAYS = 3
+
+# The only canonical columns the scoring path reads. Feature engineering uses all nine;
+# region_name/lat/lon are absent on purpose - the UI resolves a region's name from the
+# region registry, not from these rows, so carrying 113k copies of it through the read is
+# pure cost. read_dataset re-adds whatever dedupe needs and drops it again afterwards.
+_SCORING_COLUMNS = [
+    "region_id", "variable", "valid_date", "value", "value_type",
+    "init_date", "lead_time_days", "ensemble_member_id", "verification_status",
+]
 
 
 def score_cycle(
@@ -171,24 +190,38 @@ def score_cycle(
         if hit is not None:
             return hit
 
-    canonical = parquet_store.read_dataset()
-    if canonical.empty:
-        return None
-    fc_rows = canonical[canonical["value_type"] == "forecast"]
+    # Read only what this cycle needs: the target cycle's forecasts, plus every
+    # observation so features that look back at earlier valid_dates (rate-of-change,
+    # verified error lag) can still be computed.
+    #
+    # This filter used to run in pandas after loading the whole store. That read 331k rows
+    # to keep 126k of them, and the transient cost of materialising the discarded 62% was
+    # enough to get the container OOM-killed on a 512 MB host. Two scans express the same
+    # predicate to Arrow, which never builds the rows we are about to drop.
+    #
+    # It has to be two reads rather than one: observations carry a null init_date, so any
+    # single scan filtered on init_date would discard them.
+    fc_rows = parquet_store.read_dataset(
+        value_types=["forecast"], init_dates=[target_init.date()], columns=_SCORING_COLUMNS,
+    )
     if fc_rows.empty:
         return None
-    inits = pd.to_datetime(fc_rows["init_date"])
-    if init_date is not None and not (inits.dt.normalize() == target_init).any():
-        return None
+    # Observations are joined to forecasts on an exact (region_id, valid_date, variable)
+    # match, and this cycle's forecasts only ever carry valid_date in
+    # [init, init + 9] (valid_date = init + lead - 1, leads 1-10). Every observation
+    # outside that window is dropped by that merge, so reading the 2019 archive to score a
+    # 2026 cycle costs 113k rows to use a few thousand. The padding is slack against a
+    # cycle that ever carries longer leads; nothing here looks further back than the join.
+    observed = parquet_store.read_dataset(
+        value_types=["observed"],
+        columns=_SCORING_COLUMNS,
+        valid_date_min=(target_init - pd.Timedelta(days=_OBS_PAD_DAYS)).date(),
+        valid_date_max=(target_init + pd.Timedelta(days=_MAX_LEAD_DAYS + _OBS_PAD_DAYS)).date(),
+    )
 
-    # Keep the target cycle plus every observation, so features that look back at earlier
-    # valid_dates (rate-of-change, verified error lag) can still be computed.
-    keep = ((canonical["value_type"] == "forecast")
-            & (pd.to_datetime(canonical["init_date"]).dt.normalize() == target_init)) \
-        | (canonical["value_type"] == "observed")
-    # pd.DataFrame(...) pins the type: boolean-mask indexing is typed as Series | DataFrame
-    # by the pandas stubs. Runtime no-op - build_training_frame copies its argument anyway.
-    subset = pd.DataFrame(canonical[keep])
+    # ignore_index: both frames carry positional indices from their own read, and
+    # build_training_frame merges on columns - duplicate index labels would misalign it.
+    subset = pd.concat([fc_rows, observed], ignore_index=True)
 
     frame = fe.build_training_frame(
         subset,
