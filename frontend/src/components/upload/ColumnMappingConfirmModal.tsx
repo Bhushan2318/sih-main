@@ -152,10 +152,20 @@ export function ColumnMappingConfirmModal({ upload, onCancel, onSubmit }: {
 
         <footer className="modal__foot">
           {duplicates.size ? (
-            <span className="warn small">Two columns map to the same variable — the last one wins.</span>
+            <span className="warn small">
+              Two columns map to the same variable. Set the extras to “exclude” — only one
+              canonical series per variable can be ingested.
+            </span>
           ) : null}
           <button type="button" className="btn btn--ghost" onClick={onCancel}>Cancel</button>
-          <button type="button" className="btn btn--primary" onClick={submit}>Confirm &amp; ingest</button>
+          <button
+            type="button"
+            className="btn btn--primary"
+            onClick={submit}
+            disabled={duplicates.size > 0}
+          >
+            Confirm &amp; ingest
+          </button>
         </footer>
       </div>
     </div>

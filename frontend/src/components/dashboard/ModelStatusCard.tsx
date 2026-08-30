@@ -27,8 +27,15 @@ export function ModelStatusCard() {
         <p className="muted">{data.message}</p>
       ) : (
         <>
+          <dl className="metrics">
+            <div className="metrics__wide">
+              <dt>Run</dt>
+              <dd className="mono small" title={data.current_run_id ?? undefined}>
+                {data.current_run_id}
+              </dd>
+            </div>
+          </dl>
           <dl className="metrics metrics--compact">
-            <div><dt>Run</dt><dd className="mono small">{data.current_run_id}</dd></div>
             <div><dt>Variables</dt><dd>{data.modelled_variables.length}</dd></div>
             <div><dt>Rows</dt><dd>{(data.data_volume.total_rows ?? 0).toLocaleString()}</dd></div>
             <div><dt>Batches</dt><dd>{data.data_volume.batches ?? 0}</dd></div>

@@ -110,6 +110,14 @@ def run_retrain(batch_id: Optional[str] = None) -> None:
 
         if report.status == "success":
             inference.invalidate_caches()
+            # invalidate_caches() drops the guided-replay ranking too; rebuild it here,
+            # on this background thread, so the first /api/replay/cycles call after a
+            # retrain is instant instead of paying the full re-rank (~2 min) inline.
+            try:
+                from app.services import replay_service
+                replay_service.list_cycles()
+            except Exception:  # noqa: BLE001
+                log.exception("guided-replay re-warm after retrain failed (endpoint still works, just cold)")
             with get_session() as session:
                 n_alerts = alert_service.persist_alerts_for_run(session, report.run_id)
             emit(
