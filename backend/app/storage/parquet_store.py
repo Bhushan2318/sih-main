@@ -12,7 +12,9 @@ observed rows sit side by side and are paired later at feature-engineering time 
 
 from __future__ import annotations
 
+import json
 import shutil
+import threading
 from datetime import date, datetime
 from pathlib import Path
 from typing import Iterable, Sequence
@@ -304,9 +306,95 @@ def latest_forecast_init_date() -> date | None:
     return None if s.empty else _as_date(s.max())
 
 
+_summary_lock = threading.Lock()
+_summary_memo: "dict[str, dict]" = {}
+
+# Sidecar written next to the store so the summary survives process restarts.
+SUMMARY_CACHE_PATH = CANONICAL_DIR.parent / "summary.json"
+
+
+def store_signature() -> str:
+    """Content signature of the store: partition name, byte size and row count.
+
+    Unlike `store_fingerprint` this does not use mtimes, so it survives being packed into
+    a tarball and unpacked somewhere else - which is exactly what the deploy artifact
+    does. Row counts come from each file's parquet footer, so this reads no data.
+    """
+    if not CANONICAL_DIR.exists():
+        return "empty"
+    parts = []
+    for f in sorted(CANONICAL_DIR.glob("batch_id=*/*.parquet")):
+        try:
+            rows = pq.ParquetFile(f).metadata.num_rows
+        except Exception:  # noqa: BLE001 - an unreadable partition invalidates the cache
+            return f"unreadable:{f.name}"
+        parts.append(f"{f.parent.name}/{f.name}:{f.stat().st_size}:{rows}")
+    return "|".join(parts) if parts else "empty"
+
+
+def write_summary_cache() -> dict:
+    """Compute the summary and persist it beside the store. Called by the packaging step.
+
+    Deduplicating 331k rows to answer this costs ~300 MB, which a 512 MB serving box
+    cannot spare on top of scoring a cycle. CI has 16 GB, so it does the work once and
+    ships the answer.
+    """
+    summary = _compute_summary()
+    SUMMARY_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    SUMMARY_CACHE_PATH.write_text(
+        json.dumps({"signature": store_signature(), "summary": summary}, indent=2)
+    )
+    return summary
+
+
+def _read_summary_cache() -> dict | None:
+    """The persisted summary, but only if it still describes the store on disk."""
+    if not SUMMARY_CACHE_PATH.is_file():
+        return None
+    try:
+        blob = json.loads(SUMMARY_CACHE_PATH.read_text())
+    except Exception:  # noqa: BLE001 - a corrupt sidecar just means recompute
+        return None
+    if blob.get("signature") != store_signature():
+        return None
+    got = blob.get("summary")
+    return got if isinstance(got, dict) else None
+
+# Only the columns the summary actually reports on. read_dataset re-adds whatever
+# deduplication needs and drops it again, so the counts stay post-dedupe.
+_SUMMARY_COLUMNS = [
+    "variable", "value_type", "upload_batch_id", "region_id", "valid_date", "grain",
+]
+
+
 def dataset_summary() -> dict:
-    """Shape of the store, for /api/model/status (Phase 4) and Phase 2 smoke checks."""
-    df = read_dataset()
+    """Shape of the store, for /api/model/status (Phase 4) and Phase 2 smoke checks.
+
+    Memoised on the store fingerprint. The dashboard polls /api/model/status every 60s and
+    this was reading - and deduplicating - all 331k rows each time, which is both the
+    slowest thing on that endpoint and what finally pushed the 512 MB container over.
+    The store only changes on ingest, and the fingerprint is dir names plus mtimes, so a
+    repeat call costs a stat() per partition.
+    """
+    fp = store_fingerprint()
+    with _summary_lock:
+        hit = _summary_memo.get(fp)
+    if hit is not None:
+        return dict(hit)
+
+    # The sidecar CI shipped, when it still matches the store. This is what keeps the
+    # serving box from ever paying the deduplication cost.
+    summary = _read_summary_cache()
+    if summary is None:
+        summary = _compute_summary()
+    with _summary_lock:
+        _summary_memo.clear()   # only the current shape is ever of interest
+        _summary_memo[fp] = summary
+    return dict(summary)
+
+
+def _compute_summary() -> dict:
+    df = read_dataset(columns=_SUMMARY_COLUMNS)
     if df.empty:
         return {"total_rows": 0, "batches": 0, "by_variable": {}, "regions": 0,
                 "valid_date_min": None, "valid_date_max": None}
