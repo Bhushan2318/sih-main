@@ -1,5 +1,13 @@
-# Pinned for compatibility with the local Python 3.9.6 (see plan's environment note).
-# If this venv is later created against Python 3.10/3.11+, these upper bounds can be relaxed.
+# Core runtime. Everything here ships as a prebuilt wheel on Windows / macOS / Linux for
+# CPython 3.9 through 3.12 — a plain `pip install -r requirements.txt` never compiles.
+#
+# Python 3.11 or 3.12 is recommended. 3.9 still works. 3.13 is not supported yet: numpy
+# 1.26 has no 3.13 wheel and moving to numpy 2 needs a compatibility pass across xgboost
+# / shap first.
+#
+# GRIB2 decoding (eccodes / cfgrib / xarray) lives in requirements-live.txt — it is only
+# needed to pull *fresh* NOAA GEFS cycles. The app, the dashboard, scoring, guided
+# replay, CSV/parquet upload and the whole test suite run without it.
 
 fastapi>=0.110,<0.116
 uvicorn[standard]>=0.27,<0.31
@@ -24,11 +32,6 @@ pydantic-settings>=2.1,<2.4
 
 websockets>=12.0,<13.0
 
-# GRIB2 decoding — only needed to run scripts/fetch_gefs_reforecast_sample.py.
-# The 'eccodes' wheel bundles the libeccodes binary (no system install / brew needed).
-eccodes>=2.38
-cfgrib>=0.9.10,<0.10
-xarray>=2024.1
 requests>=2.31,<3.0
 
 pytest>=8.0,<9.0
