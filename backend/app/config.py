@@ -44,6 +44,17 @@ class Settings(BaseSettings):
     # Minimum number of newly-final observation rows before an automatic retrain.
     live_retrain_min_new_rows: int = 500
 
+    # ---- serving ------------------------------------------------------------------
+    # Warm the guided-replay ranking and the ensemble view in a background thread at
+    # startup, so the first request for either is instant. Worth it on a workstation.
+    #
+    # Turn it OFF on a memory-constrained host. The warm scores every historical cycle,
+    # and if a real request lands while it is still running the box pays for two scoring
+    # passes at once - which is what OOM-killed the 512 MB container even after the read
+    # path was cut to fit a single pass. Cold means the first replay call is slow, not
+    # that anything is missing.
+    warm_caches_on_startup: bool = True
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
