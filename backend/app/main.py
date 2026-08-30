@@ -48,7 +48,7 @@ async def lifespan(_app: FastAPI):
     # Guided replay scores every historical cycle once and memoises the ranking; that is
     # ~1-2 min of XGBoost the first time. Warm it off the request path so the first
     # /api/replay/cycles call is instant. No model -> nothing to warm.
-    if registry.current_run_id():
+    if registry.current_run_id() and settings.warm_caches_on_startup:
         def _warm_replay() -> None:
             try:
                 from app.services import replay_service
@@ -63,6 +63,8 @@ async def lifespan(_app: FastAPI):
                 log.exception("guided-replay warm failed (endpoint still works, just cold)")
 
         threading.Thread(target=_warm_replay, name="replay-warm", daemon=True).start()
+    elif registry.current_run_id():
+        log.info("startup cache warm disabled; replay and ensemble will be cold on first call")
 
     # Live ingestion is opt-in (LIVE_INGEST_ENABLED); start() is a no-op when it is off,
     # so a fresh clone never reaches out to NOAA just by running the server.
