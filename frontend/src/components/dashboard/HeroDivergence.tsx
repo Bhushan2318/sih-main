@@ -133,9 +133,11 @@ function NationalChart({ data }: { data: EnsembleDivergenceResponse }) {
   }));
   if (!rows.length) return <Empty>No scored regions in this cycle.</Empty>;
 
+  // height="100%" rather than a fixed height: the panel is a flex column that grows to fill
+  // the opening screen, and the chart has to grow with it.
   return (
-    <ResponsiveContainer width="100%" height={236}>
-      <ComposedChart data={rows} margin={{ top: 10, right: 14, bottom: 2, left: -14 }}>
+    <ResponsiveContainer width="100%" height="100%">
+      <ComposedChart data={rows} margin={{ top: 10, right: 14, bottom: 6, left: -10 }}>
         <CartesianGrid strokeDasharray="3 3" stroke={CHART.grid} vertical={false} />
         <XAxis dataKey="lead" tickFormatter={(d) => `D${d}`} stroke={CHART.axis} tickLine={false} />
         <YAxis
@@ -191,8 +193,8 @@ function SkillChart({ data }: { data: EnsembleDivergenceResponse }) {
   return (
     <>
       <SkillNumbers skill={skill} />
-      <ResponsiveContainer width="100%" height={162}>
-        <ComposedChart data={rows} margin={{ top: 6, right: 14, bottom: 2, left: -14 }}>
+      <ResponsiveContainer width="100%" height="100%">
+        <ComposedChart data={rows} margin={{ top: 6, right: 14, bottom: 6, left: -10 }}>
           <CartesianGrid strokeDasharray="3 3" stroke={CHART.grid} />
           <XAxis
             type="number" dataKey="predicted" domain={[0, 100]} stroke={CHART.axis}
