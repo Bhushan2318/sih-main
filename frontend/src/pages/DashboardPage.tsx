@@ -1,27 +1,42 @@
 import { useEffect, useRef, useState } from "react";
 import type { Topology } from "topojson-specification";
 import type { RiskBand } from "../api/types";
-import { AlertsPanel } from "../components/dashboard/AlertsPanel";
+import { AlertsPage } from "../components/alerts/AlertsPage";
 import { BustSummaryChart } from "../components/dashboard/BustSummaryChart";
 import { FeedFreshness } from "../components/dashboard/FeedFreshness";
 import { HeroDivergence } from "../components/dashboard/HeroDivergence";
 import { KpiStrip } from "../components/dashboard/KpiStrip";
-import { ModelStatusCard } from "../components/dashboard/ModelStatusCard";
+import { ModelPage } from "../components/model/ModelPage";
 import { RiskTicker } from "../components/dashboard/RiskTicker";
 import { RegionDetailPanel } from "../components/detail/RegionDetailPanel";
 import { EmptyState, ErrorState, LoadingState } from "../components/common/States";
 import { IndiaChoroplethMap, loadTopology } from "../components/map/IndiaChoroplethMap";
+import { LeadDayRail } from "../components/map/LeadDayRail";
 import { LeadDaySelector } from "../components/map/LeadDaySelector";
 import { MapLegend } from "../components/map/MapLegend";
 import { ReplayView } from "../components/replay/ReplayView";
-import { UploadPanel } from "../components/upload/UploadPanel";
 import { useAllRegions, useEnsembleDivergence, useModelStatus } from "../hooks/useDashboardData";
 import { useLiveSocket } from "../hooks/useLiveSocket";
+import { useMediaQuery } from "../hooks/useMediaQuery";
+
+/**
+ * Operations is the map and the region behind it, and nothing else. Alerts and Model each
+ * get their own tab so the screen a judge stares at is not sharing room with a run id, a
+ * metrics table and a file dropzone.
+ */
+type View = "live" | "alerts" | "model" | "replay";
+
+const TABS: { id: View; label: string }[] = [
+  { id: "live", label: "Operations" },
+  { id: "alerts", label: "Alerts" },
+  { id: "model", label: "Model" },
+  { id: "replay", label: "Replay a real bust" },
+];
 
 export function DashboardPage() {
   useLiveSocket();
 
-  const [view, setView] = useState<"live" | "replay">("live");
+  const [view, setView] = useState<View>("live");
   const [leadDay, setLeadDay] = useState(1);
   const [selectedRegion, setSelectedRegion] = useState<string | null>(null);
   const [alertFilter, setAlertFilter] = useState<RiskBand | undefined>(undefined);
@@ -58,6 +73,22 @@ export function DashboardPage() {
 
   const highCount = regions?.regions.filter((r) => r.risk_band === "high").length ?? 0;
 
+  // The opening screen only claims the viewport when there is a hero to fill it; with no
+  // trained model the hero renders nothing and a full-height empty band would be absurd.
+  const heroFills = Boolean(ensembleQuery.data?.model_trained);
+
+  // The horizon rail only earns its place when the map still has room beside it; below
+  // this the map would be squeezed to buy space for a column, so the pills come back.
+  const showRail = useMediaQuery("(min-width: 1440px) and (min-height: 700px)");
+
+  // Picking a region from the ticker has to carry you to it. The ticker sits on the
+  // opening screen but the detail panel it fills is a whole viewport below, so selecting
+  // without scrolling looks like the click did nothing.
+  const selectAndReveal = (regionId: string) => {
+    setSelectedRegion(regionId);
+    scrollToOperations();
+  };
+
   return (
     <div className="app">
       <header className="topbar">
@@ -70,24 +101,18 @@ export function DashboardPage() {
           </div>
 
           <nav className="viewtabs" role="tablist" aria-label="View">
-            <button
-              type="button"
-              role="tab"
-              aria-selected={view === "live"}
-              className={view === "live" ? "viewtab is-active" : "viewtab"}
-              onClick={() => setView("live")}
-            >
-              Operations
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={view === "replay"}
-              className={view === "replay" ? "viewtab is-active" : "viewtab"}
-              onClick={() => setView("replay")}
-            >
-              Replay a real bust
-            </button>
+            {TABS.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                role="tab"
+                aria-selected={view === t.id}
+                className={view === t.id ? "viewtab is-active" : "viewtab"}
+                onClick={() => setView(t.id)}
+              >
+                {t.label}
+              </button>
+            ))}
           </nav>
 
           <div className="topbar__right">
@@ -112,28 +137,61 @@ export function DashboardPage() {
         <main className="app__body app__body--replay">
           <ReplayView topology={topology} />
         </main>
+      ) : view === "alerts" ? (
+        <AlertsPage
+          filter={alertFilter}
+          onFilter={setAlertFilter}
+          // An alert is a pointer at a place and a day, so acting on one belongs on the
+          // map rather than in the list you clicked it from.
+          onSelect={(regionId, lead) => {
+            setSelectedRegion(regionId);
+            setLeadDay(lead);
+            setView("live");
+            // Operations opens on the hero, so land the map in view rather than making
+            // someone scroll a viewport to find what they just clicked. One frame later,
+            // once the live view has actually mounted #operations.
+            requestAnimationFrame(scrollToOperations);
+          }}
+        />
+      ) : view === "model" ? (
+        <ModelPage />
       ) : (
         <>
-          <HeroDivergence data={ensembleQuery.data} />
-          {regions?.regions.length ? (
-            <RiskTicker
-              regions={regions.regions}
-              leadDay={regions.lead_time_days}
-              onSelect={setSelectedRegion}
-            />
-          ) : null}
-          <FeedFreshness />
-          <KpiStrip all={allRegions} day={regions} />
+          {/* The opening screen: the national argument, held for one full viewport, with
+              the ticker as its base rail. Everything operational starts below the fold. */}
+          <section className={heroFills ? "screen1" : undefined}>
+            <HeroDivergence data={ensembleQuery.data} />
+            <KpiStrip all={allRegions} day={regions} />
+            {heroFills ? <ScrollCue /> : null}
+            {regions?.regions.length ? (
+              <RiskTicker
+                regions={regions.regions}
+                leadDay={regions.lead_time_days}
+                onSelect={selectAndReveal}
+              />
+            ) : null}
+          </section>
 
-          <main className="app__body">
+          <FeedFreshness />
+
+          {/* Operations holds exactly one viewport: the map and the region behind it, both
+              whole, with no scrolling. The summary chart is the next screen down. */}
+          <main
+            className={showRail ? "app__body app__body--ops app__body--rail" : "app__body app__body--ops"}
+            id="operations"
+          >
             <section className="map-column">
               <div className="map-toolbar">
-                <LeadDaySelector
-                  value={leadDay}
-                  onChange={setLeadDay}
-                  disabled={!regions?.model_trained}
-                  available={regions?.available_lead_days}
-                />
+                {/* The rail carries the lead day when there is room for it; the pills are
+                    the same control for narrower screens, and only ever one exists. */}
+                {showRail ? null : (
+                  <LeadDaySelector
+                    value={leadDay}
+                    onChange={setLeadDay}
+                    disabled={!regions?.model_trained}
+                    available={regions?.available_lead_days}
+                  />
+                )}
                 {regions ? <MapLegend definitions={regions.risk_band_definitions} /> : null}
               </div>
 
@@ -161,24 +219,11 @@ export function DashboardPage() {
                   <EmptyState title="Nothing to show for this lead day" message={regions.message} />
                 )
               ) : null}
-
-              {regions?.regions.length ? (
-                <BustSummaryChart regions={regions.regions} onSelect={setSelectedRegion} />
-              ) : null}
             </section>
 
-            <section className="side-column">
-              <ModelStatusCard />
-              <AlertsPanel
-                filter={alertFilter}
-                onFilter={setAlertFilter}
-                onSelect={(regionId, lead) => {
-                  setSelectedRegion(regionId);
-                  setLeadDay(lead);
-                }}
-              />
-              <UploadPanel />
-            </section>
+            {showRail ? (
+              <LeadDayRail all={allRegions} value={leadDay} onChange={setLeadDay} />
+            ) : null}
 
             <RegionDetailPanel
               regionId={selectedRegion}
@@ -186,9 +231,43 @@ export function DashboardPage() {
               riskCuts={riskCuts}
             />
           </main>
+
+          {regions?.regions.length ? (
+            <section className="app__below">
+              <BustSummaryChart regions={regions.regions} onSelect={setSelectedRegion} />
+            </section>
+          ) : null}
         </>
       )}
     </div>
+  );
+}
+
+/**
+ * Bring the map and the region detail panel into view. `behavior` is chosen here rather
+ * than left to CSS because the reduced-motion override in styles.css only reaches the
+ * `scroll-behavior` property, not the option passed to scrollIntoView.
+ */
+function scrollToOperations() {
+  const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  document
+    .getElementById("operations")
+    ?.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "start" });
+}
+
+/**
+ * The only affordance saying the page continues. A full-height opening screen hides the
+ * map completely, so something has to name what is below it - a bare chevron would leave
+ * a judge guessing whether scrolling is worth it.
+ */
+function ScrollCue() {
+  return (
+    <button type="button" className="scrollcue" onClick={scrollToOperations}>
+      <span>The national map</span>
+      <svg viewBox="0 0 16 10" aria-hidden="true" width="16" height="10">
+        <path d="M1 1l7 7 7-7" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      </svg>
+    </button>
   );
 }
 
