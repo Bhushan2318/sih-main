@@ -28,6 +28,10 @@ from app.ingestion.canonical_schema import CANONICAL_COLUMNS
 
 CANONICAL_DIR = resolve_path(settings.canonical_dir)
 
+# Rows per parquet row group. Small enough that a filtered read skips most of the file,
+# large enough that the per-group overhead stays negligible at these volumes.
+_ROW_GROUP_SIZE = 16_384
+
 # Explicit Arrow schema: every partition is written with these columns, in this order and
 # these types, so the whole store reads back as one consistent dataset.
 ARROW_SCHEMA = pa.schema(
@@ -84,13 +88,26 @@ def append_batch(batch_id: str, rows: Iterable[dict] | pd.DataFrame) -> int:
     df["lead_time_days"] = df["lead_time_days"].astype("Int16")
     df["value"] = pd.to_numeric(df["value"], errors="coerce")
 
+    # Sort before writing so each row group covers a narrow slice of the columns readers
+    # filter on. Parquet keeps per-row-group min/max statistics, but they only let Arrow
+    # skip a group when the group is actually homogeneous - in arrival order every group
+    # would span every init_date and every statistic would be useless.
+    df = df.sort_values(
+        ["value_type", "init_date", "valid_date", "variable"],
+        kind="mergesort", na_position="first",
+    ).reset_index(drop=True)
+
     table = pa.Table.from_pandas(df, schema=ARROW_SCHEMA, preserve_index=False)
 
     part_dir = _partition_dir(batch_id)
     if part_dir.exists():
         shutil.rmtree(part_dir)
     part_dir.mkdir(parents=True, exist_ok=True)
-    pq.write_table(table, part_dir / "part-0.parquet")
+    # One row group per file is the pyarrow default at these sizes, and it defeats
+    # predicate pushdown completely: the 192k-row partition was a single group, so *any*
+    # filter had to decode all 192k rows before discarding them. That is what pushed the
+    # serving container past 512 MB. Smaller groups give Arrow something to skip.
+    pq.write_table(table, part_dir / "part-0.parquet", row_group_size=_ROW_GROUP_SIZE)
     return len(df)
 
 
@@ -195,6 +212,7 @@ def read_dataset(
     columns: Sequence[str] | None = None,
     init_dates: Sequence | None = None,
     valid_date_min: date | None = None,
+    valid_date_max: date | None = None,
     exclude_provisional: bool = False,
     dedupe: bool = True,
 ) -> pd.DataFrame:
@@ -223,6 +241,8 @@ def read_dataset(
         _and(ds.field("init_date").isin([_as_date(d) for d in init_dates]))
     if valid_date_min is not None:
         _and(ds.field("valid_date") >= _as_date(valid_date_min))
+    if valid_date_max is not None:
+        _and(ds.field("valid_date") <= _as_date(valid_date_max))
     if exclude_provisional:
         # None (legacy / not applicable) must survive - only an explicit provisional goes.
         # `field != "provisional"` alone is NOT enough: in Arrow, as in SQL, comparing a
