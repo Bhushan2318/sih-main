@@ -541,6 +541,25 @@ def _apply_confirmations(result: sm.MappingResult, mappings: list) -> None:
         p.unit_conversion = m.get("unit_conversion", p.unit_conversion)
         p.decision, p.method = "confirmed", "manual"
 
+    # Surface (don't silently swallow) the case where the confirmation still lands two
+    # measurement columns on one canonical (variable, value_type). Two genuinely distinct
+    # series can legitimately share a canonical name - GEFS carries both mslp_hpa and
+    # psfc_hpa as pressure - so this is a loud note, not a drop; the confirm UI is where
+    # an accidental avg/max/min-onto-one-variable gets pared back to a single column.
+    accepted: dict = {}
+    for p in result.proposals:
+        if p.role == sm.ROLE_MEASUREMENT and p.decision in ("auto_accept", "confirmed") \
+                and p.suggested_variable:
+            accepted.setdefault(
+                (p.suggested_variable, p.suggested_value_type), []
+            ).append(p.source_column)
+    for (variable, _vt), cols in accepted.items():
+        if len(cols) > 1:
+            result.notes.append(
+                f"{len(cols)} columns ingested as {variable} ({', '.join(cols)}) - "
+                "kept as distinct series (dedupe keys on source column)"
+            )
+
 
 # --------------------------------------------------------------------------------------
 # Phase 2 CLI smoke (no API yet)
