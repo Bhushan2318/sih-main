@@ -132,6 +132,37 @@ def test_row_without_valid_date_is_skipped_not_dropped(session, tmp_path):
     assert any("skipped" in n.lower() for n in r.notes)
 
 
+def test_avg_max_min_collision_is_surfaced_not_silent(session, tmp_path):
+    # avg/max/min all claim temperature_c. The mapper routes this to confirmation (the UI
+    # is where an accidental 3-onto-1 gets pared to one column). If a client confirms all
+    # three anyway they are kept as distinct series - the store dedupes on source_column -
+    # but the pipeline must say so in the notes rather than swallow it silently.
+    df = pd.DataFrame({
+        "region": ["Bihar", "Bihar", "Odisha", "Odisha"],
+        "valid_date": ["2019-06-01", "2019-06-02", "2019-06-01", "2019-06-02"],
+        "Temp_Avg_C": [30.1, 29.4, 31.0, 30.2],
+        "Temp_Max_C": [36.2, 35.1, 37.4, 36.0],
+        "Temp_Min_C": [24.0, 23.6, 25.1, 24.4],
+        "data_type": ["observed"] * 4,
+    })
+    src = tmp_path / "triple_temp.csv"
+    df.to_csv(src, index=False)
+
+    r = ingest_upload(session, src, src.name)
+    assert r.status == "pending_confirmation"            # collision -> confirmation
+    colliding = [
+        {"source_column": c, "variable": "temperature_c", "value_type": "observed",
+         "unit_conversion": None}
+        for c in ("Temp_Avg_C", "Temp_Max_C", "Temp_Min_C")
+    ]
+    r = confirm_mapping(session, r.batch_id, colliding)
+    assert r.status == "ingested"
+
+    temp = parquet_store.read_dataset(variables=["temperature_c"])
+    assert set(temp["source_column"]) == {"Temp_Avg_C", "Temp_Max_C", "Temp_Min_C"}
+    assert any("temperature_c" in n and "distinct series" in n for n in r.notes)
+
+
 def test_power_monthly_ingests_as_monthly_grain(session):
     path = find_sample("POWER_Regional_Monthly")
     if path is None:
