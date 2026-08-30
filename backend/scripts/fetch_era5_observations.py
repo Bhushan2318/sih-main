@@ -1,4 +1,4 @@
-"""Build the observation-side sample for ForecastGuard AI from ERA5 (via Open-Meteo).
+"""Build the observation-side sample for Sanket from ERA5 (via Open-Meteo).
 
 Source
 ------
@@ -72,7 +72,7 @@ HTTP_BACKOFF = 3.0
 POLITE_GAP_S = 1.5  # between city requests, to stay well under the public rate limit
 
 _session = requests.Session()
-_session.headers["User-Agent"] = "ForecastGuard-AI/phase2-sample (SIH 2026)"
+_session.headers["User-Agent"] = "Sanket/phase2-sample (SIH 2026)"
 
 
 def _get_json(params: dict) -> dict:

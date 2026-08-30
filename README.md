@@ -1,4 +1,4 @@
-# ForecastGuard AI
+# Sanket
 
 AI-based forecast bust detection for medium-range (Day 1–10) weather forecasts across
 Indian regions — Smart India Hackathon 2026, Problem Statement 26079 (NCMRWF / Ministry
@@ -8,7 +8,7 @@ FastAPI + XGBoost backend, React dashboard centered on a clickable India map. Se
 [`docs/plan.md`](docs/plan.md) for the full architecture, canonical data schema, and
 phased build order.
 
-**Status**: Phases 1–4 and 6 complete (Phase 5, the design pass, is still deferred).
+**Status**: Phases 1–6 complete, including the Phase 5 design pass.
 
 - **Phase 1** — stack, folder scaffolding, canonical schema.
 - **Phase 2** — ingestion + schema-mapping. Format-agnostic parsers (CSV/TSV/XLSX/JSON,
@@ -30,8 +30,7 @@ phased build order.
 - **Phase 4b** — React dashboard: clickable India choropleth with a lead-day selector,
   region detail panel (bust-probability curve, per-variable forecast-vs-observed
   trajectories, SHAP factors), alerts panel, and an upload + column-confirmation flow —
-  all live over the WebSocket. Styling is deliberately plain; design is Phase 5. See
-  [`frontend/README.md`](frontend/README.md).
+  all live over the WebSocket. See [`frontend/README.md`](frontend/README.md).
 - **Phase 6** — live ingestion. A background scheduler pulls each published NOAA GEFS
   operational cycle (0.25°, Day 1–10, the same 5 members the models were trained on) and
   refreshes observations in two tiers: near-real-time *provisional* values that fill the
@@ -91,7 +90,12 @@ If PowerShell blocks the activate script with an execution-policy error, run onc
 `Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned`. Or use
 **Command Prompt** instead, where activation is `.venv\Scripts\activate.bat`.
 
-Next: **Phase 5** — the design pass (palette, typography, layout polish).
+- **Phase 5** — the design pass. A single committed visual world: synoptic chart paper,
+  Archivo/Public Sans/DM Mono, and a three-stop risk ramp (calm → watch → bust) used as a
+  scale and never as decoration. A KPI strip derives mean P(bust), high-risk count,
+  confidence decay across the horizon and the peak region from the scored cycle already in
+  hand — a figure that cannot be computed renders as an em dash with the reason, never as a
+  placeholder.
 
 ## Layout
 

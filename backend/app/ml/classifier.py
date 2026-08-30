@@ -80,6 +80,39 @@ def _evaluate(y_true, proba, threshold: float = 0.5) -> dict:
         out["pr_auc"] = float(average_precision_score(y_true, proba))
     else:
         out["roc_auc"] = out["pr_auc"] = float("nan")
+    out["calibration"] = _reliability(y_true, proba)
+    return out
+
+
+def _reliability(y_true, proba, bins: int = 5) -> list:
+    """Reliability (calibration) of the predicted probabilities.
+
+    ROC-AUC only says the ranking is right; it says nothing about whether a stated 70%
+    means 70%. For a probabilistic product that second question is the one an operational
+    forecaster actually cares about - a well-ranked but badly calibrated model quietly
+    tells everyone the wrong number. Bins are only reported where real samples landed, so
+    an empty bin is absent rather than drawn as a zero.
+    """
+    y_true = np.asarray(y_true, int)
+    proba = np.asarray(proba, float)
+    if len(y_true) == 0:
+        return []
+    edges = np.linspace(0.0, 1.0, bins + 1)
+    # right=False keeps 1.0 inside the last bin rather than in one of its own
+    idx = np.clip(np.digitize(proba, edges[1:-1], right=False), 0, bins - 1)
+    out = []
+    for b in range(bins):
+        m = idx == b
+        n = int(m.sum())
+        if n == 0:
+            continue
+        out.append({
+            "bin_lo": float(edges[b]),
+            "bin_hi": float(edges[b + 1]),
+            "predicted_mean": float(proba[m].mean()),
+            "observed_rate": float(y_true[m].mean()),
+            "n": n,
+        })
     return out
 
 

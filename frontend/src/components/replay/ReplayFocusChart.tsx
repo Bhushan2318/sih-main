@@ -2,6 +2,7 @@ import {
   CartesianGrid, Legend, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 import type { ReplayFocusSeries } from "../../api/types";
+import { CHART } from "../../theme";
 
 /**
  * The one variable that diverged most over the replayed cycle: forecast vs what was
@@ -42,13 +43,13 @@ export function ReplayFocusChart({
             formatter={(v: number) => (v == null ? "—" : `${fmt(v)}${focus.unit ? ` ${focus.unit}` : ""}`)}
           />
           <Legend />
-          <ReferenceLine x={currentLead} stroke="#b45309" strokeWidth={2}
-            label={{ value: `Day ${currentLead}`, position: "top", fontSize: 10, fill: "#b45309" }} />
+          <ReferenceLine x={currentLead} stroke={CHART.marker} strokeWidth={2}
+            label={{ value: `Day ${currentLead}`, position: "top", fontSize: 10, fill: CHART.marker }} />
           <Line type="monotone" dataKey="forecast" name="Forecast (ens. mean)"
-            stroke="#2f6fb0" strokeWidth={2} dot={{ r: 2 }} />
+            stroke={CHART.forecast} strokeWidth={2} dot={{ r: 2 }} />
           {anyObserved ? (
             <Line type="monotone" dataKey="observed" name="Observed"
-              stroke="#111827" strokeWidth={2} strokeDasharray="6 4" dot={{ r: 2 }} connectNulls={false} />
+              stroke={CHART.observed} strokeWidth={2} strokeDasharray="6 4" dot={{ r: 2 }} connectNulls={false} />
           ) : null}
         </LineChart>
       </ResponsiveContainer>

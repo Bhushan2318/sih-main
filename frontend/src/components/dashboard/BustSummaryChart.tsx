@@ -1,5 +1,6 @@
 import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import type { RegionSummary } from "../../api/types";
+import { CHART, bandLabel } from "../../theme";
 
 /** Top-N regions by bust probability for the selected lead day. */
 export function BustSummaryChart({ regions, onSelect }: {
@@ -23,11 +24,11 @@ export function BustSummaryChart({ regions, onSelect }: {
       <header className="card__head"><h3>Highest risk regions</h3></header>
       <ResponsiveContainer width="100%" height={Math.max(180, data.length * 26)}>
         <BarChart data={data} layout="vertical" margin={{ top: 4, right: 16, bottom: 4, left: 8 }}>
-          <CartesianGrid strokeDasharray="3 3" horizontal={false} />
-          <XAxis type="number" domain={[0, 100]} unit="%" />
-          <YAxis type="category" dataKey="region" width={132} tick={{ fontSize: 11 }} />
-          <Tooltip formatter={(v: number, _n, item) => [`${v}%`, item.payload.band]} />
-          <Bar dataKey="probability" onClick={(d: { regionId?: string }) => d.regionId && onSelect(d.regionId)}>
+          <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke={CHART.grid} />
+          <XAxis type="number" domain={[0, 100]} unit="%" stroke={CHART.axis} />
+          <YAxis type="category" dataKey="region" width={132} tick={{ fontSize: 11 }} stroke={CHART.axis} />
+          <Tooltip formatter={(v: number, _n, item) => [`${v}%`, bandLabel(item.payload.band)]} />
+          <Bar dataKey="probability" radius={[0, 4, 4, 0]} onClick={(d: { regionId?: string }) => d.regionId && onSelect(d.regionId)}>
             {data.map((d) => <Cell key={d.regionId} className={`bar bar--${d.band}`} />)}
           </Bar>
         </BarChart>

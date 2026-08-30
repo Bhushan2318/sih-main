@@ -1,4 +1,4 @@
-"""Canonical internal data schema for ForecastGuard AI.
+"""Canonical internal data schema for Sanket.
 
 This module defines the target shape every upload gets mapped to, regardless of its
 original column names or format. It intentionally contains no ingestion/mapping logic
