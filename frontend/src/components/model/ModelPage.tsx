@@ -6,6 +6,13 @@ import { ErrorState, LoadingState } from "../common/States";
 import { UploadPanel } from "../upload/UploadPanel";
 
 /**
+ * Upload drives a retrain, which needs ~2 GB. On a 512 MB serving host that would OOM
+ * the container mid-demo, so the host sets VITE_ENABLE_UPLOAD=false and the panel is not
+ * built at all. Unset (local dev) means on, where the laptop can actually do the work.
+ */
+const UPLOAD_ENABLED = import.meta.env.VITE_ENABLE_UPLOAD !== "false";
+
+/**
  * The model, in full: what it was trained on, how well it scores, and what it treats as a
  * bust for each variable.
  *
@@ -53,7 +60,14 @@ export function ModelPage() {
         <p className="notice notice--error">Last training error: {data.last_training_error}</p>
       ) : null}
 
-      {!data.model_trained ? <UploadPanel /> : (
+      {!data.model_trained ? (
+        UPLOAD_ENABLED ? <UploadPanel /> : (
+          <p className="muted">
+            This deployment serves a model trained elsewhere and cannot retrain, so there
+            is nothing to upload here. No model is currently published.
+          </p>
+        )
+      ) : (
         <>
           {/* ── the headline question: does the bust classifier actually work? */}
           <div className="kpis kpis--flush">
@@ -189,7 +203,7 @@ export function ModelPage() {
             </section>
           ) : null}
 
-          <UploadPanel />
+          {UPLOAD_ENABLED ? <UploadPanel /> : null}
         </>
       )}
     </main>

@@ -219,3 +219,81 @@ Add-Content backend\.env "LIVE_INGEST_ENABLED=true"
 then restart `uvicorn`. A one-off pull without editing `.env`:
 `curl -X POST "http://localhost:8000/api/ingest/run-cycle?wait=true"` (PowerShell:
 `Invoke-RestMethod -Method Post "http://localhost:8000/api/ingest/run-cycle?wait=true"`).
+
+## Deploying (GitHub Actions + Render, free)
+
+One free Render web service serves the API **and** the built dashboard from a single
+origin — no CORS, no second service, no proxy. The image never trains: a full retrain
+peaks around 2 GB and the free tier gives 512 MB, so training happens on a GitHub Actions
+runner and only the result is shipped.
+
+```
+GitHub Actions (16 GB, every 6 h)          Render Free (512 MB, serve only)
+  pull the newest GEFS cycle                 docker build:
+  refresh final observations                   node   → builds the dashboard
+  retrain                                      curl   → pulls the release asset
+  tar model + canonical + db  (~24 MB)         python → serves API + SPA
+  publish to release tag `data-latest`  ────►  runs `uvicorn app.main:app`
+  POST the Render deploy hook           ────►  redeploys with the fresh model
+```
+
+### One-time setup
+
+1. **Seed the first artifact.** The image pulls `data-latest`; publish one from a machine
+   that already has a trained model:
+
+   ```bash
+   cd backend
+   tar -czf sanket-data.tar.gz data/models data/canonical data/geo metadata.db
+   gh release create data-latest sanket-data.tar.gz \
+     --title "Latest model and data" \
+     --notes "Rolling artifact published by the refresh workflow."
+   ```
+
+   Skip this and the first build still succeeds — the site just reports
+   `model_trained: false` and renders its empty state until the workflow runs.
+
+2. **Create the Render service.** New → Blueprint → point at this repo. It reads
+   [`render.yaml`](render.yaml); no console wiring to redo if the service is recreated.
+
+3. **Wire the deploy hook.** Render → the service → Settings → Deploy Hook → copy the
+   URL, then add it as the repo secret `RENDER_DEPLOY_HOOK`
+   (Settings → Secrets and variables → Actions). Without it the workflow still publishes
+   the artifact — only the automatic redeploy stops.
+
+4. **Keep it warm.** Render Free spins down after 15 minutes idle (~30–50 s cold start).
+   Point an external pinger (UptimeRobot, every 5 min) at `/api/health`. A browser tab
+   will *not* work: polling pauses when the tab is backgrounded.
+
+### What the free tier costs you
+
+| Limit | Effect | Handling |
+|---|---|---|
+| 512 MB RAM | cannot retrain | Actions trains; upload panel hidden via `VITE_ENABLE_UPLOAD=false` |
+| no WebSocket | no live push | client falls back to 60 s polling and reports the socket closed |
+| spins down at 15 min | 30–50 s cold start | external pinger on `/api/health` |
+| 750 instance-hours/mo | ≈ one always-on service | fine for a single service |
+
+### Running the refresh by hand
+
+Actions → **Refresh model and data** → *Run workflow*. `force_train` retrains even with no
+newly-verified rows; `skip_forecast` retrains on what is already stored. Locally:
+
+```bash
+cd backend
+python -m scripts.refresh_for_deploy --help
+```
+
+### Testing the deployed shape locally
+
+The image builds the dashboard into `backend/app/static`, which `app/main.py` mounts only
+if it exists — so this reproduces production without Docker, and removing the directory
+restores normal split-process development:
+
+```bash
+cd frontend && VITE_ENABLE_UPLOAD=false npm run build
+cp -r dist ../backend/app/static
+cd ../backend && ./.venv/bin/python -m uvicorn app.main:app --port 8000
+# http://localhost:8000 now serves the whole product from one origin
+rm -rf app/static      # back to normal dev
+```

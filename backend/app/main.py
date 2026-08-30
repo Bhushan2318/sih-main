@@ -14,9 +14,12 @@ import asyncio
 import logging
 import threading
 from contextlib import asynccontextmanager
+from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.api.routers import alerts, ensemble, ingest, model_status, regions, replay, upload, ws
 from app.config import settings
@@ -108,3 +111,44 @@ def health() -> dict:
         "current_run_id": registry.current_run_id(),
         "websocket_clients": manager.connection_count,
     }
+
+
+# ---------------------------------------------------------------- static SPA (deployed)
+# A deployed image builds the frontend and hands the bundle to FastAPI, so the API and the
+# dashboard are one origin and one process - no CORS, no second service, no proxy.
+#
+# This is mounted only when the directory actually exists, so local development is
+# untouched: there `npm run dev` serves the SPA on :5173 and this block is skipped
+# entirely. Mounting last also matters - the API routers above are already registered, so
+# the catch-all below can never shadow /api or /ws.
+_STATIC_DIR = Path(__file__).resolve().parent / "static"
+
+if _STATIC_DIR.is_dir():
+    app.mount("/assets", StaticFiles(directory=_STATIC_DIR / "assets"), name="assets")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    def spa(full_path: str) -> FileResponse:
+        """Serve the SPA, falling back to index.html for client-side routes.
+
+        A real file wins when one exists (favicon, the topojson the map fetches); anything
+        else returns the shell so a deep link or a refresh lands in the app rather than on
+        a 404.
+
+        The /api and /ws guard is load-bearing. A registered route matches before this
+        catch-all, but an *un*registered one does not - without the guard a typo'd or
+        retired endpoint would answer 200 with a page of HTML, and the client's
+        res.json() would surface it as a JSON parse error instead of a clean 404.
+        """
+        if full_path.startswith(("api/", "ws")):
+            raise HTTPException(status_code=404, detail=f"No such endpoint: /{full_path}")
+
+        # resolve() collapses any ../ before the check, so a crafted path cannot read
+        # outside the bundle even though the router hands us the segment verbatim
+        candidate = (_STATIC_DIR / full_path).resolve()
+        if full_path and candidate.is_file() and candidate.is_relative_to(_STATIC_DIR):
+            return FileResponse(candidate)
+        return FileResponse(_STATIC_DIR / "index.html")
+
+    log.info("serving built frontend from %s", _STATIC_DIR)
+else:
+    log.info("no built frontend at %s; API only (use `npm run dev` for the UI)", _STATIC_DIR)

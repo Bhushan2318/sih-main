@@ -1,0 +1,144 @@
+name: Refresh model and data
+
+# Keeps the deployed site current without paying for a box that can train.
+#
+# A full retrain peaks around 2 GB; Render's free tier gives 512 MB. GitHub Actions gives
+# a 16 GB runner and unlimited minutes on a public repo, so the work happens here and only
+# the result - model + canonical store + metadata db, ~24 MB - is published as a release
+# asset for the image build to pull.
+#
+# The store is CUMULATIVE. Each run restores the previous asset before ingesting, so the
+# canonical parquet grows cycle by cycle instead of every run training on one day of data.
+
+on:
+  schedule:
+    # GEFS publishes roughly 5.5 h after its init hour, so each run picks up the cycle
+    # before it: 06:00 UTC gets 00Z, 12:00 gets 06Z, and so on.
+    - cron: "0 0,6,12,18 * * *"
+  workflow_dispatch:
+    inputs:
+      force_train:
+        description: "Retrain even if no newly-verified observations landed"
+        type: boolean
+        default: false
+      skip_forecast:
+        description: "Skip the GEFS pull (retrain on what is already stored)"
+        type: boolean
+        default: false
+
+# Writing the release asset is the only write this needs.
+permissions:
+  contents: write
+
+concurrency:
+  # Never let two runs fight over the same release asset or the same store.
+  group: refresh-data
+  cancel-in-progress: false
+
+env:
+  ASSET: sanket-data.tar.gz
+  TAG: data-latest
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-live.txt
+
+      - name: Install dependencies
+        working-directory: backend
+        # requirements-live brings eccodes/cfgrib/xarray - needed here (and only here) to
+        # decode the GRIB2 the NOAA cycle ships as.
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-live.txt
+          python -m eccodes selfcheck
+
+      - name: Restore the previous store
+        working-directory: backend
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # Missing on the very first run, which is fine: the script then builds a store from
+        # this cycle alone. It must not be fatal, or the pipeline could never bootstrap.
+        run: |
+          if gh release download "$TAG" --pattern "$ASSET" --output /tmp/prev.tar.gz --clobber 2>/dev/null; then
+            tar -xzf /tmp/prev.tar.gz -C .
+            echo "restored previous store:"
+            du -sh data/canonical data/models 2>/dev/null || true
+          else
+            echo "no previous asset (first run) - starting from an empty store"
+          fi
+
+      - name: Pull the cycle, verify, retrain
+        working-directory: backend
+        run: |
+          python -m scripts.refresh_for_deploy \
+            ${{ inputs.force_train && '--force-train' || '' }} \
+            ${{ inputs.skip_forecast && '--skip-forecast' || '' }}
+
+      - name: Package
+        id: pack
+        working-directory: backend
+        # Only what the serving box needs to answer a request: the trained model, the
+        # canonical store it scores against, the metadata db, and the geo index.
+        run: |
+          tar -czf "/tmp/$ASSET" \
+            data/models data/canonical data/geo metadata.db
+          echo "size=$(du -h "/tmp/$ASSET" | cut -f1)" >> "$GITHUB_OUTPUT"
+          echo "run_id=$(python -c 'from app.ml import registry; print(registry.current_run_id())')" >> "$GITHUB_OUTPUT"
+
+      - name: Publish the asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # A fixed tag rather than a new release per run: the Dockerfile can then hard-code
+        # one permanent URL, and we do not accumulate a release for every six hours.
+        run: |
+          gh release view "$TAG" >/dev/null 2>&1 || \
+            gh release create "$TAG" \
+              --title "Latest model and data" \
+              --notes "Rolling artifact published by the refresh workflow. Replaced on every run; not a source release."
+          gh release upload "$TAG" "/tmp/$ASSET" --clobber
+          gh release edit "$TAG" \
+            --notes "Rolling artifact published by the refresh workflow.
+          Model run: \`${{ steps.pack.outputs.run_id }}\`
+          Size: ${{ steps.pack.outputs.size }}
+          Built: $(date -u '+%Y-%m-%d %H:%M UTC') from ${{ github.sha }}"
+
+      - name: Trigger the Render deploy
+        id: deploy
+        # Set RENDER_DEPLOY_HOOK in repo Settings > Secrets > Actions. Without it the asset
+        # is still published and the next deploy picks it up; only the auto-refresh stops.
+        # The secret is read through env rather than a step `if:` so an unset secret is a
+        # skipped curl, not a workflow that fails to parse.
+        env:
+          HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+        run: |
+          if [ -n "$HOOK" ]; then
+            curl -fsS -X POST "$HOOK" && echo "deploy triggered"
+            echo "state=triggered" >> "$GITHUB_OUTPUT"
+          else
+            echo "RENDER_DEPLOY_HOOK not set - asset published, deploy not triggered"
+            echo "state=not configured" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Summary
+        run: |
+          {
+            echo "### Refresh complete"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Model run | \`${{ steps.pack.outputs.run_id }}\` |"
+            echo "| Asset size | ${{ steps.pack.outputs.size }} |"
+            echo "| Deploy hook | ${{ steps.deploy.outputs.state }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
