@@ -1,8 +1,28 @@
 import {
-  CartesianGrid, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis,
+  Area, CartesianGrid, ComposedChart, Line, ReferenceArea, ReferenceLine,
+  ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
-import type { BustProbabilityPoint } from "../../api/types";
+import type { BustProbabilityPoint, RiskBand } from "../../api/types";
+import { CHART, bandLabel } from "../../theme";
 
+const BAND_COLOR: Record<RiskBand, string> = {
+  low: CHART.low,
+  medium: CHART.medium,
+  high: CHART.high,
+};
+
+/**
+ * P(bust) across the forecast horizon for one region.
+ *
+ * The risk bands are drawn as faint shaded zones rather than labelled lines cutting across
+ * the plot: the cuts are the classifier's own percentile thresholds, so they belong to the
+ * background the curve is read against, not to the foreground competing with it. They are
+ * named once, with their actual values, in the caption underneath - which is also what
+ * stops them looking like decoration.
+ *
+ * Each point is drawn in its own band colour, so where the curve crosses is visible
+ * without reading the axis at all.
+ */
 export function BustProbabilityCurve({ points, cuts }: {
   points: BustProbabilityPoint[];
   cuts?: { medium: number; high: number };
@@ -15,26 +35,75 @@ export function BustProbabilityCurve({ points, cuts }: {
     driver: p.dominant_variable,
   }));
 
+  const watch = cuts ? cuts.medium * 100 : null;
+  const bust = cuts ? cuts.high * 100 : null;
+
   return (
-    <ResponsiveContainer width="100%" height={220}>
-      <LineChart data={data} margin={{ top: 8, right: 12, bottom: 4, left: -8 }}>
-        <CartesianGrid strokeDasharray="3 3" />
-        <XAxis dataKey="lead" tickFormatter={(d) => `D${d}`} />
-        <YAxis domain={[0, 100]} tickFormatter={(v: number) => `${v}%`} width={54} />
-        <Tooltip
-          formatter={(v: number, _n, item) =>
-            [`${v}%  (${item.payload.band})`, item.payload.driver ? `driver: ${item.payload.driver}` : "P(bust)"]
-          }
-          labelFormatter={(l) => `Lead day ${l}`}
-        />
-        {cuts ? (
-          <>
-            <ReferenceLine y={cuts.medium * 100} strokeDasharray="4 4" label={{ value: "medium", position: "right", fontSize: 10 }} />
-            <ReferenceLine y={cuts.high * 100} strokeDasharray="4 4" label={{ value: "high", position: "right", fontSize: 10 }} />
-          </>
-        ) : null}
-        <Line type="monotone" dataKey="probability" strokeWidth={2} dot={{ r: 3 }} />
-      </LineChart>
-    </ResponsiveContainer>
+    <>
+      <ResponsiveContainer width="100%" height={220}>
+        <ComposedChart data={data} margin={{ top: 8, right: 10, bottom: 4, left: -8 }}>
+          <defs>
+            <linearGradient id="bustFill" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={CHART.high} stopOpacity={0.2} />
+              <stop offset="100%" stopColor={CHART.high} stopOpacity={0} />
+            </linearGradient>
+          </defs>
+
+          {/* The bands themselves, as ground rather than foreground. */}
+          {watch != null && bust != null ? (
+            <>
+              <ReferenceArea y1={0} y2={watch} fill={CHART.low} fillOpacity={0.05} strokeOpacity={0} />
+              <ReferenceArea y1={watch} y2={bust} fill={CHART.medium} fillOpacity={0.07} strokeOpacity={0} />
+              <ReferenceArea y1={bust} y2={100} fill={CHART.high} fillOpacity={0.07} strokeOpacity={0} />
+              <ReferenceLine y={watch} stroke={CHART.medium} strokeDasharray="3 3" strokeOpacity={0.6} />
+              <ReferenceLine y={bust} stroke={CHART.high} strokeDasharray="3 3" strokeOpacity={0.6} />
+            </>
+          ) : null}
+
+          <CartesianGrid strokeDasharray="3 3" stroke={CHART.grid} vertical={false} />
+          <XAxis dataKey="lead" tickFormatter={(d) => `D${d}`} stroke={CHART.axis} tickLine={false} />
+          <YAxis
+            domain={[0, 100]} tickFormatter={(v: number) => `${v}%`} width={46}
+            stroke={CHART.axis} tickLine={false}
+          />
+          <Tooltip
+            formatter={(v: number, _n, item) =>
+              [`${v}%  (${bandLabel(item.payload.band)})`, item.payload.driver ? `driver: ${item.payload.driver}` : "P(bust)"]
+            }
+            labelFormatter={(l) => `Lead day ${l}`}
+          />
+          <Area
+            type="monotone" dataKey="probability" stroke="none" fill="url(#bustFill)"
+            isAnimationActive={false} legendType="none"
+          />
+          <Line
+            type="monotone" dataKey="probability" stroke={CHART.observed} strokeWidth={2}
+            dot={<BandDot />} activeDot={{ r: 5 }}
+          />
+        </ComposedChart>
+      </ResponsiveContainer>
+
+      {watch != null && bust != null ? (
+        <p className="bandkey">
+          <span><i style={{ background: CHART.low }} />low &lt; {watch.toFixed(0)}%</span>
+          <span><i style={{ background: CHART.medium }} />watch {watch.toFixed(0)}–{bust.toFixed(0)}%</span>
+          <span><i style={{ background: CHART.high }} />bust ≥ {bust.toFixed(0)}%</span>
+          <em>percentile cuts from this model&rsquo;s own training run</em>
+        </p>
+      ) : null}
+    </>
+  );
+}
+
+/** A marker per lead day, filled with that day's risk band. */
+function BandDot(props: { cx?: number; cy?: number; payload?: { band: RiskBand } }) {
+  const { cx, cy, payload } = props;
+  if (cx == null || cy == null || !payload) return null;
+  return (
+    <circle
+      cx={cx} cy={cy} r={3.6}
+      fill={BAND_COLOR[payload.band] ?? CHART.axis}
+      stroke="#fff" strokeWidth={1.4}
+    />
   );
 }

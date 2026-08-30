@@ -1,4 +1,4 @@
-d# ForecastGuard AI — Implementation Plan
+d# Sanket — Implementation Plan
 
 ## Context
 
@@ -315,7 +315,7 @@ is on the order of seconds. `POST /api/upload` ingests synchronously (parse → 
 - **WebSocket `/ws`** — envelope `{event, timestamp, payload}`; events: `upload_received`,
   `training_started`, `training_complete` (`{run_id, validation_metrics, regions_updated}`),
   `training_failed` (`{run_id, error}`), `new_alert`. Frontend reacts by invalidating TanStack
-  Query keys (`['regions']`, `['regions', id]`, `['alerts']`, `['modelStatus']`) rather than
+  Query keys (`['regions']`,`['regions', id]`, `['alerts']`, `['modelStatus']`) rather than
   merging WS payloads directly, keeping WS and REST shapes decoupled.
 
 ---
@@ -325,7 +325,7 @@ is on the order of seconds. `POST /api/upload` ingests synchronously (parse → 
 1. **Stack + schema (this document) + scaffolding**: create folder skeletons,
    `ingestion/canonical_schema.py` (enums/dataclasses only, no logic), pinned
    `requirements.txt`/`package.json`, `.env.example` files, vendor the India-states
-   GeoJSON/TopoJSON and confirm its region-name property key. **Checkpoint: request a real sample
+   GeoJSON/TopoJSON and confirm its region-name property key. **Checkpoint: request a real sampleea
    dataset from the user (even a few hundred rows) — hard blocker for Phase 2, never invented.**
 2. **Ingestion + schema mapping** (gated on the sample): `parsers.py`, `schema_mapper.py`,
    `pipeline.py`, `db/models.py` (`UploadBatch`, `ColumnMapping`, `SourceProfile`), `utils/geo.py`
@@ -345,7 +345,7 @@ is on the order of seconds. `POST /api/upload` ingests synchronously (parse → 
 
 ## Verification
 
-- Phase 2: `pytest backend/tests/test_schema_mapper.py` against the user's real sample; manually
+- Phase 2: `pytest backend/tests/test_schema_mapper.py` against the user's real sample; manually 
   inspect a handful of mapped rows for unit/column correctness.
 - Phase 3: run `train_pipeline.py` end-to-end on the ingested sample and print the validation
   metrics block directly to the user for review (no UI needed yet).
@@ -355,3 +355,4 @@ is on the order of seconds. `POST /api/upload` ingests synchronously (parse → 
 - Phase 4b: run `npm run dev` + the FastAPI server together, upload the real sample through the
   UI, confirm mappings, and verify the map/detail panel/alerts update live over the WebSocket
   with no page reload.
+ 

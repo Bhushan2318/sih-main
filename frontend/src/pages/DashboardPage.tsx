@@ -4,7 +4,10 @@ import type { RiskBand } from "../api/types";
 import { AlertsPanel } from "../components/dashboard/AlertsPanel";
 import { BustSummaryChart } from "../components/dashboard/BustSummaryChart";
 import { FeedFreshness } from "../components/dashboard/FeedFreshness";
+import { HeroDivergence } from "../components/dashboard/HeroDivergence";
+import { KpiStrip } from "../components/dashboard/KpiStrip";
 import { ModelStatusCard } from "../components/dashboard/ModelStatusCard";
+import { RiskTicker } from "../components/dashboard/RiskTicker";
 import { RegionDetailPanel } from "../components/detail/RegionDetailPanel";
 import { EmptyState, ErrorState, LoadingState } from "../components/common/States";
 import { IndiaChoroplethMap, loadTopology } from "../components/map/IndiaChoroplethMap";
@@ -12,7 +15,7 @@ import { LeadDaySelector } from "../components/map/LeadDaySelector";
 import { MapLegend } from "../components/map/MapLegend";
 import { ReplayView } from "../components/replay/ReplayView";
 import { UploadPanel } from "../components/upload/UploadPanel";
-import { useAllRegions, useModelStatus } from "../hooks/useDashboardData";
+import { useAllRegions, useEnsembleDivergence, useModelStatus } from "../hooks/useDashboardData";
 import { useLiveSocket } from "../hooks/useLiveSocket";
 
 export function DashboardPage() {
@@ -27,6 +30,9 @@ export function DashboardPage() {
 
   const regionsQuery = useAllRegions();
   const statusQuery = useModelStatus();
+  // The hero is the national frame for the whole cycle and deliberately does not follow
+  // the map selection - region detail has its own panel.
+  const ensembleQuery = useEnsembleDivergence();
 
   useEffect(() => {
     loadTopology().then(setTopology).catch(setTopoError);
@@ -50,23 +56,20 @@ export function DashboardPage() {
     autoLeadPicked.current = true;
   }, [available, leadDay]);
 
+  const highCount = regions?.regions.filter((r) => r.risk_band === "high").length ?? 0;
+
   return (
     <div className="app">
-      <header className="app__head">
-        <div>
-          <h1>ForecastGuard AI</h1>
-          <p className="muted small">
-            Medium-range forecast bust detection · SIH 2026 PS 26079 (NCMRWF)
-          </p>
-        </div>
-        <div className="app__headright">
-          {view === "live" && regions?.model_trained && regions.init_date ? (
-            <p className="muted small">
-              Forecast cycle <b>{regions.init_date}</b>
-              {regions.valid_date ? ` → valid ${regions.valid_date}` : ""}
-            </p>
-          ) : null}
-          <div className="viewtabs" role="tablist" aria-label="View">
+      <header className="topbar">
+        <div className="topbar__inner">
+          <div className="brand">
+            <SanketGlyph />
+            <span className="brand__name">Sanket</span>
+            <span className="brand__div" aria-hidden="true" />
+            <span className="brand__sub">Forecast Bust Detection</span>
+          </div>
+
+          <nav className="viewtabs" role="tablist" aria-label="View">
             <button
               type="button"
               role="tab"
@@ -74,7 +77,7 @@ export function DashboardPage() {
               className={view === "live" ? "viewtab is-active" : "viewtab"}
               onClick={() => setView("live")}
             >
-              Live
+              Operations
             </button>
             <button
               type="button"
@@ -85,79 +88,123 @@ export function DashboardPage() {
             >
               Replay a real bust
             </button>
+          </nav>
+
+          <div className="topbar__right">
+            {view === "live" && regions?.model_trained && regions.init_date ? (
+              <span className="pill pill--quiet" title="The forecast cycle currently in the store">
+                <i aria-hidden="true" />
+                {regions.init_date}
+                {regions.valid_date ? ` → ${regions.valid_date}` : ""}
+              </span>
+            ) : null}
+            {view === "live" && highCount > 0 ? (
+              <span className="pill pill--alarm" title={`Regions in the bust band at lead day ${leadDay}`}>
+                <i aria-hidden="true" />
+                {highCount} bust · D{leadDay}
+              </span>
+            ) : null}
           </div>
         </div>
       </header>
-
-      {view === "live" ? <FeedFreshness /> : null}
 
       {view === "replay" ? (
         <main className="app__body app__body--replay">
           <ReplayView topology={topology} />
         </main>
       ) : (
-      <main className="app__body">
-        <section className="map-column">
-          <div className="map-toolbar">
-            <LeadDaySelector
-              value={leadDay}
-              onChange={setLeadDay}
-              disabled={!regions?.model_trained}
-              available={regions?.available_lead_days}
-            />
-            {regions ? <MapLegend definitions={regions.risk_band_definitions} /> : null}
-          </div>
-
-          {regionsQuery.isLoading ? <LoadingState label="Scoring the current cycle…" /> : null}
-          {regionsQuery.error ? <ErrorState error={regionsQuery.error} /> : null}
-          {topoError ? <ErrorState error={topoError} /> : null}
-
-          {regions && !regions.model_trained ? (
-            <EmptyState
-              title="No trained model yet"
-              message={regions.message}
-              action={<p className="muted small">Upload a dataset with forecasts and matching observations to begin.</p>}
-            />
-          ) : null}
-
-          {regions?.model_trained ? (
-            regions.regions.length ? (
-              <IndiaChoroplethMap
-                regions={regions.regions}
-                selectedRegionId={selectedRegion}
-                onSelect={setSelectedRegion}
-                topology={topology}
-              />
-            ) : (
-              <EmptyState title="Nothing to show for this lead day" message={regions.message} />
-            )
-          ) : null}
-
+        <>
+          <HeroDivergence data={ensembleQuery.data} />
           {regions?.regions.length ? (
-            <BustSummaryChart regions={regions.regions} onSelect={setSelectedRegion} />
+            <RiskTicker
+              regions={regions.regions}
+              leadDay={regions.lead_time_days}
+              onSelect={setSelectedRegion}
+            />
           ) : null}
-        </section>
+          <FeedFreshness />
+          <KpiStrip all={allRegions} day={regions} />
 
-        <section className="side-column">
-          <ModelStatusCard />
-          <AlertsPanel
-            filter={alertFilter}
-            onFilter={setAlertFilter}
-            onSelect={(regionId, lead) => {
-              setSelectedRegion(regionId);
-              setLeadDay(lead);
-            }}
-          />
-          <UploadPanel />
-        </section>
+          <main className="app__body">
+            <section className="map-column">
+              <div className="map-toolbar">
+                <LeadDaySelector
+                  value={leadDay}
+                  onChange={setLeadDay}
+                  disabled={!regions?.model_trained}
+                  available={regions?.available_lead_days}
+                />
+                {regions ? <MapLegend definitions={regions.risk_band_definitions} /> : null}
+              </div>
 
-        <RegionDetailPanel
-          regionId={selectedRegion}
-          onClose={() => setSelectedRegion(null)}
-          riskCuts={riskCuts}
-        />
-      </main>
+              {regionsQuery.isLoading ? <LoadingState label="Scoring the current cycle…" /> : null}
+              {regionsQuery.error ? <ErrorState error={regionsQuery.error} /> : null}
+              {topoError ? <ErrorState error={topoError} /> : null}
+
+              {regions && !regions.model_trained ? (
+                <EmptyState
+                  title="No trained model yet"
+                  message={regions.message}
+                  action={<p className="muted small">Upload a dataset with forecasts and matching observations to begin.</p>}
+                />
+              ) : null}
+
+              {regions?.model_trained ? (
+                regions.regions.length ? (
+                  <IndiaChoroplethMap
+                    regions={regions.regions}
+                    selectedRegionId={selectedRegion}
+                    onSelect={setSelectedRegion}
+                    topology={topology}
+                  />
+                ) : (
+                  <EmptyState title="Nothing to show for this lead day" message={regions.message} />
+                )
+              ) : null}
+
+              {regions?.regions.length ? (
+                <BustSummaryChart regions={regions.regions} onSelect={setSelectedRegion} />
+              ) : null}
+            </section>
+
+            <section className="side-column">
+              <ModelStatusCard />
+              <AlertsPanel
+                filter={alertFilter}
+                onFilter={setAlertFilter}
+                onSelect={(regionId, lead) => {
+                  setSelectedRegion(regionId);
+                  setLeadDay(lead);
+                }}
+              />
+              <UploadPanel />
+            </section>
+
+            <RegionDetailPanel
+              regionId={selectedRegion}
+              onClose={() => setSelectedRegion(null)}
+              riskCuts={riskCuts}
+            />
+          </main>
+        </>
       )}
     </div>
+  );
+}
+
+/**
+ * The mark: two traces leaving one origin and coming apart. That divergence between the
+ * forecast and what actually happened is the whole product, so the logo states it rather
+ * than decorating around it.
+ */
+function SanketGlyph() {
+  return (
+    <svg className="brand__glyph" viewBox="0 0 32 32" role="img" aria-label="Sanket">
+      <circle cx="16" cy="16" r="15" fill="#0b1220" />
+      <path d="M6 16h8" stroke="#fff" strokeWidth="2.4" strokeLinecap="round" fill="none" />
+      <path d="M14 16l12-6" stroke="#fff" strokeWidth="2.4" strokeLinecap="round" fill="none" />
+      <path d="M14 16l12 7" stroke="#f5254a" strokeWidth="2.4" strokeLinecap="round" fill="none" />
+      <circle cx="14" cy="16" r="2.6" fill="#2b4eff" />
+    </svg>
   );
 }

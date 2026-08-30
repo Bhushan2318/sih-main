@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { fetchAlerts } from "../api/alerts";
+import { fetchEnsembleDivergence } from "../api/ensemble";
 import { fetchIngestStatus } from "../api/ingest";
 import { fetchModelStatus } from "../api/modelStatus";
 import { fetchAllRegions, fetchRegionDetail, fetchRegions } from "../api/regions";
@@ -25,6 +26,19 @@ export const useAllRegions = () =>
     queryFn: fetchAllRegions,
     staleTime: 5 * 60_000,
     refetchInterval: 5 * 60_000,
+  });
+
+// The hero divergence view. Like the scored cycle it only changes on retrain/ingest, and
+// the WebSocket invalidates it - so there is nothing to poll for. Passing a region pins
+// the hero to it; without one the backend picks the widest divergence in the cycle.
+// `placeholderData` keeps the previous chart on screen while a newly picked region loads,
+// so clicking around the map never blanks the hero.
+export const useEnsembleDivergence = (regionId?: string | null) =>
+  useQuery({
+    queryKey: ["ensemble", "divergence", regionId ?? "auto"],
+    queryFn: () => fetchEnsembleDivergence(regionId),
+    staleTime: 5 * 60_000,
+    placeholderData: (prev) => prev,
   });
 
 export const useRegionDetail = (regionId: string | null) =>

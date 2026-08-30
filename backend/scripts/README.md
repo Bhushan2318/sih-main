@@ -1,6 +1,6 @@
 # Sample-data fetchers
 
-Two scripts that build the **real** forecast/observation sample the rest of ForecastGuard
+Two scripts that build the **real** forecast/observation sample the rest of Sanket
 AI is developed and tested against. They are the concrete answer to the plan's Phase 1 →
 Phase 2 gate ("request a real sample dataset ... never invented"). Nothing they produce
 is synthetic: every value traces to a named public archive record.

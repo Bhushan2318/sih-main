@@ -1,8 +1,8 @@
 export function MapLegend({ definitions }: { definitions: Record<string, string> }) {
   const bands: { key: string; label: string }[] = [
-    { key: "low", label: "Low" },
-    { key: "medium", label: "Medium" },
-    { key: "high", label: "High" },
+    { key: "low", label: "low" },
+    { key: "medium", label: "watch" },
+    { key: "high", label: "bust" },
   ];
   return (
     <div className="legend">

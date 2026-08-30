@@ -1,4 +1,4 @@
-"""Build a real forecast-side sample for ForecastGuard AI from the NOAA GEFSv12 reforecast.
+"""Build a real forecast-side sample for Sanket from the NOAA GEFSv12 reforecast.
 
 Source
 ------
@@ -107,7 +107,7 @@ HTTP_BACKOFF = 2.0
 DOWNLOAD_WORKERS = 20
 
 _session = requests.Session()
-_session.headers["User-Agent"] = "ForecastGuard-AI/phase2-sample (SIH 2026)"
+_session.headers["User-Agent"] = "Sanket/phase2-sample (SIH 2026)"
 
 
 # --------------------------------------------------------------------------------------

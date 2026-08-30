@@ -103,7 +103,7 @@ NOMADS_MAX_WORKERS = 6
 RETRYABLE_STATUS = {302, 429, 500, 502, 503, 504}
 
 _session = requests.Session()
-_session.headers["User-Agent"] = "ForecastGuard-AI/phase6-live (SIH 2026; NCMRWF PS 26079)"
+_session.headers["User-Agent"] = "Sanket/phase6-live (SIH 2026; NCMRWF PS 26079)"
 # Default pool is 10; without this the extra workers churn connections and log warnings.
 _adapter = requests.adapters.HTTPAdapter(pool_connections=8, pool_maxsize=32)
 _session.mount("https://", _adapter)

@@ -1,6 +1,7 @@
 import { useAlerts } from "../../hooks/useDashboardData";
 import type { RiskBand } from "../../api/types";
 import { EmptyState, ErrorState, LoadingState, RiskBadge } from "../common/States";
+import { bandLabel } from "../../theme";
 
 export function AlertsPanel({ onSelect, filter, onFilter }: {
   onSelect: (regionId: string, lead: number) => void;
@@ -21,7 +22,7 @@ export function AlertsPanel({ onSelect, filter, onFilter }: {
               className={filter === b ? "chip chip--active" : "chip"}
               onClick={() => onFilter(filter === b ? undefined : b)}
             >
-              {b}
+              {bandLabel(b)}
             </button>
           ))}
         </div>
@@ -31,7 +32,7 @@ export function AlertsPanel({ onSelect, filter, onFilter }: {
       {error ? <ErrorState error={error} /> : null}
       {data && !data.model_trained ? <EmptyState title="No alerts yet" message={data.message} /> : null}
       {data?.model_trained && !data.alerts.length ? (
-        <EmptyState title="No medium or high risk regions" message="Every region in the current cycle scored low risk." />
+        <EmptyState title="No watch or bust regions" message="Every region in the current cycle scored low." />
       ) : null}
 
       {data?.alerts.length ? (

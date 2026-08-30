@@ -275,3 +275,101 @@ class ReplayResponse(Schema):
     risk_band_definitions: dict = Field(default_factory=dict)
     summary_narration: Optional[str] = None
     message: Optional[str] = None
+
+
+# --------------------------------------------------------------------------- ensemble
+# The hero divergence view: the moment a cycle's ensemble and reality come apart, drawn
+# from the five real GEFS members rather than a summary statistic.
+
+class EnsemblePoint(Schema):
+    lead_time_days: int
+    valid_date: Optional[date] = None
+    value: Optional[float] = None
+    observed_status: Optional[str] = None      # final | provisional | None (not verified)
+
+
+class EnsembleMemberTrace(Schema):
+    member_id: str
+    is_control: bool = False
+    points: list = Field(default_factory=list)   # EnsemblePoint
+
+
+class NationalRiskPoint(Schema):
+    """Risk across every scored region for one lead day."""
+    lead_time_days: int
+    valid_date: Optional[date] = None
+    mean_bust_probability: float
+    min_bust_probability: float
+    max_bust_probability: float
+    n_regions: int
+    n_high_regions: int
+
+
+class CalibrationBin(Schema):
+    bin_lo: float
+    bin_hi: float
+    predicted_mean: float
+    observed_rate: float
+    n: int
+
+
+class ModelSkill(Schema):
+    """How accurate the guesses actually were, on data the model never trained on."""
+    split: Optional[str] = None
+    n: int = 0
+    roc_auc: Optional[float] = None
+    precision: Optional[float] = None
+    recall: Optional[float] = None
+    f1: Optional[float] = None
+    brier: Optional[float] = None
+    bust_rate: Optional[float] = None
+    calibration: list = Field(default_factory=list)   # CalibrationBin
+    note: Optional[str] = None
+
+
+class EnsembleDivergenceResponse(Schema):
+    model_trained: bool
+    current_run_id: Optional[str] = None
+    init_date: Optional[date] = None
+
+    region_id: Optional[str] = None
+    region_name: Optional[str] = None
+    variable: Optional[str] = None
+    unit: Optional[str] = None
+
+    members: list = Field(default_factory=list)   # EnsembleMemberTrace, one per GEFS member
+    ensemble_mean: list = Field(default_factory=list)   # EnsemblePoint
+    observed: list = Field(default_factory=list)       # EnsemblePoint - only verified leads
+
+    # First lead day this region's P(bust) reaches the top band: where the cycle turns.
+    crossover_lead: Optional[int] = None
+    peak_bust_probability: Optional[float] = None
+
+    mean_bust_probability: Optional[float] = None
+    prior_mean_bust_probability: Optional[float] = None
+    prior_init_date: Optional[date] = None
+    # Why no prior-cycle comparison is shown, when there isn't one.
+    prior_note: Optional[str] = None
+
+    n_high_regions: int = 0
+    n_scored_regions: int = 0
+    high_by_lead: Optional[int] = None
+
+    # How much the member spread grows across the horizon for the charted series, and the
+    # plain-language reason this subject was chosen - so the picture is never arbitrary.
+    spread_growth: Optional[float] = None
+    subject_reason: Optional[str] = None
+
+    # Provenance, stated on screen rather than assumed.
+    source: Optional[str] = None
+    member_count: int = 0
+
+    # National view, shown when no single region is pinned: risk across every scored
+    # region for each lead day, plus how accurate the model's past guesses actually were.
+    national: list = Field(default_factory=list)      # NationalRiskPoint
+    skill: Optional[ModelSkill] = None
+    national_note: Optional[str] = None
+
+    eyebrow: Optional[str] = None
+    headline_note: Optional[str] = None
+    message: Optional[str] = None

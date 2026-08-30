@@ -2,6 +2,7 @@ import {
   CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 import type { VariableSeries } from "../../api/types";
+import { CHART } from "../../theme";
 
 /**
  * Forecast vs observed across lead days for one variable. `observed` is only drawn where
@@ -43,13 +44,13 @@ export function VariableTrajectoryChart({ series }: { series: VariableSeries }) 
           />
           <Legend />
           <Line type="monotone" dataKey="forecast" name="Forecast (ens. mean)"
-                stroke="#2f6fb0" strokeWidth={2} dot={{ r: 2 }} />
+                stroke={CHART.forecast} strokeWidth={2} dot={{ r: 2 }} />
           {anyObserved ? (
             <Line type="monotone" dataKey="observed" name="Observed"
-                  stroke="#111827" strokeWidth={2} strokeDasharray="6 4" dot={{ r: 2 }} connectNulls={false} />
+                  stroke={CHART.observed} strokeWidth={2} strokeDasharray="6 4" dot={{ r: 2 }} connectNulls={false} />
           ) : null}
           <Line type="monotone" dataKey="error" name="Predicted |error|"
-                stroke="#cf5c46" strokeWidth={1.5} dot={false} />
+                stroke={CHART.error} strokeWidth={1.5} dot={false} />
         </LineChart>
       </ResponsiveContainer>
       {series.unit ? <p className="muted small axis-unit">Values in {series.unit}</p> : null}

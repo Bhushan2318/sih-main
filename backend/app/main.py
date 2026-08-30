@@ -1,4 +1,4 @@
-"""ForecastGuard AI - FastAPI application.
+"""Sanket - FastAPI application.
 
     uvicorn app.main:app --reload --port 8000
 
@@ -18,7 +18,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routers import alerts, ingest, model_status, regions, replay, upload, ws
+from app.api.routers import alerts, ensemble, ingest, model_status, regions, replay, upload, ws
 from app.config import settings
 from app.db.base import init_db
 from app.ml import registry
@@ -51,6 +51,11 @@ async def lifespan(_app: FastAPI):
                 from app.services import replay_service
                 n = len(replay_service.list_cycles())
                 log.info("guided-replay cache warm: %d cycles ranked", n)
+                # The hero divergence view scores the prior cycle for its delta; warming
+                # it here keeps that off the first page load.
+                from app.services import ensemble_service
+                ensemble_service.get_divergence()
+                log.info("ensemble-divergence cache warm")
             except Exception:  # noqa: BLE001
                 log.exception("guided-replay warm failed (endpoint still works, just cold)")
 
@@ -67,7 +72,7 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(
-    title="ForecastGuard AI",
+    title="Sanket",
     version="0.6.0",
     lifespan=lifespan,
     description=(
@@ -91,6 +96,7 @@ app.include_router(alerts.router)
 app.include_router(model_status.router)
 app.include_router(ingest.router)
 app.include_router(replay.router)
+app.include_router(ensemble.router)
 app.include_router(ws.router)
 
 

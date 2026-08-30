@@ -305,3 +305,87 @@ export interface ReplayResponse {
   summary_narration: string | null;
   message: string | null;
 }
+
+// ------------------------------------------------------------------- ensemble
+// Mirrors EnsembleDivergenceResponse. The five GEFS members are real traces from the
+// canonical store, not a band inferred from a standard deviation.
+
+export interface EnsemblePoint {
+  lead_time_days: number;
+  valid_date: string | null;
+  value: number | null;
+  observed_status: "final" | "provisional" | null;
+}
+
+export interface EnsembleMemberTrace {
+  member_id: string;
+  is_control: boolean;
+  points: EnsemblePoint[];
+}
+
+export interface NationalRiskPoint {
+  lead_time_days: number;
+  valid_date: string | null;
+  mean_bust_probability: number;
+  min_bust_probability: number;
+  max_bust_probability: number;
+  n_regions: number;
+  n_high_regions: number;
+}
+
+export interface CalibrationBin {
+  bin_lo: number;
+  bin_hi: number;
+  predicted_mean: number;
+  observed_rate: number;
+  n: number;
+}
+
+export interface ModelSkill {
+  split: string | null;
+  n: number;
+  roc_auc: number | null;
+  precision: number | null;
+  recall: number | null;
+  f1: number | null;
+  brier: number | null;
+  bust_rate: number | null;
+  calibration: CalibrationBin[];
+  note: string | null;
+}
+
+export interface EnsembleDivergenceResponse {
+  model_trained: boolean;
+  current_run_id: string | null;
+  init_date: string | null;
+  region_id: string | null;
+  region_name: string | null;
+  variable: string | null;
+  unit: string | null;
+  members: EnsembleMemberTrace[];
+  ensemble_mean: EnsemblePoint[];
+  observed: EnsemblePoint[];
+  crossover_lead: number | null;
+  peak_bust_probability: number | null;
+  mean_bust_probability: number | null;
+  prior_mean_bust_probability: number | null;
+  prior_init_date: string | null;
+  /** why there is no prior-cycle comparison, when there isn't one */
+  prior_note: string | null;
+  n_high_regions: number;
+  n_scored_regions: number;
+  high_by_lead: number | null;
+  /** spread growth for the charted series, in units of "one bust threshold" */
+  spread_growth: number | null;
+  /** plain-language reason this region+variable is the one charted */
+  subject_reason: string | null;
+  source: string | null;
+  member_count: number;
+  /** national view, shown when no region is pinned */
+  national: NationalRiskPoint[];
+  skill: ModelSkill | null;
+  national_note: string | null;
+  eyebrow: string | null;
+  headline_note: string | null;
+  message: string | null;
+}

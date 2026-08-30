@@ -59,12 +59,17 @@ export function RegionDetailPanel({
       {worst ? (
         <section className="panel__section">
           <h3>Peak bust risk</h3>
-          <p className="headline">
-            {(worst.bust_probability * 100).toFixed(1)}% <RiskBadge band={worst.risk_band} />
-            <span className="muted small"> at lead day {worst.lead_time_days}</span>
-          </p>
+          {/* The number, the band and the lead day are three separate facts - stacking
+              them stops the badge and the caption colliding with a 2rem figure. */}
+          <div className="peak">
+            <span className="peak__value">{(worst.bust_probability * 100).toFixed(1)}%</span>
+            <div className="peak__meta">
+              <RiskBadge band={worst.risk_band} />
+              <span className="muted small">at lead day {worst.lead_time_days}</span>
+            </div>
+          </div>
           {worst.dominant_variable ? (
-            <p className="muted small">Dominant driver: {worst.dominant_variable}</p>
+            <p className="muted small">Dominant driver: {worst.dominant_variable.replace(/_/g, " ")}</p>
           ) : null}
         </section>
       ) : null}

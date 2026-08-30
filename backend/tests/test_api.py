@@ -344,3 +344,59 @@ def test_map_and_alerts_agree(trained_client):
     match = next(r for r in regions if r["region_id"] == a["region_id"])
     assert match["bust_probability"] == pytest.approx(a["bust_probability"], abs=1e-9)
     assert match["risk_band"] == a["risk_band"]
+
+
+def test_ensemble_divergence_draws_real_members(trained_client):
+    """The hero view must come from the five real GEFS members in the store, not from a
+    band inferred off a standard deviation - and it must refuse to invent a prior-cycle
+    comparison when the only earlier cycle is years away in the reforecast archive."""
+    body = trained_client.get("/api/ensemble").json()
+    assert body["model_trained"] is True
+    if body.get("message"):
+        pytest.skip(f"no scoreable cycle in this slice: {body['message']}")
+
+    # 0 and 360 degrees are the same bearing, so member traces around north look like a
+    # collapse that never happened - the hero must never headline with it.
+    assert body["variable"] and body["variable"] != "wind_direction_deg"
+
+    assert body["members"], "no ensemble members returned"
+    assert sum(1 for m in body["members"] if m["is_control"]) == 1
+    for m in body["members"]:
+        assert m["points"], f"member {m['member_id']} has no points"
+        assert all(p["value"] is not None for p in m["points"])
+
+    # the mean is the model's own aggregate, so it must span the members' lead days
+    mean_leads = {p["lead_time_days"] for p in body["ensemble_mean"]}
+    assert mean_leads
+    for m in body["members"]:
+        assert {p["lead_time_days"] for p in m["points"]} <= mean_leads
+
+    assert body["n_scored_regions"] > 0
+    assert 0.0 <= body["mean_bust_probability"] <= 1.0
+    # no fabricated comparison: either a real prior cycle, or a stated reason for none
+    assert (body["prior_mean_bust_probability"] is None) != (body["prior_note"] is None)
+    assert body["headline_note"]
+
+
+def test_ensemble_pins_to_the_requested_region(trained_client):
+    """Clicking a region must chart that region. If the pin silently fell back to the
+    auto-picked subject the hero would show one place while the UI claimed another."""
+    auto = trained_client.get("/api/ensemble").json()
+    if auto.get("message"):
+        pytest.skip(f"no scoreable cycle in this slice: {auto['message']}")
+
+    regions = trained_client.get("/api/regions?lead_time_days=2").json()["regions"]
+    other = next(
+        (r["region_id"] for r in regions
+         if r["region_id"] != auto["region_id"] and r["bust_probability"] is not None),
+        None,
+    )
+    if other is None:
+        pytest.skip("only one scored region in this slice")
+
+    pinned = trained_client.get(f"/api/ensemble?region_id={other}").json()
+    assert pinned["region_id"] == other
+    assert pinned["members"], "a pinned region must still carry real member traces"
+    # the scope claim has to follow the pin rather than overstating it
+    assert "for this region" in (pinned["subject_reason"] or "")
+    assert "in this cycle" in (auto["subject_reason"] or "")
