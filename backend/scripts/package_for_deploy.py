@@ -21,7 +21,7 @@ from pathlib import Path
 
 # What the box needs to answer a request, and nothing else: the canonical store it scores
 # against, the geo index for region resolution, the metadata db, and one model.
-EXTRA_PATHS = ("data/canonical", "data/geo", "metadata.db")
+EXTRA_PATHS = ("data/canonical", "data/geo", "data/summary.json", "metadata.db")
 
 
 def main() -> int:
@@ -41,6 +41,13 @@ def main() -> int:
     if not run_id or not run_dir.is_dir():
         print(f"current.json names {run_id!r}, which is not on disk", file=sys.stderr)
         return 1
+
+    # Precompute the store summary here rather than on the serving box: it needs a full
+    # deduplication of every row (~300 MB), which is fine on a CI runner and is not fine
+    # on a 512 MB instance that also has to score a cycle.
+    from app.storage import parquet_store
+    summary = parquet_store.write_summary_cache()
+    print(f"summary cached: {summary['total_rows']:,} rows, {summary['regions']} regions")
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     with tarfile.open(args.out, "w:gz") as tar:
