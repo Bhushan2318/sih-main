@@ -40,3 +40,6 @@ backend/app/static/
 
 # Session handoff notes: internal strategy, kept out of the public repo.
 HANDOFF.md
+
+# Generated beside the canonical store by the packaging step.
+backend/data/summary.json
