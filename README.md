@@ -100,7 +100,24 @@ Next: **Phase 5** — the design pass (palette, typography, layout polish).
 
 ## Backend setup
 
-Python 3.9+ and, for the frontend, Node 18+.
+**Get the code with `git clone` — not GitHub's "Download ZIP"**, which extracts as a
+doubled `sih-main-main/sih-main-main/` folder.
+
+```bash
+git clone https://github.com/Bhushan2318/sih-main.git
+cd sih-main
+```
+
+Use **Python 3.11 or 3.12** (3.9 also works; **not 3.13 yet** — one pinned dependency has
+no 3.13 wheel). Check with `py -0p` on Windows or `python3 --version` elsewhere; if you
+only have 3.13, install 3.12 (`winget install Python.Python.3.12` /
+[python.org](https://www.python.org/downloads/)) and build the venv with `py -3.12`.
+Node 18+ for the frontend.
+
+`pip install -r requirements.txt` installs **prebuilt wheels only** — no compiler, no
+system libraries. GRIB2 decoding (`eccodes`) is *not* in the core set; it lives in
+`requirements-live.txt` and is only needed to pull fresh NOAA cycles (see
+[Enable live ingestion](#enable-live-ingestion-off-by-default)).
 
 **macOS / Linux**
 
@@ -115,7 +132,7 @@ cp .env.example .env
 
 ```powershell
 cd backend
-py -3 -m venv .venv
+py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 Copy-Item .env.example .env
@@ -125,15 +142,14 @@ Copy-Item .env.example .env
 
 ```bat
 cd backend
-py -3 -m venv .venv
+py -3.12 -m venv .venv
 .venv\Scripts\activate.bat
 pip install -r requirements.txt
 copy .env.example .env
 ```
 
 The venv only needs creating once; afterwards just re-run the activate line for your
-shell in each new terminal. `eccodes` (GRIB2 decoding) ships as a wheel with the binary
-bundled, so nothing extra is needed on Windows.
+shell in each new terminal.
 
 ## Frontend setup
 
@@ -165,10 +181,27 @@ With the backend venv activated:
 |---|---|
 | Run the test suite | `python -m pytest -q` |
 | Full model retrain | `python -m app.ml.train_pipeline` |
-| Rebuild the sample data | `python scripts/fetch_gefs_reforecast_sample.py` then `python scripts/fetch_era5_observations.py` |
+| Rebuild the sample data | `python scripts/fetch_gefs_reforecast_sample.py` then `python scripts/fetch_era5_observations.py` (needs `requirements-live.txt`) |
 | Ingest a file from the CLI | `python -m app.ingestion.pipeline --file <path> --confirm-all` |
 
-**Enable live ingestion** (off by default — it reaches out to NOAA / Open-Meteo):
+### Enable live ingestion (off by default)
+
+Live ingestion pulls fresh NOAA GEFS cycles and Open-Meteo observations. It needs the
+GRIB2 decoder, which is a separate install:
+
+```bash
+pip install -r requirements.txt -r requirements-live.txt
+python -m eccodes selfcheck        # should print "Your system is ready"
+```
+
+On **Windows** some `eccodes` wheels ship a broken definitions bundle (`Unable to find
+boot.def`, `flex scanner error`). `requirements-live.txt` lists `ecmwflibs` first, which
+supplies a working binary + definitions and usually fixes it. If `selfcheck` still fails,
+use conda-forge (`conda install -c conda-forge eccodes python-eccodes`) or run the
+backend under WSL2. The rest of the app — dashboard, scoring, guided replay, CSV/parquet
+upload — does not need any of this.
+
+Then turn it on:
 
 ```bash
 # macOS / Linux
