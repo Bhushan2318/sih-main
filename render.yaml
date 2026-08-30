@@ -25,3 +25,9 @@ services:
       # cycles arrive baked into the image, pulled by CI.
       - key: LIVE_INGEST_ENABLED
         value: "false"
+      # The startup warm scores every historical cycle in a background thread. If a real
+      # request lands while it is still running, the box pays for two scoring passes at
+      # once - which is what kept OOM-killing this container. Cold caches only mean the
+      # first guided-replay call is slow.
+      - key: WARM_CACHES_ON_STARTUP
+        value: "false"
