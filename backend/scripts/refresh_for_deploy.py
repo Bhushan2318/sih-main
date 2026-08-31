@@ -7,8 +7,16 @@ db) is shipped to the host.
 
 Run it from the backend directory, with the live extras installed:
 
-    python -m scripts.refresh_for_deploy            # newest published cycle
+    python -m scripts.refresh_for_deploy            # catch up on the last 4 cycles
     python -m scripts.refresh_for_deploy --skip-obs # forecast only, no verification pull
+    python -m scripts.refresh_for_deploy --cycle 2026-08-31T00 --force-cycle
+                                                    # re-pull one cycle, replacing it
+
+By default the run ingests every cycle in the last `--catch-up` that is not already in the
+store, oldest first - not just the newest one. GitHub's scheduler is best-effort and has
+already fired this workflow 3 h 25 m late once and skipped a slot entirely, so a run that
+only ever pulled "the latest cycle" would leave a permanent hole in the store every time
+cron misfired. Catching up turns "every run must fire" into "some run must fire".
 
 Exit status is what CI branches on:
 
@@ -28,6 +36,7 @@ import argparse
 import logging
 import os
 import sys
+from datetime import date
 from typing import Optional
 
 # The live pull reaches out to NOAA, which the scheduler gates behind this flag. CI is the
@@ -80,9 +89,53 @@ def _reject_reason(result: dict, args) -> Optional[str]:
     return None
 
 
+def _parse_cycle(text: str) -> tuple:
+    """``YYYY-MM-DDTHH`` -> ``(date, "HH")``, for re-pulling one named cycle."""
+    raw = text.strip().replace(" ", "T").replace("/", "T")
+    parts = raw.split("T")
+    if len(parts) != 2:
+        raise ValueError(f"cannot read cycle {text!r}; expected YYYY-MM-DDTHH, "
+                         f"e.g. 2026-08-31T00")
+    try:
+        init, hour = date.fromisoformat(parts[0]), f"{int(parts[1]):02d}"
+    except ValueError:
+        raise ValueError(f"cannot read cycle {text!r}; expected YYYY-MM-DDTHH, "
+                         f"e.g. 2026-08-31T00")
+    if hour not in ("00", "06", "12", "18"):
+        raise ValueError(f"{hour}Z is not a GEFS cycle hour (00, 06, 12 or 18)")
+    return init, hour
+
+
+def _cycles_to_pull(args) -> list:
+    """The cycles this run should attempt, OLDEST FIRST.
+
+    Oldest first because the run publishes all-or-nothing: if a later cycle comes back thin
+    the whole run is discarded, and what was ingested up to that point should be a
+    contiguous history rather than one with a hole in the middle.
+    """
+    if args.cycle:
+        return [_parse_cycle(args.cycle)]
+    from app.live import gefs
+    # stride 6, not recent_cycles' 24 h default - that default deliberately spreads cycles
+    # across days for the historical backfill, which is the opposite of what catching up on
+    # consecutive missed slots needs.
+    return list(reversed(gefs.recent_cycles(args.catch_up, stride_hours=6)))
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--skip-forecast", action="store_true", help="do not pull a GEFS cycle")
+    ap.add_argument("--cycle", metavar="YYYY-MM-DDTHH",
+                    help="pull exactly this cycle instead of catching up, e.g. "
+                         "2026-08-31T00. Only 00, 06, 12 and 18 are GEFS cycle hours.")
+    ap.add_argument("--force-cycle", action="store_true",
+                    help="re-pull a cycle already marked ingested. The store dedupes on "
+                         "most-recently-ingested, so the new rows supersede the old ones - "
+                         "this is how a cycle published while thin gets replaced.")
+    ap.add_argument("--catch-up", type=int, default=4, metavar="N",
+                    help="ingest any of the last N cycles missing from the store, oldest "
+                         "first (default 4 = one day). 1 restores the old behaviour of "
+                         "only ever pulling the newest cycle.")
     ap.add_argument("--skip-obs", action="store_true", help="do not pull observations")
     ap.add_argument("--skip-train", action="store_true", help="do not retrain")
     ap.add_argument("--force-train", action="store_true",
@@ -104,23 +157,42 @@ def main() -> int:
     if not args.skip_forecast:
         from app.live import orchestrator
         try:
-            # None/None = whichever cycle is newest and past its publish lag.
-            result = orchestrator.run_forecast_cycle(None, None, trigger="scheduled")
+            wanted = _cycles_to_pull(args)
+        except ValueError as exc:
+            log.error("%s", exc)
+            return 1
+
+        ingested = 0
+        for init, cycle_hour in wanted:
+            try:
+                result = orchestrator.run_forecast_cycle(
+                    init, cycle_hour, trigger="scheduled", force=args.force_cycle)
+            except Exception:  # noqa: BLE001
+                # A cycle that is not published yet is normal - GEFS runs ~5.5 h behind its
+                # init hour, and the oldest of a catch-up span may have aged off NOMADS
+                # while S3 was briefly unreachable. Keep going; the others still count.
+                log.exception("forecast pull failed for %s %sZ; continuing", init, cycle_hour)
+                continue
+
             log.info("forecast cycle: %s", result)
+            if result.get("status") == "skipped":
+                continue
+
             reason = _reject_reason(result, args)
             if reason:
-                # Stop before retraining. The runner's store is rebuilt from the published
-                # artifact on every run and nothing here is persisted unless we publish, so
-                # bailing now discards the thin cycle completely - no partial state, and
-                # the next run re-attempts the same cycle from scratch.
+                # Stop before retraining, and discard the whole run rather than the one bad
+                # cycle. The runner's store is rebuilt from the published artifact every
+                # time and nothing persists unless we publish, so bailing now leaves no
+                # partial state - which matters more than salvaging the cycles already
+                # ingested, because those rows and the thin ones share a store.
                 log.error("REJECTED %s: %s", result.get("target"), reason)
                 log.error("nothing published; the site keeps the last good cycle and model")
+                log.error("%d earlier cycle(s) this run are discarded with it", ingested)
                 log.error("to publish anyway: --min-steps 0 --allow-short-accumulations")
                 return 2
-        except Exception:  # noqa: BLE001
-            # A missing cycle is normal (GEFS runs ~5.5 h behind its init hour). Keep the
-            # previous artifact rather than failing the run and blanking the live site.
-            log.exception("forecast pull failed; continuing with what is already stored")
+            ingested += 1
+
+        log.info("ingested %d of %d cycle(s) attempted", ingested, len(wanted))
 
     new_rows = 0
     if not args.skip_obs:
