@@ -190,6 +190,15 @@ def run_forecast_cycle(
             "steps": f"{report.steps_fetched}/{report.steps_expected}",
             "missing_steps": report.missing_steps,
             "undersampled": report.undersampled[:20],
+            # The lists above are truncated for readability, so callers deciding whether a
+            # cycle is fit to publish need the totals separately. `undersampled_sums` is
+            # counted apart because a short accumulation understates rainfall rather than
+            # just adding noise - see FetchReport.undersampled_sums.
+            "steps_fetched": report.steps_fetched,
+            "steps_expected": report.steps_expected,
+            "step_completeness": round(report.step_completeness, 4),
+            "undersampled_count": len(report.undersampled),
+            "undersampled_sum_count": len(report.undersampled_sums),
             "seconds": round(report.seconds, 1),
         }
 

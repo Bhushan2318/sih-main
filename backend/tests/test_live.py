@@ -308,3 +308,136 @@ def test_legacy_null_status_is_treated_as_final():
     ]
     frame = fe.build_training_frame(pd.DataFrame(rows), require_observed=True)
     assert frame["verification_status"].tolist() == ["final"]
+
+
+# ------------------------------------------------- cycle completeness (publish guard)
+# A slow NOAA pull returns a cycle that is real but thin: some GRIB steps time out and the
+# day's aggregate is built from fewer samples. These guard the decision about whether such
+# a cycle is fit to publish, because the failure is silent - the numbers look ordinary.
+
+def _report(**kw) -> gefs.FetchReport:
+    base = dict(init_date=date(2026, 8, 31), cycle_hour="00", members=["gec00"],
+                steps_expected=400, steps_fetched=400)
+    base.update(kw)
+    return gefs.FetchReport(**base)
+
+
+def test_only_accumulations_are_treated_as_sum_variables():
+    # If another summed variable is ever added, the guard must widen with it - hence
+    # deriving the set from VAR_SPEC rather than hard-coding "apcp_mm" in two places.
+    assert gefs.SUM_VARIABLES == {"apcp_mm"}
+    assert all(gefs.VAR_SPEC[v]["agg"] == "sum" for v in gefs.SUM_VARIABLES)
+
+
+def test_step_completeness_reports_the_fetched_fraction():
+    assert _report(steps_fetched=344).step_completeness == pytest.approx(0.86)
+    assert _report(steps_fetched=400).step_completeness == 1.0
+    # a cycle that never started must not divide by zero
+    assert _report(steps_expected=0, steps_fetched=0).step_completeness == 0.0
+
+
+def test_undersampled_sums_singles_out_short_accumulations():
+    r = _report(undersampled=[
+        "gep01/D1/t2m_c(7/8)",        # a mean: noisier, same quantity
+        "gep01/D2/apcp_mm(2/4)",      # a sum: roughly half the real rainfall
+        "gep02/D3/rh2m_pct(6/8)",
+    ])
+    assert r.undersampled_sums == ["gep01/D2/apcp_mm(2/4)"]
+    assert len(r.undersampled) == 3
+
+
+def test_a_member_named_after_a_variable_is_not_mistaken_for_one():
+    # Matching on "/<var>(" keys off the variable segment; a bare substring search would
+    # misread a member or day segment that happened to contain the name.
+    r = _report(undersampled=["apcp_mm_member/D1/t2m_c(7/8)"])
+    assert r.undersampled_sums == []
+
+
+def test_complete_requires_full_steps_and_no_undersampling():
+    assert _report().complete is True
+    assert _report(steps_fetched=399).complete is False
+    assert _report(undersampled=["gep01/D2/apcp_mm(2/4)"]).complete is False
+
+
+# ------------------------------------------------------- the publish/refuse decision
+
+class _Args:
+    """Stand-in for the argparse namespace refresh_for_deploy builds."""
+    def __init__(self, min_steps=0.98, allow_short_accumulations=False):
+        self.min_steps = min_steps
+        self.allow_short_accumulations = allow_short_accumulations
+
+
+def _reject(result, **kw):
+    from scripts.refresh_for_deploy import _reject_reason
+    return _reject_reason(result, _Args(**kw))
+
+
+# The shape run_forecast_cycle actually returns on a clean pull.
+_GOOD = {"status": "complete", "target": "2026-08-30 18", "step_completeness": 1.0,
+         "steps_fetched": 400, "steps_expected": 400,
+         "undersampled_count": 0, "undersampled_sum_count": 0,
+         "missing_steps": [], "undersampled": []}
+
+# The real payload from the 2026-08-31 00Z run, which was published before this guard
+# existed: 344/400 steps and rainfall summed from 2 of 4 samples on some members.
+_THIN = {"status": "complete", "target": "2026-08-31 00", "step_completeness": 0.86,
+         "steps_fetched": 344, "steps_expected": 400,
+         "undersampled_count": 56, "undersampled_sum_count": 1,
+         "missing_steps": ["gep01/f003"] * 56,
+         "undersampled": ["gep01/D1/t2m_c(7/8)", "gep01/D2/apcp_mm(2/4)"]}
+
+
+def test_a_complete_cycle_is_published():
+    assert _reject(_GOOD) is None
+
+
+def test_the_cycle_that_slipped_through_is_now_refused():
+    reason = _reject(_THIN)
+    assert reason is not None and "86.0%" in reason
+
+
+def test_a_short_accumulation_alone_is_enough_to_refuse():
+    # Full step count, but one day's rainfall summed from half its samples. Rainfall drives
+    # most busts, so publishing this would understate risk on the variable that matters.
+    nearly = {**_GOOD, "undersampled_count": 1, "undersampled_sum_count": 1,
+              "undersampled": ["gep02/D4/apcp_mm(2/4)"]}
+    reason = _reject(nearly)
+    assert reason is not None and "understates rainfall" in reason
+    assert "gep02/D4/apcp_mm(2/4)" in reason
+
+
+def test_undersampled_means_alone_do_not_refuse():
+    # A mean over 7 of 8 samples is the same quantity, measured a little more noisily.
+    means_only = {**_GOOD, "undersampled_count": 3, "undersampled_sum_count": 0,
+                  "undersampled": ["gep01/D1/t2m_c(7/8)"]}
+    assert _reject(means_only) is None
+
+
+def test_flags_can_force_a_thin_cycle_through():
+    assert _reject(_THIN, min_steps=0, allow_short_accumulations=True) is None
+
+
+def test_a_skipped_cycle_is_not_a_rejection():
+    # Nothing was ingested, so there is nothing to refuse - the previous artifact stands.
+    assert _reject({"status": "skipped", "target": "2026-08-31 06",
+                    "reason": "already ingested"}) is None
+
+
+def test_an_unknown_completeness_is_not_treated_as_a_bad_cycle():
+    # Absent counts mean the orchestrator predates the guard, not that the cycle is thin.
+    assert _reject({"status": "complete", "target": "x"}) is None
+
+
+def test_completeness_is_derived_when_only_the_raw_counts_are_present():
+    assert _reject({"status": "complete", "target": "x",
+                    "steps_fetched": 344, "steps_expected": 400}) is not None
+
+
+def test_the_example_is_honest_when_the_truncated_list_holds_none():
+    # `undersampled` is truncated to 20 by the orchestrator, so a non-zero count can come
+    # with no matching example. It must say so rather than print an empty "e.g.".
+    truncated = {**_GOOD, "undersampled_count": 40, "undersampled_sum_count": 2,
+                 "undersampled": ["gep01/D1/t2m_c(7/8)"] * 20}
+    reason = _reject(truncated)
+    assert reason is not None and "not in the truncated sample" in reason

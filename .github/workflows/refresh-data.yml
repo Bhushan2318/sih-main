@@ -9,6 +9,11 @@ name: Refresh model and data
 #
 # The store is CUMULATIVE. Each run restores the previous asset before ingesting, so the
 # canonical parquet grows cycle by cycle instead of every run training on one day of data.
+#
+# A RED RUN IS NOT NECESSARILY A BROKEN PIPELINE. refresh_for_deploy exits 2 when NOAA
+# served a cycle too incomplete to publish - a deliberate refusal, so the site keeps the
+# last cycle that was actually complete rather than one whose rainfall is understated.
+# Check the log for "REJECTED"; the next scheduled run re-attempts the same cycle.
 
 on:
   schedule:
@@ -81,6 +86,8 @@ jobs:
 
       - name: Pull the cycle, verify, retrain
         working-directory: backend
+        # Exit 2 means the cycle was refused as too incomplete to publish; the failure is
+        # the point, and every step after this is skipped so nothing stale is shipped.
         run: |
           python -m scripts.refresh_for_deploy \
             ${{ inputs.force_train && '--force-train' || '' }} \
