@@ -360,7 +360,13 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
   to   { transform: translate3d(-50%, 0, 0); }
 }
 .ticker__half { display: flex; flex: 0 0 auto; }
-@media (prefers-reduced-motion: reduce) {
+/* Also every touch device, not just reduced motion. The rail moving on its own assumes a
+   pointer that can hover to stop it; a phone has no hover, so the item being aimed at
+   never stops sliding away. Standing still and swipeable is the native idiom there, and
+   it reuses this block exactly - including hiding the duplicate half, which only exists
+   to make the animated loop seamless. NB: deliberately not the global reduce block above,
+   which kills every animation on the page. */
+@media (prefers-reduced-motion: reduce), (hover: none) and (pointer: coarse) {
   .ticker { overflow-x: auto; }
   .ticker__track { animation: none; }
   .ticker__half + .ticker__half { display: none; }
