@@ -50,6 +50,29 @@ def test_health_on_blank_install(blank_client):
     assert body["current_run_id"] is None
 
 
+def test_health_always_reports_a_build_commit_key(blank_client, monkeypatch):
+    # CI polls this to tell whether the process answering is the one it just deployed -
+    # Render auto-deploys on push, which never touches the refresh workflow, so there is
+    # no other way to know before warming the caches. The key must always be present:
+    # a caller can fall back on an empty string, but a missing key is an exception.
+    from app import main
+
+    monkeypatch.delenv("RENDER_GIT_COMMIT", raising=False)
+    monkeypatch.delenv("BUILD_COMMIT", raising=False)
+    body = blank_client.get("/api/health").json()
+    assert body["commit"] == ""
+
+    monkeypatch.setenv("RENDER_GIT_COMMIT", "d2d0486cafe")
+    assert blank_client.get("/api/health").json()["commit"] == "d2d0486cafe"
+
+    # Render's variable wins; BUILD_COMMIT is only the escape hatch off Render.
+    monkeypatch.setenv("BUILD_COMMIT", "ignored")
+    assert blank_client.get("/api/health").json()["commit"] == "d2d0486cafe"
+    monkeypatch.delenv("RENDER_GIT_COMMIT")
+    assert blank_client.get("/api/health").json()["commit"] == "ignored"
+    assert main._build_commit() == "ignored"
+
+
 def test_regions_empty_state_has_no_placeholder_numbers(blank_client):
     body = blank_client.get("/api/regions?lead_time_days=1").json()
     assert body["model_trained"] is False

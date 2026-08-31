@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -105,6 +106,16 @@ app.include_router(ensemble.router)
 app.include_router(ws.router)
 
 
+# The commit this container was built from. Render sets RENDER_GIT_COMMIT on every
+# deploy; BUILD_COMMIT is the manual escape hatch for anywhere else. It is reported so a
+# deploy can be *observed* rather than guessed at: Render auto-deploys on push, which
+# bypasses the refresh workflow entirely, so CI has no other way to know the new process
+# is the one answering before it warms the caches. Empty when unset, never absent - a
+# caller can then fall back to something else rather than having to handle a missing key.
+def _build_commit() -> str:
+    return os.getenv("RENDER_GIT_COMMIT") or os.getenv("BUILD_COMMIT") or ""
+
+
 # GET *and* HEAD. FastAPI's @app.get registers GET alone, so a HEAD probe gets a 405 -
 # and HEAD is what uptime monitors send by default. UptimeRobot reported this endpoint
 # "down" while the app was serving perfectly, because a rejected method looks identical
@@ -116,7 +127,9 @@ def health() -> dict:
         "model_trained": registry.current_run_id() is not None,
         "current_run_id": registry.current_run_id(),
         "websocket_clients": manager.connection_count,
+        "commit": _build_commit(),
     }
+
 
 
 # ---------------------------------------------------------------- static SPA (deployed)
