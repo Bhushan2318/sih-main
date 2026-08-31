@@ -30,10 +30,33 @@ async function parseError(res: Response): Promise<string> {
   }
 }
 
+/**
+ * Parse a successful response, or explain why it could not be parsed.
+ *
+ * `res.json()` on its own leaks the browser's raw parser error to the user - Safari words
+ * it "The string did not match the expected pattern", which tells nobody anything. A 200
+ * carrying HTML is a specific, common situation on a host that sleeps: the platform's own
+ * holding page is served while the container wakes, so say that rather than blaming JSON.
+ */
+async function readJson<T>(res: Response): Promise<T> {
+  const text = await res.text();
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    const looksLikeHtml = /^\s*<(?:!doctype|html)/i.test(text);
+    throw new ApiError(
+      looksLikeHtml
+        ? "The server sent a web page instead of data — it is probably still starting up. This usually clears within a minute."
+        : `The server sent a response that is not JSON (${text.slice(0, 80)}…)`,
+      res.status,
+    );
+  }
+}
+
 export async function apiGet<T>(path: string): Promise<T> {
   const res = await fetch(`${BASE}${path}`, { headers: { Accept: "application/json" } });
   if (!res.ok) throw new ApiError(await parseError(res), res.status);
-  return res.json() as Promise<T>;
+  return readJson<T>(res);
 }
 
 export async function apiPostJson<T>(path: string, body: unknown): Promise<T> {
@@ -43,7 +66,7 @@ export async function apiPostJson<T>(path: string, body: unknown): Promise<T> {
     body: JSON.stringify(body),
   });
   if (!res.ok) throw new ApiError(await parseError(res), res.status);
-  return res.json() as Promise<T>;
+  return readJson<T>(res);
 }
 
 export async function apiPostFile<T>(path: string, file: File): Promise<T> {
@@ -51,7 +74,7 @@ export async function apiPostFile<T>(path: string, file: File): Promise<T> {
   form.append("file", file);
   const res = await fetch(`${BASE}${path}`, { method: "POST", body: form });
   if (!res.ok) throw new ApiError(await parseError(res), res.status);
-  return res.json() as Promise<T>;
+  return readJson<T>(res);
 }
 
 export const API_BASE = BASE;
