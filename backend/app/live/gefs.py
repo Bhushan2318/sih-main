@@ -131,6 +131,9 @@ class FetchReport:
     steps_fetched: int = 0
     bytes_downloaded: int = 0
     missing_steps: list = field(default_factory=list)
+    # Steps NOMADS refused that were then fetched from S3 instead. They are already
+    # counted in steps_fetched; this says how much of the pull leaned on the fallback.
+    steps_recovered: int = 0
     seconds: float = 0.0
     # (member, lead_day, variable) groups that were reduced from fewer samples than a
     # complete day would give. A daily mean over 6 of 8 samples is a slightly different
@@ -355,6 +358,55 @@ def load_cities() -> pd.DataFrame:
     return pd.DataFrame(pd.read_json(CITIES_JSON))
 
 
+def _recover_steps_from_s3(
+    init: date,
+    cycle_hour: str,
+    failed: list,
+    cities: pd.DataFrame,
+    scratch: Path,
+    step_values: dict,
+    report: FetchReport,
+    workers: int,
+) -> list:
+    """Re-fetch the steps NOMADS would not serve from S3, which is not rate-limited.
+
+    NOMADS answers a burst it considers too fast with a 302 to its throttle page, and the
+    windows last longer than the retry ladder in ``_get`` - so a mid-pull throttle leaves a
+    contiguous block of holes that retrying NOMADS cannot fill. S3 carries the same
+    ``pgrb2sp25`` files, so the holes are refilled there before the daily reduction runs.
+
+    ``step_values`` and ``report`` are updated in place; the recovered step ids are
+    returned. Anything S3 also cannot supply stays listed in ``report.missing_steps``
+    exactly as the main pass left it, so a genuinely thin cycle is still reported as thin.
+    """
+    def job(member: str, fh: int):
+        blob = _fetch_step_s3(init, cycle_hour, member, fh)
+        return member, fh, len(blob), _extract_points(blob, cities, scratch)
+
+    recovered = []
+    with ThreadPoolExecutor(max_workers=max(1, min(workers, len(failed)))) as pool:
+        futures = {pool.submit(job, m, fh): (m, fh) for m, fh in failed}
+        for fut in as_completed(futures):
+            m, fh = futures[fut]
+            try:
+                member, hour, nbytes, values = fut.result()
+            except Exception as exc:  # noqa: BLE001
+                log.warning("S3 could not fill %s f%03d either: %s", m, fh, exc)
+                continue
+            step_values[(member, hour)] = values
+            report.bytes_downloaded += nbytes
+            report.steps_fetched += 1
+            recovered.append(f"{member}/f{hour:03d}")
+
+    if recovered:
+        filled = set(recovered)
+        report.missing_steps = [s for s in report.missing_steps if s not in filled]
+        report.steps_recovered += len(recovered)
+        log.info("S3 filled %d of %d gaps NOMADS left in %s %sZ",
+                 len(recovered), len(failed), init, cycle_hour)
+    return recovered
+
+
 def fetch_cycle(
     init: date,
     cycle_hour: str,
@@ -369,6 +421,7 @@ def fetch_cycle(
     scratch.mkdir(parents=True, exist_ok=True)
 
     transport = transport or choose_transport(init, cycle_hour, members[0])
+    requested_workers = workers
     if transport == "nomads":
         workers = min(workers, NOMADS_MAX_WORKERS)
     all_steps = list(range(STEP_HOURS, MAX_LEAD_H + 1, STEP_HOURS))
@@ -383,6 +436,7 @@ def fetch_cycle(
         blob = _fetch_step(init, cycle_hour, member, fh, transport)
         return member, fh, len(blob), _extract_points(blob, cities, scratch)
 
+    failed: list = []
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {pool.submit(job, m, fh): (m, fh)
                    for m in members for fh in all_steps}
@@ -395,10 +449,17 @@ def fetch_cycle(
                 # usable and the gaps are reported rather than filled in.
                 log.warning("step %s f%03d failed: %s", m, fh, exc)
                 report.missing_steps.append(f"{m}/f{fh:03d}")
+                failed.append((m, fh))
                 continue
             step_values[(member, hour)] = values
             report.bytes_downloaded += nbytes
             report.steps_fetched += 1
+
+    # Only NOMADS gaps are worth a second transport. If the pull was already on S3 there
+    # is nowhere else to go, and a failure there means the step genuinely is not there.
+    if transport == "nomads" and failed:
+        _recover_steps_from_s3(init, cycle_hour, failed, cities, scratch, step_values,
+                               report, requested_workers)
 
     report.seconds = time.time() - t0
     if not step_values:
