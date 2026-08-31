@@ -72,15 +72,49 @@ CITIES_JSON = SCRIPT_DIR / "india_cities.json"
 ALL_MEMBERS = ["c00", "p01", "p02", "p03", "p04"]
 LEAD_DAYS = list(range(1, 11))  # Day 1 .. Day 10
 
-# Initialisation dates: one 00 UTC cycle per listed day. Weekly through the monsoon
-# (Jun-Sep), monthly otherwise, so the sample spans the full seasonal cycle including
-# the regime where medium-range busts over India matter most.
-INIT_DATES = [
-    "2019-01-09", "2019-02-13", "2019-03-13", "2019-04-10", "2019-05-08",
-    "2019-06-05", "2019-06-19", "2019-07-03", "2019-07-17", "2019-07-31",
-    "2019-08-14", "2019-08-28", "2019-09-11", "2019-09-25", "2019-10-16",
-    "2019-11-13", "2019-12-11",
+# Initialisation pattern: one 00 UTC cycle per listed month-day. Fortnightly through the
+# monsoon (Jun-Sep), monthly otherwise, so each year sampled spans the full seasonal cycle
+# including the regime where medium-range busts over India matter most.
+#
+# The same month-days are used for every year, which keeps the seasonal sampling aligned
+# across years - the point of adding years is more *independent monsoons*, not a denser
+# sample of one. Nearby initialisations see largely the same weather, so breadth across
+# years buys far more than density within a year.
+INIT_MMDD = [
+    "01-09", "02-13", "03-13", "04-10", "05-08",
+    "06-05", "06-19", "07-03", "07-17", "07-31",
+    "08-14", "08-28", "09-11", "09-25", "10-16",
+    "11-13", "12-11",
 ]
+
+# The reforecast archive runs 2000-2019 (verified against the bucket: every year in that
+# span answers 200 for both the GRIB and its .idx). Anything outside it does not exist.
+ARCHIVE_YEARS = range(2000, 2020)
+
+
+def init_dates_for(years) -> list:
+    return [f"{y}-{md}" for y in years for md in INIT_MMDD]
+
+
+def parse_years(spec: str) -> list:
+    """`2019`, `2010-2019` or `2011,2014,2019` -> a sorted list of years."""
+    out: set = set()
+    for chunk in spec.split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        if "-" in chunk:
+            a, b = chunk.split("-", 1)
+            out.update(range(int(a), int(b) + 1))
+        else:
+            out.add(int(chunk))
+    bad = sorted(y for y in out if y not in ARCHIVE_YEARS)
+    if bad:
+        raise ValueError(f"outside the GEFSv12 reforecast archive (2000-2019): {bad}")
+    return sorted(out)
+
+
+INIT_DATES = init_dates_for([REFORECAST_YEAR])   # default: the original 2019 sample
 
 # GRIB2 file-prefix -> how to read and canonicalise it.
 #   short_name : cfgrib variable key after decode
@@ -135,7 +169,7 @@ def key_for(var_prefix: str, init: str, member: str) -> str:
     ymd = init.replace("-", "")
     cyc = f"{ymd}00"
     return (
-        f"GEFSv12/reforecast/{REFORECAST_YEAR}/{cyc}/{member}/Days:1-10/"
+        f"GEFSv12/reforecast/{init[:4]}/{cyc}/{member}/Days:1-10/"
         f"{var_prefix}_{cyc}_{member}.grib2"
     )
 
@@ -371,7 +405,7 @@ def pull_one_file(var_prefix: str, init: str, member: str, cities: pd.DataFrame)
     return out.rename(columns={"raw_value": var_prefix})
 
 
-def build(cities: pd.DataFrame, inits: list[str], members: list[str], resume: bool) -> None:
+def build(cities: pd.DataFrame, inits: list, members: list, resume: bool) -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     part_dir = OUT_DIR / "_gefs_parts"
     part_dir.mkdir(exist_ok=True)
@@ -418,7 +452,7 @@ def build(cities: pd.DataFrame, inits: list[str], members: list[str], resume: bo
         merged.to_parquet(part_path, index=False)
         print(f"  -> {part_path.name}  {len(merged):,} rows  {time.time()-t0:,.0f}s")
 
-    _finalise(cities, part_dir)
+    _finalise(cities, part_dir, sorted({int(i[:4]) for i in inits}))
 
 
 def _canonicalise(df: pd.DataFrame, cities: pd.DataFrame) -> pd.DataFrame:
@@ -462,14 +496,26 @@ def _canonicalise(df: pd.DataFrame, cities: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def _finalise(cities: pd.DataFrame, part_dir: Path) -> None:
-    parts = sorted(part_dir.glob("*.parquet"))
-    if not parts:
-        print("No parts written; nothing to finalise.", file=sys.stderr)
-        return
-    full = pd.concat((pd.read_parquet(p) for p in parts), ignore_index=True)
-    csv_path = OUT_DIR / "gefs_reforecast_india_2019.csv"
-    pq_path = OUT_DIR / "gefs_reforecast_india_2019.parquet"
+def _finalise(cities: pd.DataFrame, part_dir: Path, years: list) -> None:
+    """Write one CSV/parquet per year, from that year's cached parts.
+
+    Per year, and only for the years this run asked for, on purpose. An earlier version
+    globbed every part into a single file named 2019 - so a run limited to one member
+    silently rewrote the committed 2019 sample 1,440 rows short (36 cities x 4 missing
+    members x 10 leads), and `git status` stayed clean because the CSV is gitignored.
+    Scoping the write to the requested years makes that impossible.
+    """
+    for year in years:
+        parts = sorted(part_dir.glob(f"{year}-*.parquet"))
+        if not parts:
+            print(f"No parts for {year}; nothing to finalise.", file=sys.stderr)
+            continue
+        _write_year(pd.concat((pd.read_parquet(p) for p in parts), ignore_index=True), year)
+
+
+def _write_year(full: pd.DataFrame, year: int) -> None:
+    csv_path = OUT_DIR / f"gefs_reforecast_india_{year}.csv"
+    pq_path = OUT_DIR / f"gefs_reforecast_india_{year}.parquet"
     full.to_csv(csv_path, index=False)
     full.to_parquet(pq_path, index=False)
 
@@ -497,6 +543,18 @@ def _finalise(cities: pd.DataFrame, part_dir: Path) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--years", default=str(REFORECAST_YEAR), metavar="SPEC",
+                    help="which reforecast years to sample: 2019, 2010-2019, or "
+                         "2011,2014,2019. Archive covers 2000-2019 (default: 2019).")
+    ap.add_argument("--inits", default=None, metavar="DATES",
+                    help="explicit comma list of YYYY-MM-DD init dates, instead of the "
+                         "seasonal pattern. Used by CI to split a year across parallel "
+                         "jobs; --years is ignored when this is given.")
+    ap.add_argument("--shard", default=None, metavar="I/N",
+                    help="take every Nth init date starting at I (1-based), for splitting "
+                         "a fetch across parallel CI jobs. Strided rather than contiguous "
+                         "so a failed shard thins the seasonal sample evenly instead of "
+                         "removing a whole quarter.")
     ap.add_argument("--max-inits", type=int, default=None, help="use only the first N init dates")
     ap.add_argument("--members", default=",".join(ALL_MEMBERS),
                     help="comma list, subset of c00,p01,p02,p03,p04")
@@ -508,14 +566,36 @@ def main() -> None:
         sys.exit(f"missing {CITIES_JSON} - run the city-extraction step first")
     cities = pd.DataFrame(json.loads(CITIES_JSON.read_text()))
 
-    inits = INIT_DATES if args.max_inits is None else INIT_DATES[: args.max_inits]
+    if args.inits:
+        inits = [d.strip() for d in args.inits.split(",") if d.strip()]
+        bad = [d for d in inits if len(d) != 10 or int(d[:4]) not in ARCHIVE_YEARS]
+        if bad:
+            sys.exit(f"bad or out-of-archive init dates: {bad}")
+        years = sorted({int(d[:4]) for d in inits})
+    else:
+        try:
+            years = parse_years(args.years)
+        except ValueError as exc:
+            sys.exit(str(exc))
+        inits = init_dates_for(years)
+    if args.shard:
+        try:
+            i, n = (int(x) for x in args.shard.split("/", 1))
+            if not (1 <= i <= n):
+                raise ValueError
+        except ValueError:
+            sys.exit(f"--shard must look like 1/4, got {args.shard!r}")
+        inits = inits[i - 1::n]
+    if args.max_inits is not None:
+        inits = inits[: args.max_inits]
     members = [m.strip() for m in args.members.split(",") if m.strip()]
     bad = set(members) - set(ALL_MEMBERS)
     if bad:
         sys.exit(f"unknown members: {sorted(bad)}")
 
     est_files = len(inits) * len(members) * len(VAR_SPEC)
-    print(f"cities={len(cities)}  inits={len(inits)}  members={len(members)}  "
+    print(f"years={years[0]}..{years[-1]} ({len(years)})  "
+          f"cities={len(cities)}  inits={len(inits)}  members={len(members)}  "
           f"variables={len(VAR_SPEC)}  -> ~{est_files} GRIB files, "
           f"~{est_files * 8} range GETs")
     if args.list_only:

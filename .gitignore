@@ -25,6 +25,10 @@ backend/data/canonical_backup_*/
 # ignore the bulky CSV mirrors and the fetch checkpoint dir.
 backend/data/samples/*.csv
 backend/data/samples/_gefs_parts/
+# Backfilled years are large and only 2019 is needed by the tests, which regenerate its
+# CSV twin from it. Keep 2019 tracked; leave the rest to the backfill workflow's artifact.
+backend/data/samples/gefs_reforecast_india_*.parquet
+!backend/data/samples/gefs_reforecast_india_2019.parquet
 # regenerate with scripts/compare_verification_products.py; the numbers live in HANDOFF
 backend/data/analysis/
 
