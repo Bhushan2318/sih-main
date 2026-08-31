@@ -587,3 +587,69 @@ def test_an_s3_pull_does_not_try_to_repair_itself(monkeypatch, tmp_path):
     _, report = gefs.fetch_cycle(date(2019, 6, 1), "00", members=["gec00"],
                                  workers=20, scratch=tmp_path, transport="s3")
     assert report.missing_steps == ["gec00/f012"] and report.steps_recovered == 0
+
+
+# ------------------------------------------- which cycles a refresh run should pull
+# GitHub's scheduler is best-effort: this workflow has fired 3 h 25 m late and skipped a
+# slot outright. A run that only ever pulled "the newest cycle" would leave a permanent
+# hole in the store each time, so the run catches up instead. Offline: only the choice of
+# cycles is under test, never the download.
+
+class _CycleArgs:
+    def __init__(self, cycle=None, catch_up=4):
+        self.cycle = cycle
+        self.catch_up = catch_up
+
+
+def _to_pull(**kw):
+    from scripts.refresh_for_deploy import _cycles_to_pull
+    return _cycles_to_pull(_CycleArgs(**kw))
+
+
+def test_a_run_catches_up_on_consecutive_cycles_oldest_first(monkeypatch):
+    # Six-hourly, not the 24 h stride recent_cycles uses for the historical backfill:
+    # catching up on missed slots means consecutive cycles, not one per day.
+    monkeypatch.setattr(gefs, "latest_expected_cycle",
+                        lambda *a, **kw: (date(2026, 8, 31), "06"))
+    assert _to_pull() == [
+        (date(2026, 8, 30), "12"),
+        (date(2026, 8, 30), "18"),
+        (date(2026, 8, 31), "00"),
+        (date(2026, 8, 31), "06"),
+    ]
+
+
+def test_catch_up_of_one_is_the_old_newest_only_behaviour(monkeypatch):
+    monkeypatch.setattr(gefs, "latest_expected_cycle",
+                        lambda *a, **kw: (date(2026, 8, 31), "06"))
+    assert _to_pull(catch_up=1) == [(date(2026, 8, 31), "06")]
+
+
+def test_catching_up_walks_across_a_month_boundary(monkeypatch):
+    monkeypatch.setattr(gefs, "latest_expected_cycle",
+                        lambda *a, **kw: (date(2026, 9, 1), "00"))
+    assert _to_pull(catch_up=3) == [
+        (date(2026, 8, 31), "12"),
+        (date(2026, 8, 31), "18"),
+        (date(2026, 9, 1), "00"),
+    ]
+
+
+def test_an_explicit_cycle_overrides_the_catch_up():
+    assert _to_pull(cycle="2026-08-31T00") == [(date(2026, 8, 31), "00")]
+
+
+def test_a_cycle_can_be_written_the_obvious_wrong_ways():
+    from scripts.refresh_for_deploy import _parse_cycle
+    for text in ("2026-08-31T00", "2026-08-31 00", "2026-08-31/00", " 2026-08-31T0 "):
+        assert _parse_cycle(text) == (date(2026, 8, 31), "00")
+
+
+def test_a_non_cycle_hour_is_refused_rather_than_pulled():
+    # 03Z is not a GEFS cycle. Fetching it would 404 every step and report a thin cycle,
+    # which reads as "NOAA is broken" rather than "you asked for a cycle that never exists".
+    from scripts.refresh_for_deploy import _parse_cycle
+    with pytest.raises(ValueError, match="not a GEFS cycle hour"):
+        _parse_cycle("2026-08-31T03")
+    with pytest.raises(ValueError, match="expected YYYY-MM-DDTHH"):
+        _parse_cycle("yesterday")
