@@ -105,7 +105,11 @@ app.include_router(ensemble.router)
 app.include_router(ws.router)
 
 
-@app.get("/api/health", tags=["health"])
+# GET *and* HEAD. FastAPI's @app.get registers GET alone, so a HEAD probe gets a 405 -
+# and HEAD is what uptime monitors send by default. UptimeRobot reported this endpoint
+# "down" while the app was serving perfectly, because a rejected method looks identical
+# to a broken service from the outside.
+@app.api_route("/api/health", methods=["GET", "HEAD"], tags=["health"])
 def health() -> dict:
     return {
         "status": "ok",
@@ -128,7 +132,7 @@ _STATIC_DIR = Path(__file__).resolve().parent / "static"
 if _STATIC_DIR.is_dir():
     app.mount("/assets", StaticFiles(directory=_STATIC_DIR / "assets"), name="assets")
 
-    @app.get("/{full_path:path}", include_in_schema=False)
+    @app.api_route("/{full_path:path}", methods=["GET", "HEAD"], include_in_schema=False)
     def spa(full_path: str) -> FileResponse:
         """Serve the SPA, falling back to index.html for client-side routes.
 
