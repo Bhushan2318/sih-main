@@ -89,6 +89,13 @@ VAR_SPEC: dict[str, dict] = {
                       "agg": "sum", "step_multiple": 6},
 }
 
+# Variables aggregated by SUMMING the day's steps rather than averaging them. They are
+# singled out because a short sum is wrong in a way a short mean is not: a mean over 6 of
+# 8 samples is the same quantity measured more noisily, while a sum over 2 of 4 is roughly
+# half the real total. apcp_mm is precipitation - the variable behind most busts - so a
+# short sum understates risk instead of blurring it.
+SUM_VARIABLES = frozenset(c for c, spec in VAR_SPEC.items() if spec.get("agg") == "sum")
+
 NOMADS_VARS = ["TMP", "RH", "PRES", "PRMSL", "PWAT", "APCP", "UGRD", "VGRD", "SOILW"]
 
 HTTP_RETRIES = 5
@@ -134,6 +141,23 @@ class FetchReport:
     @property
     def complete(self) -> bool:
         return self.steps_fetched == self.steps_expected and not self.undersampled
+
+    @property
+    def undersampled_sums(self) -> list:
+        """The undersampled groups that are accumulations, which are the damaging ones.
+
+        Entries look like ``gep01/D2/apcp_mm(2/4)``; matching on ``/<var>(`` keys off the
+        variable segment rather than a substring that could appear in a member name.
+        """
+        return [u for u in self.undersampled
+                if any(f"/{var}(" in u for var in SUM_VARIABLES)]
+
+    @property
+    def step_completeness(self) -> float:
+        """Fraction of expected GRIB steps actually fetched, 0.0-1.0."""
+        if self.steps_expected <= 0:
+            return 0.0
+        return self.steps_fetched / self.steps_expected
 
 
 # --------------------------------------------------------------------------------------
