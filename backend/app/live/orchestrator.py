@@ -167,6 +167,8 @@ def run_forecast_cycle(
                 f"in {report.seconds:.0f}s; members={','.join(members)}; "
                 f"variables={','.join(result.canonical_variables_found)}"
             )
+            if report.steps_recovered:
+                detail += f"; recovered_from_s3={report.steps_recovered}"
             if report.missing_steps:
                 detail += f"; missing_steps={len(report.missing_steps)}"
             if report.undersampled:
@@ -196,6 +198,7 @@ def run_forecast_cycle(
             # just adding noise - see FetchReport.undersampled_sums.
             "steps_fetched": report.steps_fetched,
             "steps_expected": report.steps_expected,
+            "steps_recovered": report.steps_recovered,
             "step_completeness": round(report.step_completeness, 4),
             "undersampled_count": len(report.undersampled),
             "undersampled_sum_count": len(report.undersampled_sums),

@@ -441,3 +441,149 @@ def test_the_example_is_honest_when_the_truncated_list_holds_none():
                  "undersampled": ["gep01/D1/t2m_c(7/8)"] * 20}
     reason = _reject(truncated)
     assert reason is not None and "not in the truncated sample" in reason
+
+
+# --------------------------------------------------- filling NOMADS gaps from S3
+# NOMADS answers a burst it dislikes with a 302 to its throttle page, and the window
+# outlasts the retry ladder - so a mid-pull throttle leaves contiguous holes that only a
+# second transport can fill. These stay offline: `_fetch_step_s3` and `_extract_points`
+# are stubbed, because what is being protected is the bookkeeping, not the download.
+
+def _stub_s3(monkeypatch, recoverable):
+    """S3 serves the steps in `recoverable`; everything else 404s as it would for real."""
+    def fake_fetch(init, hh, member, fh):
+        if (member, fh) not in recoverable:
+            raise FileNotFoundError(f"404 for {member} f{fh:03d}")
+        return b"GRIB-stub"
+
+    monkeypatch.setattr(gefs, "_fetch_step_s3", fake_fetch)
+    monkeypatch.setattr(gefs, "_extract_points",
+                        lambda blob, cities, scratch: {"t2m_c": [1.0]})
+
+
+def _recover(monkeypatch, failed, recoverable):
+    report = _report(steps_fetched=400 - len(failed),
+                     missing_steps=[f"{m}/f{fh:03d}" for m, fh in failed])
+    _stub_s3(monkeypatch, recoverable)
+    step_values: dict = {}
+    got = gefs._recover_steps_from_s3(
+        date(2026, 8, 31), "00", failed, cities=pd.DataFrame(), scratch=None,
+        step_values=step_values, report=report, workers=4,
+    )
+    return report, step_values, got
+
+
+def test_gaps_nomads_left_are_filled_from_s3(monkeypatch):
+    # The 2026-08-31 10:39Z shape in miniature: NOMADS 302s a contiguous run of steps,
+    # S3 has all of them, and the cycle ends complete instead of thin.
+    failed = [("gep01", 3), ("gep01", 6), ("gep02", 9)]
+    report, step_values, got = _recover(monkeypatch, failed, recoverable=set(failed))
+
+    assert report.steps_fetched == 400
+    assert report.missing_steps == []
+    assert report.steps_recovered == 3
+    assert sorted(got) == ["gep01/f003", "gep01/f006", "gep02/f009"]
+    # The recovered values must reach the reduction, or the day is still short.
+    assert set(step_values) == set(failed)
+
+
+def test_a_partly_recoverable_cycle_keeps_the_rest_listed(monkeypatch):
+    failed = [("gep01", 3), ("gep01", 6), ("gep02", 9)]
+    report, step_values, got = _recover(monkeypatch, failed,
+                                        recoverable={("gep01", 3)})
+
+    assert report.steps_recovered == 1
+    assert report.steps_fetched == 398
+    # Still thin, and honest about exactly which steps are absent.
+    assert report.missing_steps == ["gep01/f006", "gep02/f009"]
+    assert got == ["gep01/f003"]
+
+
+def test_s3_failing_too_leaves_the_report_untouched(monkeypatch):
+    # The fallback must not turn a reportable gap into a raised exception: a thin cycle is
+    # refused downstream by the publish guard, which is a decision, not a crash.
+    failed = [("gep01", 3), ("gep02", 9)]
+    report, step_values, got = _recover(monkeypatch, failed, recoverable=set())
+
+    assert got == []
+    assert report.steps_recovered == 0
+    assert report.steps_fetched == 398
+    assert report.missing_steps == ["gep01/f003", "gep02/f009"]
+    assert step_values == {}
+
+
+def test_recovered_bytes_are_counted_once(monkeypatch):
+    failed = [("gep01", 3)]
+    report, _, _ = _recover(monkeypatch, failed, recoverable=set(failed))
+    assert report.bytes_downloaded == len(b"GRIB-stub")
+
+
+def test_fetch_cycle_repairs_gaps_before_the_daily_reduction(monkeypatch, tmp_path):
+    # The wiring, not the helper: a NOMADS pull that loses steps must hand the reduction a
+    # repaired set, because `_reduce_to_daily` is where a short day becomes a short mean.
+    steps_lost = {("gec00", 12), ("gec00", 15)}
+    monkeypatch.setattr(gefs, "load_cities",
+                        lambda: pd.DataFrame({"city": ["Pune"], "state": ["MH"],
+                                              "region": ["West"], "lat": [18.5],
+                                              "lon": [73.9]}))
+
+    def fake_step(init, hh, member, fh, transport):
+        if (member, fh) in steps_lost:
+            raise RuntimeError("302 for NOMADS throttle page")
+        return b"GRIB-stub"
+
+    monkeypatch.setattr(gefs, "_fetch_step", fake_step)
+    monkeypatch.setattr(gefs, "_fetch_step_s3", lambda i, h, m, f: b"GRIB-stub")
+    monkeypatch.setattr(gefs, "_extract_points",
+                        lambda blob, cities, scratch: {"t2m_c": [1.0]})
+
+    seen: dict = {}
+    real = gefs._recover_steps_from_s3
+
+    def spy(*args, **kw):
+        seen["workers"] = args[-1]
+        return real(*args, **kw)
+
+    monkeypatch.setattr(gefs, "_recover_steps_from_s3", spy)
+    monkeypatch.setattr(gefs, "_reduce_to_daily",
+                        lambda step_values, *a, **kw: pd.DataFrame(
+                            {"n": [len(step_values)]}))
+
+    frame, report = gefs.fetch_cycle(date(2026, 8, 31), "00", members=["gec00"],
+                                     workers=20, scratch=tmp_path, transport="nomads")
+
+    assert report.steps_fetched == report.steps_expected == 80
+    assert report.missing_steps == [] and report.steps_recovered == 2
+    assert int(frame["n"].iloc[0]) == 80          # the reduction saw a whole cycle
+    # The 6-worker cap exists to keep NOMADS happy; S3 has no such limit and must not
+    # inherit it, or repairing a badly throttled pull takes longer than the pull did.
+    assert seen["workers"] == 20
+
+
+def test_an_s3_pull_does_not_try_to_repair_itself(monkeypatch, tmp_path):
+    # On S3 there is no second transport to fall back to: a failure there means the step
+    # genuinely is not published, and re-requesting it just doubles the wait.
+    monkeypatch.setattr(gefs, "load_cities",
+                        lambda: pd.DataFrame({"city": ["Pune"], "state": ["MH"],
+                                              "region": ["West"], "lat": [18.5],
+                                              "lon": [73.9]}))
+
+    def fake_step(init, hh, member, fh, transport):
+        if fh == 12:
+            raise FileNotFoundError("404")
+        return b"GRIB-stub"
+
+    monkeypatch.setattr(gefs, "_fetch_step", fake_step)
+    monkeypatch.setattr(gefs, "_extract_points",
+                        lambda blob, cities, scratch: {"t2m_c": [1.0]})
+    monkeypatch.setattr(gefs, "_reduce_to_daily",
+                        lambda step_values, *a, **kw: pd.DataFrame({"n": [1]}))
+
+    def refuse(*a, **kw):
+        raise AssertionError("an S3 pull must not re-fetch from S3")
+
+    monkeypatch.setattr(gefs, "_recover_steps_from_s3", refuse)
+
+    _, report = gefs.fetch_cycle(date(2019, 6, 1), "00", members=["gec00"],
+                                 workers=20, scratch=tmp_path, transport="s3")
+    assert report.missing_steps == ["gec00/f012"] and report.steps_recovered == 0
