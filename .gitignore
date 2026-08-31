@@ -25,6 +25,8 @@ backend/data/canonical_backup_*/
 # ignore the bulky CSV mirrors and the fetch checkpoint dir.
 backend/data/samples/*.csv
 backend/data/samples/_gefs_parts/
+# regenerate with scripts/compare_verification_products.py; the numbers live in HANDOFF
+backend/data/analysis/
 
 # Frontend
 frontend/node_modules/
