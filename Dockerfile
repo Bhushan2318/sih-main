@@ -50,25 +50,31 @@ COPY backend/ ./
 COPY --from=web /web/dist ./app/static
 
 # The trained model, the canonical parquet store and the metadata db are build inputs
-# rather than source: they are regenerated every cycle and would otherwise be a 24 MB
-# commit each time. CI publishes them to a fixed release tag; this pulls the latest.
+# rather than source: they are regenerated every cycle and would otherwise be a 17 MB
+# commit each time. CI publishes them to a fixed release tag.
 #
-# A missing or unreachable asset is NOT a build failure. The app already has an honest
-# answer for having no model - /api/model/status reports model_trained: false and the UI
-# renders its empty state with the reason - and that is a far better outcome than an image
-# that refuses to build the night before a demo.
-ARG DATA_ASSET_URL="https://github.com/Bhushan2318/sih-main/releases/download/data-latest/sanket-data.tar.gz"
-RUN if [ -n "$DATA_ASSET_URL" ]; then \
-      echo "fetching model+data: $DATA_ASSET_URL"; \
-      if curl -fsSL --retry 3 --retry-delay 2 -o /tmp/data.tar.gz "$DATA_ASSET_URL"; then \
-        tar -xzf /tmp/data.tar.gz -C /app && rm /tmp/data.tar.gz && \
-        echo "unpacked:" && ls -la /app/data/models 2>/dev/null | head; \
-      else \
-        echo "WARNING: no data asset available; starting without a trained model"; \
-      fi; \
-    fi
+# The fetch itself happens in the ENTRYPOINT, not here. Docker caches a RUN layer on its
+# command string, and this URL is deliberately constant - so a rebuild triggered by a
+# *data* refresh (the 6-hourly job, which changes no code) would reuse the cached download
+# and redeploy the same stale artifact while reporting success. Fetching at startup also
+# means a plain restart picks up fresh data with no rebuild.
+#
+# ENV rather than ARG: the entrypoint needs it at runtime, and ARG does not survive
+# into the running container.
+ENV DATA_ASSET_URL="https://github.com/Bhushan2318/sih-main/releases/download/data-latest/sanket-data.tar.gz"
 
-# Render injects $PORT and expects the process to bind it on 0.0.0.0. The shell form is
-# required here so the variable is actually expanded.
+# A build-time copy as a genuine fallback, so a GitHub outage at boot degrades the site
+# to stale data rather than to no data. This layer IS cached and so may be old - that is
+# fine for a fallback, and the entrypoint overwrites it with the current artifact on every
+# start. Never fatal: an image that will not build is worse than one serving last week's
+# cycle, and the app reports having no model honestly if both fetches fail.
+RUN curl -fsSL --retry 3 --retry-delay 2 -o /tmp/data.tar.gz "$DATA_ASSET_URL" \
+      && tar -xzf /tmp/data.tar.gz -C /app && rm /tmp/data.tar.gz \
+      && echo "baked fallback data into the image" \
+    || echo "WARNING: no fallback data baked in; the entrypoint fetch will have to work"
+
+COPY docker-entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
 EXPOSE 8000
-CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
