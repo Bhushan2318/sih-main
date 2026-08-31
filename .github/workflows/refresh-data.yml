@@ -18,8 +18,14 @@ name: Refresh model and data
 on:
   schedule:
     # GEFS publishes roughly 5.5 h after its init hour, so each run picks up the cycle
-    # before it: 06:00 UTC gets 00Z, 12:00 gets 06Z, and so on.
-    - cron: "0 0,6,12,18 * * *"
+    # before it: 06:23 UTC gets 00Z, 12:23 gets 06Z, and so on.
+    #
+    # :23 rather than :00 on purpose. GitHub's scheduler is best-effort and queues hardest
+    # at the top of the hour, which is where every naively-written cron lands; this
+    # workflow has already fired 3 h 25 m late once and missed a slot entirely. The offset
+    # only reduces the odds - a missed slot is made harmless by the catch-up in
+    # refresh_for_deploy, which ingests any of the last 4 cycles the store is missing.
+    - cron: "23 0,6,12,18 * * *"
   workflow_dispatch:
     inputs:
       force_train:
@@ -28,6 +34,14 @@ on:
         default: false
       skip_forecast:
         description: "Skip the GEFS pull (retrain on what is already stored)"
+        type: boolean
+        default: false
+      cycle:
+        description: "Pull exactly this cycle instead of catching up, e.g. 2026-08-31T00"
+        type: string
+        default: ""
+      force_cycle:
+        description: "Re-pull the cycle even if it is already ingested (replaces its rows)"
         type: boolean
         default: false
 
@@ -91,7 +105,9 @@ jobs:
         run: |
           python -m scripts.refresh_for_deploy \
             ${{ inputs.force_train && '--force-train' || '' }} \
-            ${{ inputs.skip_forecast && '--skip-forecast' || '' }}
+            ${{ inputs.skip_forecast && '--skip-forecast' || '' }} \
+            ${{ inputs.force_cycle && '--force-cycle' || '' }} \
+            ${{ inputs.cycle && format('--cycle {0}', inputs.cycle) || '' }}
 
       - name: Package
         id: pack
