@@ -943,6 +943,35 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
   .replay__pick, .replay__ticks { flex-wrap: wrap; }
 }
 
+
+/* ───────────────────────────────────────────────────────────── touch targets
+   Apple asks for 44pt, Android for 48dp. Measured on a 390px phone against the live
+   site, these controls came in at 19-32px, and .viewtab is the primary navigation - the
+   first thing a visitor touches, and the judges are sent a link rather than shown a demo.
+
+   Gated on `pointer: coarse` rather than a width on purpose: a mouse-driven laptop
+   reports `pointer: fine` and can never match this block however narrow the window gets,
+   and a touch-screen laptop with a trackpad still reports `fine`. Width queries do not
+   give that guarantee. Only vertical size grows for the text controls, so no element gets
+   horizontally wider than it is today and no new overflow is possible; the two controls
+   that do widen (.lead-btn, .replay__tick) sit in rows that wrap. */
+@media (hover: none) and (pointer: coarse) {
+  .viewtab, .hero__tab, .tab, .chip, .btn--sm, .replay__play, .button,
+  .lead-btn, .replay__tick {
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  /* These two are fixed 28-30px squares, so they need the width as well as the height. */
+  .lead-btn, .replay__tick { width: 44px; height: auto; }
+  .select, select { min-height: 44px; }
+  /* Any row that now holds taller or wider children has to be able to fold. */
+  .viewtabs, .hero__tabs, .filters, .replay__pick, .replay__ticks, .lead-selector {
+    flex-wrap: wrap;
+  }
+}
+
 /* ─────────────────────────────────────────────────────────────── recharts trim */
 .recharts-cartesian-grid line { stroke: var(--rule-2); }
 .recharts-text { fill: var(--ink-3); font-family: var(--f-m); font-size: 10px; }
