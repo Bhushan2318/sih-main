@@ -38,6 +38,7 @@ import json
 import sys
 import time
 import warnings
+from datetime import date
 from pathlib import Path
 
 warnings.filterwarnings("ignore")
@@ -153,6 +154,15 @@ def main() -> None:
     ap.add_argument("--end", default=DEFAULT_END)
     args = ap.parse_args()
 
+    # Name the output from the span, and fetch one year per run. The filename used to be
+    # hardcoded to 2019, so `--start 2010-01-01` would silently overwrite the committed
+    # 2019 observations - the exact trap that corrupted the GEFS sample once already.
+    start_year = int(args.start[:4])
+    span_days = (date.fromisoformat(args.end) - date.fromisoformat(args.start)).days
+    if span_days > 400:
+        sys.exit(f"span is {span_days} days; fetch one year per run so the output is "
+                 f"named honestly (--start {start_year}-01-01 --end {start_year + 1}-01-15)")
+
     if not CITIES_JSON.exists():
         sys.exit(f"missing {CITIES_JSON}")
     cities = json.loads(CITIES_JSON.read_text())
@@ -171,8 +181,8 @@ def main() -> None:
     short = full[full["hours_in_day"] < 24]
     full = full.drop(columns=["hours_in_day"])
 
-    csv_path = OUT_DIR / "era5_observations_india_2019.csv"
-    pq_path = OUT_DIR / "era5_observations_india_2019.parquet"
+    csv_path = OUT_DIR / f"era5_observations_india_{start_year}.csv"
+    pq_path = OUT_DIR / f"era5_observations_india_{start_year}.parquet"
     full.to_csv(csv_path, index=False)
     full.to_parquet(pq_path, index=False)
 
