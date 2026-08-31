@@ -29,6 +29,8 @@ backend/data/samples/_gefs_parts/
 # CSV twin from it. Keep 2019 tracked; leave the rest to the backfill workflow's artifact.
 backend/data/samples/gefs_reforecast_india_*.parquet
 !backend/data/samples/gefs_reforecast_india_2019.parquet
+backend/data/samples/era5_observations_india_*.parquet
+!backend/data/samples/era5_observations_india_2019.parquet
 # regenerate with scripts/compare_verification_products.py; the numbers live in HANDOFF
 backend/data/analysis/
 
