@@ -193,7 +193,11 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
   display: grid; grid-template-columns: minmax(0, 1.14fr) minmax(0, 0.86fr);
   gap: clamp(26px, 3vw, 52px); align-items: stretch; padding: 34px 1.3rem 32px;
 }
-@media (max-width: 1080px) { .hero__grid { grid-template-columns: 1fr; gap: 26px; padding: 26px 1.3rem; } }
+/* minmax(0, 1fr), never a bare 1fr, in these single-column mobile overrides. `1fr` is
+   minmax(AUTO, 1fr) and that auto floor is the item's min-content width, so the track
+   cannot shrink and the whole page scrolls sideways - measured at 412.8px inside a 360px
+   viewport on the Model tab. The desktop rules above already do this correctly. */
+@media (max-width: 1080px) { .hero__grid { grid-template-columns: minmax(0, 1fr); gap: 26px; padding: 26px 1.3rem; } }
 
 /* Every hero size is capped against BOTH vw and vh: on a wide-but-short laptop the
    headline has to give way vertically or it pushes the chart off the opening screen. */
@@ -415,7 +419,7 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
   gap: 14px; padding: 14px 1.3rem 2rem; align-items: start;
 }
 @media (max-width: 1280px) { .app__body { grid-template-columns: minmax(0, 1fr) 340px; } }
-@media (max-width: 960px) { .app__body { grid-template-columns: 1fr; } }
+@media (max-width: 960px) { .app__body { grid-template-columns: minmax(0, 1fr); } }
 
 /* ─────────────────────────────────────────── operations: one viewport, map + region
    A fixed height (not min-height) is the point: the map is told how much room it has and
@@ -461,7 +465,7 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
   .app__body--ops .map { height: auto; }
   .app__body--ops > .panel { height: auto; overflow-y: visible; }
 }
-@media (max-width: 960px) { .app__body--ops { grid-template-columns: 1fr; } }
+@media (max-width: 960px) { .app__body--ops { grid-template-columns: minmax(0, 1fr); } }
 
 .app__below { padding: 14px 1.3rem 2rem; }
 
@@ -518,7 +522,7 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 .page { padding: 20px 1.3rem 2.5rem; max-width: 1100px; margin: 0 auto; }
 .page--wide { max-width: none; }
 .page--split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; align-items: start; }
-@media (max-width: 860px) { .page--split { grid-template-columns: 1fr; } }
+@media (max-width: 860px) { .page--split { grid-template-columns: minmax(0, 1fr); } }
 .page > .card, .page > .panel { margin-bottom: 14px; }
 .page--split > .card, .page--split > .panel { margin-bottom: 0; }
 
@@ -933,7 +937,10 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 .replay__foot { margin-top: 1rem; }
 
 @media (max-width: 900px) {
-  .replay__body { grid-template-columns: 1fr; }
+  .replay__body { grid-template-columns: minmax(0, 1fr); }
+  /* The tick row is a single inline-flex line; below ~360px it cannot fold and pushes
+     the page 7px wider than the viewport. Wrapping costs nothing when it already fits. */
+  .replay__pick, .replay__ticks { flex-wrap: wrap; }
 }
 
 /* ─────────────────────────────────────────────────────────────── recharts trim */
