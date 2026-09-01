@@ -45,8 +45,10 @@ jobs:
 
       - name: Report the runner's memory
         run: |
-          echo "total/available:"; free -h || vm_stat
+          echo "--- /proc/meminfo ---"; head -3 /proc/meminfo
+          echo "--- free -m ---"; free -m || true
           nproc | xargs echo "cpus:"
+          echo "--- disk ---"; df -h / | tail -1
 
       - name: Restore the production store
         working-directory: backend
@@ -76,36 +78,49 @@ jobs:
         working-directory: backend
         run: python -m scripts.ingest_backfill --years '${{ inputs.years || '2010-2018' }}'
 
-      - name: Train, watching peak memory
+      - name: Train, sampling memory to a file
         working-directory: backend
-        # /usr/bin/time -v reports maximum resident set size. The step must not fail on an
-        # OOM kill - a kill IS the answer we came for - so the exit code is captured and
-        # reported rather than propagated.
+        # continue-on-error, and the sampler writes to a FILE: the previous attempt was
+        # SIGTERMed (143) mid-training and took the reporting block with it, so the run
+        # produced no peak figure at all. A kill is the answer we came for, so it must
+        # survive being killed.
+        continue-on-error: true
         run: |
+          ( while true; do
+              echo "$(date +%s) $(awk '/MemAvailable/{print $2}' /proc/meminfo) $(ps -o rss= -C python3 2>/dev/null | sort -rn | head -1)" >> mem.log
+              sleep 2
+            done ) &
+          SAMPLER=$!
           set +e
-          /usr/bin/time -v python -m app.ml.train_pipeline --dry-run > train.log 2> time.log
-          RC=$?
+          python -m app.ml.train_pipeline --dry-run > train.log 2>&1
+          echo "$?" > train.rc
           set -e
-          PEAK_KB=$(grep -oP 'Maximum resident set size \(kbytes\): \K[0-9]+' time.log || echo 0)
-          echo "exit code : $RC"
-          echo "peak RSS  : $((PEAK_KB / 1024)) MB"
+          kill $SAMPLER 2>/dev/null || true
+
+      - name: Report what happened
+        working-directory: backend
+        if: always()
+        run: |
+          RC=$(cat train.rc 2>/dev/null || echo "killed-before-writing-rc")
+          PEAK_KB=$(awk '{if ($3+0 > m) m=$3+0} END{print m+0}' mem.log 2>/dev/null || echo 0)
+          MIN_AVAIL_KB=$(awk 'NR==1{m=$2} {if ($2+0 < m) m=$2+0} END{print m+0}' mem.log 2>/dev/null || echo 0)
           {
             echo "### Training on the backfilled years"
             echo ""
             echo "| | |"
             echo "|---|---|"
             echo "| years ingested | \`${{ inputs.years || '2010-2018' }}\` |"
-            echo "| exit code | \`$RC\` $([ $RC -eq 137 ] && echo '(OOM-KILLED)' || echo '') |"
-            echo "| peak RSS | **$((PEAK_KB / 1024)) MB** |"
+            echo "| train exit code | \`$RC\` |"
+            echo "| peak python RSS | **$((PEAK_KB / 1024)) MB** |"
+            echo "| lowest MemAvailable | **$((MIN_AVAIL_KB / 1024)) MB** |"
+            echo "| samples taken | $(wc -l < mem.log 2>/dev/null || echo 0) |"
             echo ""
-            if [ $RC -eq 0 ]; then
-              echo '```'
-              grep -E "cycles |canonical rows|^  (train|val|test) " train.log || true
-              echo '```'
+            if [ "$RC" = "0" ]; then
+              echo '```'; grep -E "cycles |canonical rows|^  (train|val|test) " train.log; echo '```'
             else
-              echo "Training did not complete. Last lines:"
-              echo '```'; tail -15 train.log; echo '```'
+              echo "Training did not complete. Last lines of its output:"
+              echo '```'; tail -12 train.log 2>/dev/null; echo '```'
             fi
           } >> "$GITHUB_STEP_SUMMARY"
-          grep -E "cycles |canonical rows|^  (train|val|test) " train.log || tail -20 train.log
-          exit 0
+          echo "exit=$RC  peak=$((PEAK_KB / 1024))MB  min_available=$((MIN_AVAIL_KB / 1024))MB"
+          grep -E "cycles |canonical rows|^  (train|val|test) " train.log 2>/dev/null || tail -12 train.log 2>/dev/null
