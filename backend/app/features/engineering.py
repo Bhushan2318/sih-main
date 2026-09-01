@@ -97,6 +97,12 @@ def build_training_frame(
     if paired.empty:
         return paired
 
+    # Everything below works on `paired` alone. Without these deletes, df/fc/ob stay
+    # referenced through all three full-frame merges that follow - about 2.2 GB held for
+    # no reason on a ten-year store, on top of whatever each merge needs to build its own
+    # copy. Purely a lifetime fix: no value in `paired` changes.
+    del df, fc, ob
+
     paired["forecast_value"] = pd.to_numeric(paired["forecast_value"], errors="coerce")
     paired["observed_value"] = pd.to_numeric(paired["observed_value"], errors="coerce")
 
@@ -168,7 +174,11 @@ def _add_rate_of_change(paired: pd.DataFrame) -> pd.DataFrame:
         sub_roc = (grouped["forecast_value"].diff() / days).rename(colname)
         # map that per-event roc onto every row of the same event (all variables)
         ev = sub.assign(**{colname: sub_roc})[EVENT_KEYS + ["ensemble_member_id", colname]]
+        # Drop the per-variable slice and its intermediates before the merge allocates the
+        # new frame, rather than after: `sub` is a copy of every row of one variable.
+        del sub, grouped, days, sub_roc
         paired = paired.merge(ev, on=EVENT_KEYS + ["ensemble_member_id"], how="left")
+        del ev
     return paired
 
 
@@ -181,6 +191,7 @@ def _add_concurrent_variable_forecasts(paired: pd.DataFrame) -> pd.DataFrame:
         .reset_index()
     )
     merged = paired.merge(wide, on=MEMBER_KEYS, how="left")
+    del wide
     # blank out a row's own variable so the model can't read the answer off itself
     for var in paired["variable"].unique():
         col = f"fc_{var}"
