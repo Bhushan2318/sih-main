@@ -61,14 +61,21 @@ def main() -> int:
 
     # Check every file exists before touching the store, so a missing year fails the run
     # up front rather than half way through with a partly-loaded store behind it.
+    def pick(stem: str):
+        """Prefer .parquet: identical content, ~18x smaller (1.6 MB vs 29.2 MB for a year
+        of reforecast), which matters when these have to be shipped to a CI runner. The
+        parser handles both."""
+        pq, csv = SAMPLES / f"{stem}.parquet", SAMPLES / f"{stem}.csv"
+        return pq if pq.exists() else csv
+
     plan = []
     missing = []
     for y in years:
         if not args.skip_forecasts:
-            f = SAMPLES / f"gefs_reforecast_india_{y}.csv"
+            f = pick(f"gefs_reforecast_india_{y}")
             (plan if f.exists() else missing).append(("forecast", y, f))
         if not args.skip_observations:
-            o = SAMPLES / f"era5_observations_india_{y}.csv"
+            o = pick(f"era5_observations_india_{y}")
             (plan if o.exists() else missing).append(("observed", y, o))
     if missing:
         for kind, y, f in missing:
