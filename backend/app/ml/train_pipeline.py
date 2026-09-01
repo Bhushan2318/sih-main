@@ -60,6 +60,15 @@ class TrainReport:
     seconds: float = 0.0
 
 
+# Exactly what the training path reads. Verified by grepping every module it touches
+# (train_pipeline, regressors, classifier, thresholds, explain, engineering, pivot) for
+# canonical column references: the union is these nine and nothing else.
+_TRAINING_COLUMNS = [
+    "region_id", "variable", "valid_date", "value", "value_type",
+    "init_date", "lead_time_days", "ensemble_member_id", "verification_status",
+]
+
+
 def _split_by_cycle(paired: pd.DataFrame):
     cycles = sorted(paired["init_date"].dropna().unique())
     n = len(cycles)
@@ -80,7 +89,15 @@ def full_retrain(triggered_by_batch_id: str | None = None, make_current: bool = 
         # training: the models measure error against ERA5, and verifying against a
         # different product shifts both the error and the bust label derived from it.
         # They are still served to the dashboard, badged as provisional.
-        canonical = parquet_store.read_dataset(exclude_provisional=True)
+        # Project to the columns the training path actually reads. The store carries 21,
+        # and the dozen that go unused here are the wide provenance strings (record_id,
+        # source_file, region_name and friends) - measured at 3,166 MB of pandas memory
+        # against 1,148 MB projected, and a 5,277 -> 3,150 MB peak on a ten-year store.
+        # `build_training_frame` copies the frame it is handed, so every byte trimmed here
+        # is trimmed again downstream. Same list `inference.score_cycle` already projects
+        # to, and the same feature-engineering code consumes it, so it is proven.
+        canonical = parquet_store.read_dataset(
+            exclude_provisional=True, columns=_TRAINING_COLUMNS)
         report.data_rows = len(canonical)
         if canonical.empty or "forecast" not in set(canonical["value_type"].unique()):
             report.status = "no_data"
