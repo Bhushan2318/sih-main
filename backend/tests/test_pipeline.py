@@ -223,3 +223,39 @@ def test_summary_refuses_to_deduplicate_a_large_store_on_the_serving_box(session
     monkeypatch.setattr(ps, "_SUMMARY_COMPUTE_MAX_ROWS", 10_000_000)
     ps._summary_without_cache()
     assert called, "a small store must still be summarised normally"
+
+
+def test_compaction_removes_superseded_rows_without_changing_what_is_read(session, tmp_path):
+    """Re-ingesting an observation window writes a second copy rather than replacing the
+    first, so the store accumulated ~25k dead rows a day. They were always collapsed at
+    read time, so nothing was wrong - but they were paid for in every read, in an artifact
+    pulled on every container start, and in the memory of a 512 MB box.
+
+    Compaction drops them. The bar is that nothing a reader can see changes, so this
+    asserts the read result is identical before and after - not merely that rows went
+    down, which a function that deleted the wrong rows would also satisfy.
+    """
+    import pandas as pd
+
+    from app.storage import parquet_store as ps
+
+    src = _slice_csv(ERA5_CSV, tmp_path, 300)
+    for name in ("first", "second"):
+        r = ingest_upload(session, src, f"{name}-{src.name}")
+        if r.status == "pending_confirmation":
+            r = confirm_mapping(session, r.batch_id, _confirm_all(r))
+        assert r.status == "ingested"
+
+    on_disk = ps._row_count_on_disk()
+    before = ps.read_dataset().sort_values(ps._DEDUPE_KEY).reset_index(drop=True)
+    assert on_disk > len(before), "the same window ingested twice should leave dead rows"
+
+    stats = ps.compact_store()
+    after = ps.read_dataset().sort_values(ps._DEDUPE_KEY).reset_index(drop=True)
+
+    assert stats["removed"] == on_disk - len(before)
+    assert ps._row_count_on_disk() == len(before), "disk should now hold only live rows"
+    pd.testing.assert_frame_equal(before, after, check_like=True, check_dtype=False)
+
+    # Idempotent: a compacted store has nothing left to remove.
+    assert ps.compact_store()["removed"] == 0

@@ -116,6 +116,57 @@ def append_batch(batch_id: str, rows: Iterable[dict] | pd.DataFrame) -> int:
     return len(df)
 
 
+def compact_store() -> dict:
+    """Rewrite the store with superseded rows removed. Returns what it did.
+
+    Batches are separate partitions and observations get re-pulled every verification
+    window, so re-ingesting a day writes a second copy rather than replacing the first.
+    `_dedupe` has always collapsed those at READ time, so results were never wrong - but
+    the rows stayed on disk, grew ~25k a day, and were paid for on every read, in the
+    artifact downloaded on every container start, and in the memory of a 512 MB box.
+
+    Deliberately reuses `append_batch` for the write instead of writing parquet here.
+    That keeps one implementation of the sort order, the Arrow schema and the 16,384-row
+    group sizing - all three of which are load-bearing for predicate pushdown, and any of
+    which would silently regress if this function grew its own copy.
+
+    Rows keep their own `upload_batch_id` and `ingested_at`, so provenance survives and
+    the next dedupe still resolves precedence the same way.
+    """
+    before = _row_count_on_disk()
+    df = read_dataset()  # deduped, every column
+    if df.empty:
+        return {"rows_before": before, "rows_after": before, "removed": 0, "batches": 0}
+
+    kept: set = set()
+    for batch_id, group in df.groupby("upload_batch_id", observed=True, dropna=False):
+        if pd.isna(batch_id):
+            continue
+        # .copy(): append_batch normalises dtypes in place, and a groupby slice is a
+        # view - mutating it warns today and can alias the source frame tomorrow.
+        append_batch(str(batch_id), group.copy())
+        kept.add(str(batch_id))
+
+    # A batch every one of whose rows was superseded leaves an empty partition behind.
+    for part in CANONICAL_DIR.glob("batch_id=*"):
+        if part.is_dir() and part.name.split("=", 1)[1] not in kept:
+            shutil.rmtree(part, ignore_errors=True)
+
+    after = _row_count_on_disk()
+    log.info("compacted store: %s -> %s rows across %s batches", f"{before:,}",
+             f"{after:,}", len(kept))
+    return {"rows_before": before, "rows_after": after,
+            "removed": before - after, "batches": len(kept)}
+
+
+def _row_count_on_disk() -> int:
+    """Rows physically present, from parquet footers - no data is read."""
+    try:
+        return ds.dataset(CANONICAL_DIR, format="parquet", partitioning="hive").count_rows()
+    except Exception:  # noqa: BLE001 - an absent store is zero rows, not a crash
+        return 0
+
+
 def drop_batch(batch_id: str) -> None:
     part_dir = _partition_dir(batch_id)
     if part_dir.exists():
