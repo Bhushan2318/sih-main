@@ -34,7 +34,7 @@ export function ReplayFocusChart({
         </span>
       </div>
       <ResponsiveContainer width="100%" height={220}>
-        <LineChart data={data} margin={{ top: 8, right: 14, bottom: 4, left: -6 }}>
+        <LineChart data={data} margin={{ top: 20, right: 14, bottom: 4, left: -6 }}>
           <CartesianGrid strokeDasharray="3 3" />
           <XAxis dataKey="lead" tickFormatter={(d) => `D${d}`} />
           <YAxis width={58} tickFormatter={(v: number) => fmt(v)} />
