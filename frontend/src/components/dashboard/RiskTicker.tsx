@@ -46,8 +46,8 @@ export function RiskTicker({ regions, leadDay, onSelect }: {
         >
           <i className={`ticker__dot ticker__dot--${r.risk_band ?? "none"}`} aria-hidden="true" />
           <span className="ticker__name">{r.region_name ?? r.region_id}</span>
-          <span className="ticker__value">{(r.bust_probability as number).toFixed(2)}</span>
-          <span className="ticker__unit">P(bust) · D{leadDay}</span>
+          <span className="ticker__value">{((r.bust_probability as number) * 100).toFixed(0)}%</span>
+          <span className="ticker__unit">bust risk · day {leadDay}</span>
         </button>
       ))}
     </div>
@@ -57,7 +57,7 @@ export function RiskTicker({ regions, leadDay, onSelect }: {
     <div
       className="ticker"
       role="region"
-      aria-label={`Bust probability by region, lead day ${leadDay}`}
+      aria-label={`Bust risk by region, lead day ${leadDay}`}
       onMouseEnter={() => setPaused(true)}
       onMouseLeave={() => setPaused(false)}
       // Keyboard too. Pausing was wired to hover alone, so tabbing into an item left the

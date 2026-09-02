@@ -48,7 +48,7 @@ export function LeadDayRail({ all, value, onChange }: {
             </span>
 
             <span className={r.mean >= peak - 1e-9 ? "railrow__mean railrow__mean--peak" : "railrow__mean"}>
-              {r.mean.toFixed(2)}
+              {(r.mean * 100).toFixed(0)}%
             </span>
           </button>
         ))}
@@ -61,7 +61,7 @@ export function LeadDayRail({ all, value, onChange }: {
       </p>
 
       <p className="rail__note">
-        Regions per band at each lead day, and the mean P(bust) across them.
+        How many regions fall in each band at each lead day, and their average bust risk.
       </p>
 
       {drivers ? <p className="rail__driver">{drivers}</p> : null}
@@ -128,10 +128,10 @@ function driverRuns(rows: Row[]): string | null {
     else runs.push({ driver: r.driver as string, from: r.lead, to: r.lead });
   }
 
-  if (runs.length === 1) return `${pretty(runs[0].driver)} is the dominant driver at every lead day.`;
+  if (runs.length === 1) return `${pretty(runs[0].driver)} is the main cause at every lead day.`;
   // More than a couple of switches is churn rather than a story - say so plainly.
-  if (runs.length > 3) return `The dominant driver changes ${runs.length - 1} times across the horizon.`;
-  return `Dominant driver: ${runs.map((r) => `${pretty(r.driver)} ${span(r)}`).join(", then ")}.`;
+  if (runs.length > 3) return `The main cause changes ${runs.length - 1} times across the ten days.`;
+  return `Mostly driven by: ${runs.map((r) => `${pretty(r.driver)} ${span(r)}`).join(", then ")}.`;
 }
 
 const span = (r: { from: number; to: number }) => (r.from === r.to ? `at D${r.from}` : `D${r.from}–D${r.to}`);

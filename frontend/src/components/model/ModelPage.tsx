@@ -76,11 +76,11 @@ export function ModelPage() {
             <Stat cap="blue" label="ROC-AUC" value={num(clf.roc_auc, 3)}
               note={<>ranking skill · 0.5 is a coin flip</>} />
             <Stat cap="blue" label="PR-AUC" value={num(clf.pr_auc, 3)}
-              note={<>base rate <b>{num(clf.bust_rate, 3)}</b></>} />
+              note={<>busts are <b>{pctOf(clf.bust_rate)}</b> of all forecasts, so that is the score to beat</>} />
             <Stat cap="watch" label="Brier score" value={num(clf.brier, 3)}
-              note={<>calibration error · lower is better</>} />
+              note={<>how far off the probabilities are · lower is better</>} />
             <Stat cap="bust" label="F1" value={num(clf.f1, 3)}
-              note={<>P <b>{num(clf.precision, 2)}</b> · R <b>{num(clf.recall, 2)}</b></>} />
+              note={<>precision <b>{num(clf.precision, 2)}</b> · recall <b>{num(clf.recall, 2)}</b></>} />
           </div>
 
           <p className="pagenote">
@@ -108,7 +108,7 @@ export function ModelPage() {
                   <dd>{typeof td.held_out_cycles === "number" ? td.held_out_cycles.toLocaleString() : "—"}</dd>
                 </div>
                 <div>
-                  <dt>Paired rows</dt>
+                  <dt>Forecast–observation pairs</dt>
                   <dd>{typeof td.paired_rows === "number" ? td.paired_rows.toLocaleString() : "—"}</dd>
                 </div>
                 <div><dt>Variables</dt><dd>{data.modelled_variables.length}</dd></div>
@@ -164,7 +164,7 @@ export function ModelPage() {
               </ul>
               {Object.keys(data.skipped_variables).length ? (
                 <p className="muted small">
-                  Not modelled:{" "}
+                  Not modelled (too few matched forecast–observation pairs):{" "}
                   {Object.entries(data.skipped_variables).map(([v, why]) => `${v} (${why})`).join("; ")}
                 </p>
               ) : (
@@ -204,8 +204,9 @@ export function ModelPage() {
               </div>
               {cuts ? (
                 <p className="muted small">
-                  Risk bands cut at <b className="mono">{cuts.medium.toFixed(2)}</b> (watch) and{" "}
-                  <b className="mono">{cuts.high.toFixed(2)}</b> (bust).
+                  A region is flagged <b>watch</b> above{" "}
+                  <b className="mono">{(cuts.medium * 100).toFixed(0)}%</b> and <b>bust</b> above{" "}
+                  <b className="mono">{(cuts.high * 100).toFixed(0)}%</b>.
                 </p>
               ) : null}
             </section>
@@ -215,7 +216,7 @@ export function ModelPage() {
           {Object.keys(regressors).length ? (
             <section className="card card--table">
               <header className="card__head">
-                <h3>Per-variable error, against a persistence baseline</h3>
+                <h3>Error per variable, against a baseline that just says “tomorrow is like today”</h3>
               </header>
               <div className="tablewrap">
                 <table className="dtable">
@@ -227,7 +228,7 @@ export function ModelPage() {
                       <th className="dtable__num">Skill</th>
                       <th className="dtable__num">RMSE</th>
                       <th className="dtable__num">R²</th>
-                      <th className="dtable__num">n</th>
+                      <th className="dtable__num">forecasts</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -252,7 +253,9 @@ export function ModelPage() {
               </div>
               <p className="muted small">
                 Skill = 1 − MAE ÷ baseline MAE: the share of the naive forecast&apos;s error the
-                model removes. Positive is better than the baseline.
+                model removes. Positive is better than the baseline. MAE is the average miss,
+                RMSE the same thing but weighted towards the big misses, and R² the share of
+                the variation the model accounts for.
               </p>
             </section>
           ) : null}
@@ -287,6 +290,11 @@ function Stat({ cap, label, value, note }: {
 function skillScore(mae: number | null, baseline: number | null): number | null {
   if (mae == null || baseline == null || !Number.isFinite(mae) || !baseline) return null;
   return 1 - mae / baseline;
+}
+
+/** The bust base rate reads as "46%" far more easily than as 0.464. */
+function pctOf(v: unknown): string {
+  return typeof v === "number" && Number.isFinite(v) ? `${(v * 100).toFixed(0)}%` : "—";
 }
 
 function num(v: unknown, digits: number): string {

@@ -4,10 +4,10 @@ import { ErrorState, LoadingState } from "../common/States";
 /**
  * What this is, for someone who arrived with no introduction.
  *
- * The link is sent to judges who open it whenever they like: there is no presentation and
- * nobody narrating. So the case for the project has to live on the site, and it has to
- * answer, in order, the three questions a stranger actually has - what am I looking at,
- * is it any good, and can I believe the numbers.
+ * There is a live presentation, but the link is also submitted and opened unattended,
+ * whenever a judge likes, with nobody narrating. So the case for the project has to stand
+ * on the site by itself, and it has to answer, in order, the three questions a stranger
+ * actually has - what am I looking at, is it any good, and can I believe the numbers.
  *
  * Every figure here is read from /api/model/status at render time. None is written into
  * this file. A hardcoded metric would be correct until the next retrain and quietly wrong
@@ -65,10 +65,11 @@ export function AboutPage({ onReplay }: { onReplay: () => void }) {
           </p>
           <p><b>“How likely is the forecast I am holding to be badly wrong today?”</b></p>
           <p className="muted small">
-            Correction and confidence are different services. NCMRWF already runs quantile
-            mapping and EMOS, and busts still happen — correction removes systematic
-            error, while busts are flow-dependent. Knowing when to distrust a forecast is
-            what decides whether a warning goes out.
+            Correction and confidence are different services. NCMRWF already corrects its
+            forecasts statistically, and busts still happen. Correction removes the errors a
+            model makes <i>consistently</i>; a bust comes from the particular weather pattern
+            of that day, which is not consistent and so is not corrected away. Knowing when
+            to distrust a forecast is what decides whether a warning goes out.
           </p>
           <p className="muted small">
             A <b>bust</b> is a forecast whose error lands in the tail of that variable’s
@@ -94,6 +95,12 @@ export function AboutPage({ onReplay }: { onReplay: () => void }) {
             </div>
           </dl>
           <p className="muted small">
+            <b>Reading these:</b> ROC-AUC is the chance the model ranks a real bust above a
+            non-bust — 0.5 is a coin flip, 1.0 is perfect. F1 balances how often its warnings
+            are right against how many busts it catches. Brier is the average error in the
+            probability itself, so lower is better.
+          </p>
+          <p className="muted small">
             Measured on the <b>{String(clf.split ?? "held-out")}</b> split — forecast
             cycles the model never trained on
             {typeof td.held_out_cycles === "number" ? <>, {td.held_out_cycles} of them</> : null}
@@ -113,8 +120,9 @@ export function AboutPage({ onReplay }: { onReplay: () => void }) {
               <header className="card__head"><h4>Compared to what?</h4></header>
               <p className="muted small">
                 Every baseline is fitted on the training split alone and scored on the same
-                held-out rows as the model. Brier skill is against climatology — the base
-                rate — so <b>0.000 means no skill beyond knowing how often busts happen</b>.
+                held-out rows as the model. Each is compared against climatology — simply
+                guessing the long-run bust rate every time. <b>0.000 means it does no better
+                than that guess</b>; higher is better.
               </p>
               <div className="tablewrap">
                 <table className="dtable">
@@ -135,12 +143,13 @@ export function AboutPage({ onReplay }: { onReplay: () => void }) {
                   </tbody>
                 </table>
               </div>
+              <p className="muted small">↓ lower is better · ↑ higher is better</p>
               {typeof bl.lead_bust_correlation?.test === "number" ? (
                 <p className="muted small">
-                  A lead-day-only model can score at or below zero here because the label
-                  does not track lead time: the measured correlation between lead day and
-                  bust is {n3(bl.lead_bust_correlation.train, 3)} on train and{" "}
-                  {n3(bl.lead_bust_correlation.test, 3)} on the held-out split.
+                  Guessing from the lead day alone scores at or below zero, because busts do
+                  not simply become more likely further out. The measured link between lead
+                  day and bust is only {n3(bl.lead_bust_correlation.train, 3)} on training
+                  data and {n3(bl.lead_bust_correlation.test, 3)} on held-out data.
                 </p>
               ) : null}
             </>
@@ -164,21 +173,22 @@ export function AboutPage({ onReplay }: { onReplay: () => void }) {
               not just stated here.
             </li>
             <li>
-              <b>Real data end to end.</b> NOAA GEFS for forecasts — a reforecast archive
-              for training and the operational feed live — verified against ERA5
-              reanalysis.
+              <b>Real data end to end.</b> NOAA’s GEFS forecasts — historical re-runs for
+              training, the live feed for today — checked against ERA5, a reconstructed
+              record of what the weather actually did.
             </li>
             <li>
               <b>Leakage is tested, not asserted.</b> Bust thresholds are fitted on the
-              training split only; out-of-fold folds are grouped by forecast cycle so no
-              cycle spans a fold; no observed day appears on both sides of the train/test
-              split. Each is a test in the suite, written so it cannot pass vacuously.
+              training split only; when the model is checked against itself, whole forecast
+              runs are kept together so it is never tested on a run it partly trained on; and
+              no observed day appears on both sides of the train/test split. Each is a test in
+              the suite, written so it cannot pass by accident.
             </li>
             <li>
-              <b>The ground truth’s own uncertainty is measured.</b> Against an
-              independent reanalysis over ~21,000 paired city-days, two leading products
-              disagree by roughly a quarter to a half of a bust threshold. Stated up front
-              rather than waiting to be asked.
+              <b>Even the “truth” we score against is uncertain.</b> Two leading global
+              weather records disagree with each other by roughly a quarter to a half of a
+              bust threshold, measured over ~21,000 city-days. Stated up front rather than
+              waiting to be asked.
             </li>
           </ul>
         </section>
@@ -187,21 +197,24 @@ export function AboutPage({ onReplay }: { onReplay: () => void }) {
           <header className="card__head"><h3>What it does not do</h3></header>
           <ul className="notes">
             <li>
-              Coverage is <b>sampled, not continuous</b> — a reforecast archive of a
-              handful of initialisations a year, plus live cycles since deployment.
+              Coverage is <b>sampled, not continuous</b> — an archive that re-runs the
+              forecast model on a handful of past dates each year, plus live runs since
+              deployment.
             </li>
             <li>
               City points, not full regional coverage of India. Region-level readings are
               indicative.
             </li>
             <li>
-              Five of GEFS’s 31 ensemble members, so spread-derived features are a noisy
-              estimate of true ensemble spread.
+              GEFS runs 31 parallel forecasts; this uses 5 of them. How much those disagree
+              is one of the model’s inputs, so that input is noisier here than it would be
+              with all 31.
             </li>
             <li>
               ERA5 precipitation is weak over India relative to gauge-based products, and
               rainfall results carry that caveat. Rainfall is also the hardest variable
-              here — zero-inflated and heavily skewed.
+              here: most days have none at all, and the rest are dominated by a few extreme
+              ones.
             </li>
             <li>
               A bust is defined on <b>surface-variable error</b>, not the synoptic Z500

@@ -64,12 +64,12 @@ export function ReplayFocusChart({
           <ReferenceLine x={currentLead} stroke={CHART.marker} strokeWidth={2}
             label={{ value: `Day ${currentLead}`, position: "top", fontSize: 10, fill: CHART.marker }} />
           {thr != null ? (
-            <Area type="monotone" dataKey="band" name={`Within tolerance (±${fmt(thr)})`}
+            <Area type="monotone" dataKey="band" name={`Close enough — not a bust (±${fmt(thr)})`}
               stroke="none" fill={CHART.observed} fillOpacity={0.07} connectNulls={false}
               activeDot={false} isAnimationActive={false} legendType="rect"
               tooltipType="none" />
           ) : null}
-          <Line type="monotone" dataKey="forecast" name="Forecast (ens. mean)"
+          <Line type="monotone" dataKey="forecast" name="Forecast (ensemble average)"
             stroke={CHART.forecast} strokeWidth={2} dot={{ r: 2 }} />
           {anyObserved ? (
             <Line type="monotone" dataKey="observed" name="Observed"

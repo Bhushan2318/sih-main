@@ -93,9 +93,11 @@ export function ReplayView({ topology }: { topology: Topology | null }) {
             {cycles.map((c) => (
               <option key={c.init_date} value={c.init_date}>
                 {c.init_date}
-                {c.verified ? ` · ${c.verified_lead_days}d verified` : " · unverified"}
+                {c.verified
+                  ? ` · outcome known for ${c.verified_lead_days} day${c.verified_lead_days === 1 ? "" : "s"}`
+                  : " · outcome not yet known"}
                 {c.peak_bust_probability != null
-                  ? ` · peak ${(c.peak_bust_probability * 100).toFixed(0)}%`
+                  ? ` · peak risk ${(c.peak_bust_probability * 100).toFixed(0)}%`
                   : ""}
               </option>
             ))}
@@ -153,7 +155,7 @@ export function ReplayView({ topology }: { topology: Topology | null }) {
             onSelect={(rid) => chartableRegionIds.has(rid) && setFocusRegionId(rid)}
             topology={topology}
           />
-          <p className="muted small">Click a state to chart its forecast vs what was observed.</p>
+          <p className="muted small">Click a state to chart its forecast against what actually happened.</p>
         </div>
 
         <div className="replay__sidecol">
@@ -164,9 +166,9 @@ export function ReplayView({ topology }: { topology: Topology | null }) {
             </div>
             <p className="replay__narration">{step.narration}</p>
             <div className="replay__stats">
-              <span><b>{pct(step.mean_bust_probability)}</b> mean P(bust)</span>
-              <span className="chip chip--high">{step.n_high} high</span>
-              <span className="chip chip--medium">{step.n_medium} medium</span>
+              <span><b>{pct(step.mean_bust_probability)}</b> average bust risk</span>
+              <span className="chip chip--high">{step.n_high} bust</span>
+              <span className="chip chip--medium">{step.n_medium} watch</span>
             </div>
             <ol className="replay__toplist">
               {step.regions.slice(0, 5).map((r) => {
@@ -236,8 +238,9 @@ export function ReplayView({ topology }: { topology: Topology | null }) {
       </div>
 
       <p className="muted small replay__foot">
-        Every value is scored from real GEFS reforecast + ERA5 for this cycle; every
-        sentence is generated from those numbers. No scripted or synthetic content.
+        Every value is scored from the real archived GEFS forecast for this run and the
+        ERA5 record of what happened; every sentence is generated from those numbers. No
+        scripted or synthetic content.
       </p>
     </div>
   );

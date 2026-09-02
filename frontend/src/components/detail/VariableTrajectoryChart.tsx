@@ -13,7 +13,7 @@ export function VariableTrajectoryChart({ series }: { series: VariableSeries }) 
   if (!series.available || !series.points.length) {
     return (
       <p className="muted">
-        No model for {series.variable} — too few paired forecast/observation rows in the data.
+        No model for {series.variable} — too few matched forecast–observation pairs in the data.
       </p>
     );
   }
@@ -43,13 +43,13 @@ export function VariableTrajectoryChart({ series }: { series: VariableSeries }) 
             formatter={(v: number) => (v == null ? "—" : `${formatTick(v)}${series.unit ? ` ${series.unit}` : ""}`)}
           />
           <Legend />
-          <Line type="monotone" dataKey="forecast" name="Forecast (ens. mean)"
+          <Line type="monotone" dataKey="forecast" name="Forecast (ensemble average)"
                 stroke={CHART.forecast} strokeWidth={2} dot={{ r: 2 }} />
           {anyObserved ? (
             <Line type="monotone" dataKey="observed" name="Observed"
                   stroke={CHART.observed} strokeWidth={2} strokeDasharray="6 4" dot={{ r: 2 }} connectNulls={false} />
           ) : null}
-          <Line type="monotone" dataKey="error" name="Predicted |error|"
+          <Line type="monotone" dataKey="error" name="Predicted error size"
                 stroke={CHART.error} strokeWidth={1.5} dot={false} />
         </LineChart>
       </ResponsiveContainer>
@@ -58,8 +58,8 @@ export function VariableTrajectoryChart({ series }: { series: VariableSeries }) 
         <p className="muted small provisional-note">
           <span className="badge--provisional">provisional</span>{" "}
           {provisional.length === 1 ? "Day" : "Days"}{" "}
-          {provisional.map((p) => p.lead_time_days).join(", ")} verified against
-          near-real-time analysis, not final ERA5 — these values may be revised.
+          {provisional.map((p) => p.lead_time_days).join(", ")} checked against a fast
+          preliminary record rather than the final ERA5 one — these values may be revised.
         </p>
       ) : null}
       {!anyObserved ? (

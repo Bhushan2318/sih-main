@@ -14,6 +14,15 @@ here rather than discovered live.
   composed; only the single-screen effect is lost.
 - **Replay offers the 10 most recent cycles**, not every cycle in the store
   (`replay_service._MAX_CYCLES`). Each candidate costs one scoring pass on first call.
+- **Feature and variable names render raw, in snake_case.** The SHAP panel lists
+  `spread_rainfall_mm`, `conf_pressure_hpa` and
+  `historical_bust_frequency_region_season`; the variable tabs and the bust-threshold
+  list show `atmospheric_moisture_kgm2` and its peers. Everything around them was put
+  into plain language on 2026-09-02, so these are now the densest text on the page for a
+  reader without a meteorology background. Fixing it needs a display-name map rather than
+  a text edit — the names arrive from the model's own feature list, not from a string in
+  the component — which is why it was left rather than rushed. Worth doing Friday morning
+  if there is time before the freeze; it is cosmetic and nothing depends on it.
 
 ## Operational
 
