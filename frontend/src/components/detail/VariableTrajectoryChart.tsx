@@ -37,7 +37,10 @@ export function VariableTrajectoryChart({ series }: { series: VariableSeries }) 
           <CartesianGrid strokeDasharray="3 3" />
           <XAxis dataKey="lead" tickFormatter={(d) => `D${d}`} />
           {/* the unit belongs on the axis once, not appended to every tick */}
-          <YAxis width={58} tickFormatter={(v: number) => formatTick(v)} />
+          {/* Auto domain for the same reason as the replay focus chart: a zero-based axis
+              flattens pressure, humidity and atmospheric moisture into a straight line and
+              hides the very divergence this chart exists to show. */}
+          <YAxis width={58} domain={["auto", "auto"]} tickFormatter={(v: number) => formatTick(v)} />
           <Tooltip
             labelFormatter={(l) => `Lead day ${l}`}
             formatter={(v: number) => (v == null ? "—" : `${formatTick(v)}${series.unit ? ` ${series.unit}` : ""}`)}
