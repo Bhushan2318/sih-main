@@ -1,4 +1,5 @@
 import type { IngestRunRow } from "../../api/types";
+import { stampShort } from "../../format";
 import { useIngestRuns } from "../../hooks/useDashboardData";
 
 /**
@@ -26,12 +27,10 @@ const BAND: Record<string, string> = {
   running: "medium",
 };
 
+/** Shared with the rest of the app so the pipeline log cannot drift into a second
+ *  timezone convention. Column header says IST, so the rows omit the suffix. */
 function when(iso: string | null): string {
-  if (!iso) return "—";
-  const d = new Date(iso.endsWith("Z") ? iso : `${iso}Z`);
-  return Number.isNaN(d.getTime())
-    ? "—"
-    : d.toISOString().replace("T", " ").slice(0, 16) + " UTC";
+  return stampShort(iso);
 }
 
 export function PipelineLog() {
@@ -58,7 +57,7 @@ export function PipelineLog() {
         <table className="dtable">
           <thead>
             <tr>
-              <th>started</th><th>what</th><th>target</th><th>status</th>
+              <th>started (IST)</th><th>what</th><th>target</th><th>status</th>
               <th>rows</th><th>took</th>
             </tr>
           </thead>

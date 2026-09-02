@@ -35,7 +35,13 @@ export function FeedFreshness() {
         <span className="feed-strip__text">
           {data.last_cycle_ingested ? (
             <>
-              Forecast cycle <b>{data.last_cycle_ingested}Z</b>
+              {/* NOT converted to IST: this is the cycle's identifier, not an instant.
+                  NOAA issues runs at 00/06/12/18Z and they are called that everywhere.
+                  Explained on hover instead, since "00Z" reads as a typo otherwise. */}
+              Forecast cycle{" "}
+              <b title="Forecast runs are issued at fixed hours in UTC (00, 06, 12, 18Z) and are named by them worldwide, so this label is not converted to local time.">
+                {data.last_cycle_ingested}Z
+              </b>
               {last?.finished_at ? <> · ingested {relative(last.finished_at)}</> : null}
             </>
           ) : (
@@ -48,7 +54,7 @@ export function FeedFreshness() {
         {data.scheduler.running ? (
           <span className="muted small">
             auto-pull every {Math.round(data.scheduler.tick_seconds / 60)} min
-            {data.scheduler.next_tick ? ` · next ${clock(data.scheduler.next_tick)}` : ""}
+            {data.scheduler.next_tick ? ` · next ${clock(data.scheduler.next_tick)} IST` : ""}
           </span>
         ) : (
           <span className="muted small">auto-pull off</span>
@@ -100,9 +106,13 @@ function relative(iso: string): string {
   return `${Math.round(hrs / 24)} d ago`;
 }
 
+/** Was the viewer's raw locale, so this one clock disagreed with every other stamp on the
+ *  page depending on where it was opened. Pinned to IST like the rest. */
 function clock(iso: string): string {
   const d = new Date(iso.endsWith("Z") ? iso : `${iso}Z`);
   return Number.isNaN(d.getTime())
     ? "—"
-    : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    : d.toLocaleTimeString("en-GB", {
+        timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", hour12: false,
+      });
 }
