@@ -14,6 +14,30 @@ from app.storage import parquet_store
 router = APIRouter(prefix="/api/model", tags=["model"])
 
 
+def _training_data(manifest: dict) -> dict:
+    """What the run that produced this model actually trained on, read from its own
+    manifest rather than inferred from the store.
+
+    The two genuinely differ. Training runs on a 16 GB CI runner against the full
+    reforecast archive; the serving box is 512 MB and carries only the cycles it has to
+    answer requests from. Counting rows here would therefore report a smaller evidence
+    base than the model really has - and on a project whose whole claim is not
+    overstating things, understating them by accident is the same failure.
+    """
+    splits = manifest.get("split_cycles") or {}
+    counts = {k: splits.get(k) for k in ("train", "val", "test")}
+    known = [v for v in counts.values() if isinstance(v, int)]
+    return {
+        "cycles": sum(known) if known else None,
+        "train_cycles": counts["train"],
+        "val_cycles": counts["val"],
+        "held_out_cycles": counts["test"],
+        "canonical_rows": manifest.get("data_rows"),
+        "paired_rows": manifest.get("paired_rows"),
+        "first_train_date": (splits.get("train_dates") or [None])[0],
+    }
+
+
 @router.get("/status", response_model=schemas.ModelStatusResponse)
 def model_status() -> schemas.ModelStatusResponse:
     data_volume = parquet_store.dataset_summary()
@@ -36,6 +60,7 @@ def model_status() -> schemas.ModelStatusResponse:
     return schemas.ModelStatusResponse(
         model_trained=True,
         current_run_id=state.run_id,
+        training_data=_training_data(manifest),
         last_trained_at=_last_trained_at(),
         training_in_progress=upload_service.training_in_progress(),
         last_training_error=upload_service.last_training_error(),
