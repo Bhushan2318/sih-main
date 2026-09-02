@@ -204,11 +204,31 @@ export function ReplayView({ topology }: { topology: Topology | null }) {
               <ReplayProbabilityChart
                 currentLead={step.lead_time_days}
                 cuts={statusQuery.data?.thresholds?.risk_band_cuts}
-                points={(replayQuery.data?.steps ?? []).map((st) => ({
-                  lead: st.lead_time_days,
-                  p: st.regions.find((r) => r.region_id === shownFocus.region_id)
-                       ?.bust_probability ?? null,
-                }))}
+                variable={shownFocus.variable}
+                points={(replayQuery.data?.steps ?? []).map((st) => {
+                  // Whether this lead day actually busted, from the focus series the
+                  // chart above is already drawing. |forecast - observed| against this
+                  // variable's own threshold is exactly how the training label is
+                  // defined, so nothing is being re-derived by a different rule.
+                  //
+                  // Deliberately one-directional: the event label is the MAX ratio over
+                  // every variable, so exceeding here proves a bust, while not exceeding
+                  // proves nothing about the other variables. Hence "threshold not
+                  // exceeded for this variable" rather than "no bust".
+                  const fp = shownFocus.points.find(
+                    (x) => x.lead_time_days === st.lead_time_days);
+                  const thr = shownFocus.bust_threshold;
+                  const busted =
+                    fp && thr != null && fp.predicted_value != null && fp.observed_value != null
+                      ? Math.abs(fp.predicted_value - fp.observed_value) >= thr
+                      : null;
+                  return {
+                    lead: st.lead_time_days,
+                    p: st.regions.find((r) => r.region_id === shownFocus.region_id)
+                         ?.bust_probability ?? null,
+                    busted,
+                  };
+                })}
               />
             </>
           ) : null}
