@@ -10,6 +10,10 @@ on:
   pull_request:
   workflow_dispatch:
 
+env:
+  # These jobs train; full_retrain refuses unless a process opts in.
+  ALLOW_LOCAL_RETRAIN: "true"
+
 jobs:
   backend:
     strategy:

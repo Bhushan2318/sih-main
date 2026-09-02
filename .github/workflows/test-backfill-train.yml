@@ -26,6 +26,10 @@ concurrency:
   group: test-backfill-train
   cancel-in-progress: true
 
+env:
+  # These jobs train; full_retrain refuses unless a process opts in.
+  ALLOW_LOCAL_RETRAIN: "true"
+
 jobs:
   train:
     runs-on: ubuntu-latest
