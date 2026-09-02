@@ -30,29 +30,24 @@ warning goes out.
 
 ## How well it works
 
-Measured on held-out forecast cycles the model never trained on — ⟨PENDING: final figures
-after the 10-year publish; live values today⟩:
+**The live figures are on the site's About tab, read from the deployed model at render
+time.** They are deliberately not repeated here: a number copied into a document is
+correct until the next retrain and quietly wrong afterwards, which is the exact failure
+this project claims not to have. The About page also carries the baseline ladder —
+climatology, lead-day, ensemble-spread — scored on the same held-out rows, because
+"ROC-AUC 0.84" claims nothing without "against what?".
 
-| | |
-|---|---|
-| ROC-AUC | **0.846** |
-| F1 | 0.748 |
-| Brier | 0.162 |
-| Held-out forecasts | 3,500 across 10 cycles |
+What is stable enough to write down is the shape of the evidence:
 
-**A score means nothing without "compared to what?"** Error grows with lead time, so a
-model that knows only the lead day should already look good. It doesn't:
-
-| baseline | Brier skill vs climatology |
-|---|---|
-| lead day only | ⟨PENDING⟩ |
-| ensemble spread only | ⟨PENDING⟩ |
-| lead + spread + season | ⟨PENDING⟩ |
-| **Sanket** | **⟨PENDING⟩** |
-
-Because a bust is defined against each variable's *own* error percentile rather than an
-absolute error, the label does not simply grow with lead time — so the model's skill is
-not a rediscovery of "day 10 is worse than day 1".
+- The model is scored only on **forecast cycles it never trained on**, spanning a decade
+  of the GEFS reforecast archive rather than a single season.
+- A lead-day-only baseline has **no skill** on this task, because a bust is defined
+  against each variable's own error percentile rather than an absolute error — so the
+  label does not simply grow with lead time. The measured lead/bust correlation is
+  published beside the table.
+- Training happens on CI with 16 GB; the site is served from a 512 MB instance that
+  cannot train. The two see different amounts of data on purpose, and the site reports
+  both separately rather than conflating them.
 
 ## Why the numbers can be trusted
 
