@@ -442,3 +442,50 @@ def test_ensemble_pins_to_the_requested_region(trained_client):
     # the scope claim has to follow the pin rather than overstating it
     assert "for this region" in (pinned["subject_reason"] or "")
     assert "in this cycle" in (auto["subject_reason"] or "")
+
+
+def test_pipeline_log_shows_refused_runs_not_only_successes(blank_client):
+    """The activity log lists every pipeline attempt, including the ones that ingested
+    nothing.
+
+    A cycle NOAA serves too incompletely to trust is refused rather than published - a
+    short rainfall *sum* is roughly half the real accumulation, and rainfall drives most
+    busts - so a refusal is the guard working, and hiding it would be the same convenient
+    fiction this project exists to avoid. Asserted explicitly because "show only what
+    succeeded" is the easy default and nothing else would catch it.
+    """
+    from datetime import datetime, timedelta
+
+    from app.db.base import get_session
+    from app.db.models import IngestRun
+
+    base = datetime(2026, 9, 1, 0, 0, 0)
+    made = [
+        ("forecast", "2026-09-01 00", "complete", 12780, None),
+        ("forecast", "2026-09-01 06", "failed", 0, "steps 340/400: refused as incomplete"),
+        ("forecast", "2026-09-01 12", "skipped", 0, None),
+    ]
+    with get_session() as session:
+        for i, (kind, target, status, rows, err) in enumerate(made):
+            session.add(IngestRun(
+                kind=kind, target=target, status=status, trigger="schedule",
+                rows_ingested=rows, error=err,
+                started_at=base + timedelta(hours=i),
+                finished_at=base + timedelta(hours=i, minutes=2),
+            ))
+        session.commit()
+
+    body = blank_client.get("/api/ingest/runs?limit=50").json()
+    got = {r["target"]: r for r in body["runs"]}
+
+    for _, target, status, _, _ in made:
+        assert target in got, f"{status} run is missing from the log"
+        assert got[target]["status"] == status
+
+    # The refusal keeps its reason - a red row with no explanation is not honest, it is
+    # just alarming.
+    assert "refused as incomplete" in got["2026-09-01 06"]["error"]
+    # Newest first, and durations are derived rather than stored.
+    assert [r["target"] for r in body["runs"]][:3] == [
+        "2026-09-01 12", "2026-09-01 06", "2026-09-01 00"]
+    assert got["2026-09-01 00"]["seconds"] == 120.0

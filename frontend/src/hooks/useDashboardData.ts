@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { fetchAlerts } from "../api/alerts";
 import { fetchEnsembleDivergence } from "../api/ensemble";
-import { fetchIngestStatus } from "../api/ingest";
+import { fetchIngestRuns, fetchIngestStatus } from "../api/ingest";
 import { fetchModelStatus } from "../api/modelStatus";
 import { fetchAllRegions, fetchRegionDetail, fetchRegions } from "../api/regions";
 import { fetchReplay, fetchReplayCycles } from "../api/replay";
@@ -89,5 +89,15 @@ export const useIngestStatus = () =>
     refetchInterval: 30_000,
     // The feed is optional: a deployment with live ingestion switched off should render
     // the dashboard normally rather than surfacing an error banner.
+    retry: false,
+  });
+
+/** Pipeline activity, newest first. Optional like the status strip: a deployment without
+ *  the table renders the rest of the page normally rather than showing an error. */
+export const useIngestRuns = (limit = 25) =>
+  useQuery({
+    queryKey: ["ingestRuns", limit],
+    queryFn: () => fetchIngestRuns(limit),
+    refetchInterval: 60_000,
     retry: false,
   });

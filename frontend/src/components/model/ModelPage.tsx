@@ -4,6 +4,7 @@ import { useModelStatus } from "../../hooks/useDashboardData";
 import { useLiveStore } from "../../store/liveStore";
 import { ErrorState, LoadingState } from "../common/States";
 import { UploadPanel } from "../upload/UploadPanel";
+import { PipelineLog } from "./PipelineLog";
 
 /**
  * Upload drives a retrain, which needs ~2 GB. On a 512 MB serving host that would OOM
@@ -259,7 +260,8 @@ export function ModelPage() {
           {UPLOAD_ENABLED ? <UploadPanel /> : null}
         </>
       )}
-    </main>
+          <PipelineLog />
+</main>
   );
 }
 

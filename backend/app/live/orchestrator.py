@@ -340,6 +340,37 @@ def backfill_cycles(count: int, stride_hours: int = 24, trigger: str = "backfill
     return results
 
 
+def _run_row(r) -> dict:
+    """One IngestRun as plain JSON. Read inside the session - the ORM instance is detached
+    once it closes, and touching it afterwards raises DetachedInstanceError."""
+    return {
+        "id": r.id, "kind": r.kind, "target": r.target, "status": r.status,
+        "trigger": r.trigger, "rows_ingested": r.rows_ingested,
+        "started_at": r.started_at.isoformat() if r.started_at else None,
+        "finished_at": r.finished_at.isoformat() if r.finished_at else None,
+        "seconds": (round((r.finished_at - r.started_at).total_seconds(), 1)
+                    if r.started_at and r.finished_at else None),
+        "detail": r.detail, "error": r.error,
+    }
+
+
+def recent_runs(limit: int = 25) -> list:
+    """The pipeline's own history, newest first - every attempt, not only the ones that
+    worked.
+
+    Skipped and failed runs are included deliberately. A cycle that NOAA served too
+    incompletely to trust is refused rather than published, and that refusal is the
+    project's argument in miniature: the alternative is a forecast whose rainfall is
+    silently halved. A log that showed only successes would be the same kind of
+    convenient fiction this system exists to avoid.
+    """
+    with get_session() as session:
+        rows = (session.query(IngestRun)
+                .order_by(IngestRun.started_at.desc())
+                .limit(max(1, min(int(limit), 200))).all())
+        return [_run_row(r) for r in rows]
+
+
 def feed_status() -> dict:
     """What /api/ingest/status serves: real freshness, never an implied 'current'."""
     with get_session() as session:
