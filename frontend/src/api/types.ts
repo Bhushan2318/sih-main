@@ -164,6 +164,9 @@ export interface ModelStatusResponse {
     regions?: number;
     valid_date_min?: string | null;
     valid_date_max?: string | null;
+    forecast_cycles?: number;
+    init_date_min?: string | null;
+    init_date_max?: string | null;
     by_variable?: Record<string, Record<string, number>>;
     grain_counts?: Record<string, number>;
   };
