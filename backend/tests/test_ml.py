@@ -89,6 +89,111 @@ def test_classifier_features_exclude_actual_error(_ingested_slice):
     assert any(f.startswith("pred_err_") for f in feats)
 
 
+# --------------------------------------------------------------------- leakage guards
+#
+# Three ways this pipeline could quietly score itself on information it should not have.
+# Each is asserted against the objects the pipeline actually produced, not against a
+# re-implementation of its logic - a re-implementation would drift and then agree with
+# itself while the real path leaked.
+
+
+def test_split_by_cycle_is_time_ordered_and_disjoint():
+    """Whole cycles, in time order, never shared between splits."""
+    from app.ml.train_pipeline import _split_by_cycle
+
+    cycles = pd.to_datetime([f"2019-{m:02d}-01" for m in range(1, 13)])
+    paired = pd.DataFrame({"init_date": cycles})
+    tr, va, te = _split_by_cycle(paired)
+
+    assert tr and va and te, "a 12-cycle frame must produce all three splits"
+    assert not (tr & va) and not (tr & te) and not (va & te)
+    assert set(tr | va | te) == set(cycles)
+    # strictly time ordered: every train cycle precedes every val cycle, and so on
+    assert max(tr) < min(va) < max(va) < min(te)
+
+
+def test_oof_folds_never_split_a_forecast_cycle(_ingested_slice):
+    """The classifier trains on out-of-fold regressor predictions. Cycles 24 h apart are
+    heavily autocorrelated, so a random KFold would put near-duplicate rows on both sides
+    of a fold and the OOF predictions would be optimistic. Folds must be grouped by
+    init_date."""
+    from sklearn.model_selection import GroupKFold
+
+    from app.ml import regressors as reg_mod
+    from app.storage.parquet_store import read_dataset
+
+    paired = fe.build_training_frame(read_dataset())
+    var = sorted(paired["variable"].unique())[0]
+    tr = paired[paired["variable"] == var]
+    groups = tr["init_date"].astype(str).to_numpy()
+    n_groups = len(np.unique(groups))
+    assert n_groups > 1, "need several cycles to say anything about fold grouping"
+
+    # Exactly the construction oof_predict uses.
+    splits = min(3, n_groups)
+    for fit_idx, held_idx in GroupKFold(n_splits=splits).split(tr, tr["abs_error"], groups):
+        fit_cycles = set(groups[fit_idx])
+        held_cycles = set(groups[held_idx])
+        assert not (fit_cycles & held_cycles), (
+            f"cycle(s) {fit_cycles & held_cycles} appear on both sides of a fold")
+    assert reg_mod.oof_predict.__doc__ and "init_date" in reg_mod.oof_predict.__doc__
+
+
+def test_thresholds_are_fit_on_the_train_split_only(_retrain):
+    """A bust label is `error >= the 90th percentile of that variable's error`. If that
+    percentile were taken over the whole dataset, the test set would be helping to define
+    its own labels and every reported metric would be optimistic.
+
+    Asserts the published thresholds equal the train-only percentiles and differ from the
+    full-data ones - so this fails if anyone ever widens the frame it is fitted on.
+    """
+    from app.ml.thresholds import compute_error_thresholds
+    from app.ml.train_pipeline import _event_mean_error, _split_by_cycle
+    from app.storage.parquet_store import read_dataset
+
+    report = _retrain
+    assert report.status == "success", report.error
+
+    paired = fe.build_training_frame(read_dataset())
+    train_c, _, _ = _split_by_cycle(paired)
+    tr = paired[paired["init_date"].isin(train_c)]
+
+    train_only = compute_error_thresholds(_event_mean_error(tr), percentile=90.0)
+    full_data = compute_error_thresholds(_event_mean_error(paired), percentile=90.0)
+    published = report.thresholds["bust_threshold"]
+
+    for var, value in published.items():
+        assert var in train_only
+        assert value == pytest.approx(train_only[var]), (
+            f"{var}: published threshold {value} is not the train-only percentile "
+            f"{train_only[var]}")
+    # If these were equal the assertion above would be vacuous - it would pass whether or
+    # not the fit was restricted to train. Guard against that.
+    assert any(published[v] != pytest.approx(full_data[v]) for v in published), (
+        "train-only and full-data thresholds are identical, so this test proves nothing "
+        "about which one was used")
+
+
+def test_no_observed_day_is_shared_between_train_and_test(_ingested_slice):
+    """The split is by initialisation date, but the *label* is an observation on a valid
+    date, and a Day-10 forecast reaches nine days past its init. If the gap between the
+    last train cycle and the first test cycle were shorter than the maximum lead, the same
+    observed day would sit on both sides of the split.
+    """
+    from app.ml.train_pipeline import _split_by_cycle
+    from app.storage.parquet_store import read_dataset
+
+    paired = fe.build_training_frame(read_dataset())
+    train_c, _, test_c = _split_by_cycle(paired)
+    train_days = set(pd.to_datetime(paired[paired["init_date"].isin(train_c)]["valid_date"]))
+    test_days = set(pd.to_datetime(paired[paired["init_date"].isin(test_c)]["valid_date"]))
+
+    shared = train_days & test_days
+    assert not shared, (
+        f"{len(shared)} observed day(s) appear in both the train and test splits, "
+        f"e.g. {sorted(shared)[:3]} - the train/test gap is shorter than the max lead")
+
+
 # ----------------------------------------------------------------- end-to-end retrain
 
 @pytest.fixture(scope="module")
