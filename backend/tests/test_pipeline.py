@@ -187,3 +187,39 @@ def test_power_daily_doy_dates_and_gridded_resolution(session):
     df = parquet_store.read_dataset(variables=["temperature_c"])
     assert df["value_type"].eq("observed").all()
     assert pd.to_datetime(df["valid_date"]).dt.year.between(2000, 2035).all()
+
+
+def test_summary_refuses_to_deduplicate_a_large_store_on_the_serving_box(session, tmp_path, monkeypatch):
+    """The store summary is computed during packaging and shipped beside the data. If that
+    sidecar is ever missing on the serving box, the fallback used to deduplicate the whole
+    store to answer /api/model/status - ~300 MB on the current store, and measured at
+    918 MB peak on the backfilled one, inside a 512 MB container that gets killed rather
+    than throttled.
+
+    Past a generous row count the fallback now refuses and says why. Asserted both ways:
+    that it returns the explanation, and that it never reaches the expensive path -
+    checking the return value alone would pass even if the computation still ran.
+    """
+    from app.storage import parquet_store as ps
+
+    src = _slice_csv(ERA5_CSV, tmp_path, 200)
+    r = ingest_upload(session, src, src.name)
+    if r.status == "pending_confirmation":
+        r = confirm_mapping(session, r.batch_id, _confirm_all(r))
+    assert r.status == "ingested" and r.row_count_ingested > 0
+
+    called = []
+    monkeypatch.setattr(ps, "_compute_summary", lambda: called.append(1) or {})
+    monkeypatch.setattr(ps, "_SUMMARY_COMPUTE_MAX_ROWS", 1)
+
+    out = ps._summary_without_cache()
+    assert not called, "the guard must refuse before computing, not after"
+    assert "memory" in out["unavailable_reason"]
+    # The shape the API and the page expect still comes back, with honest blanks.
+    for k in ("total_rows", "regions", "forecast_cycles", "valid_date_min"):
+        assert k in out and out[k] is None
+
+    # Under the threshold it computes as before - the guard is not a permanent downgrade.
+    monkeypatch.setattr(ps, "_SUMMARY_COMPUTE_MAX_ROWS", 10_000_000)
+    ps._summary_without_cache()
+    assert called, "a small store must still be summarised normally"

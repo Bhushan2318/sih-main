@@ -13,6 +13,7 @@ observed rows sit side by side and are paired later at feature-engineering time 
 from __future__ import annotations
 
 import json
+import logging
 import shutil
 import threading
 from datetime import date, datetime
@@ -27,6 +28,8 @@ import pyarrow.parquet as pq
 from app.db.base import resolve_path
 from app.config import settings
 from app.ingestion.canonical_schema import CANONICAL_COLUMNS
+
+log = logging.getLogger(__name__)
 
 CANONICAL_DIR = resolve_path(settings.canonical_dir)
 
@@ -391,11 +394,52 @@ def dataset_summary() -> dict:
     # serving box from ever paying the deduplication cost.
     summary = _read_summary_cache()
     if summary is None:
-        summary = _compute_summary()
+        summary = _summary_without_cache()
     with _summary_lock:
         _summary_memo.clear()   # only the current shape is ever of interest
         _summary_memo[fp] = summary
     return dict(summary)
+
+
+# Deduplicating the whole store to answer /api/model/status costs ~300 MB on a store
+# this size, and it was measured at 918 MB peak RSS on the backfilled one. The serving box
+# has 512 MB and dies rather than degrades, so past this many rows the fallback refuses
+# instead of computing. Generous on purpose: a dev or test store computes normally, and
+# the only thing that ever crosses it is a deployed store whose sidecar went missing -
+# which is the exact case that must not take the box down.
+_SUMMARY_COMPUTE_MAX_ROWS = 800_000
+
+
+def _summary_without_cache() -> dict:
+    """What to do when the shipped summary sidecar is missing or no longer matches.
+
+    It should never happen: package_for_deploy rebuilds the sidecar on every publish. But
+    "should never happen" and 512 MB is how a container gets OOM-killed mid-demo, and an
+    endpoint that returns an honest gap is strictly better than a process that dies.
+
+    Row counting here reads parquet footers only, not data, so the check itself is cheap.
+    """
+    try:
+        n = ds.dataset(CANONICAL_DIR, format="parquet", partitioning="hive").count_rows()
+    except Exception:  # noqa: BLE001 - an unreadable store is not a reason to crash
+        n = 0
+    if n > _SUMMARY_COMPUTE_MAX_ROWS:
+        log.error(
+            "summary sidecar missing or stale for a %s-row store; refusing to compute it "
+            "here (needs ~300 MB and this process has far less). Republish so "
+            "package_for_deploy regenerates data/summary.json.", f"{n:,}")
+        return {
+            "total_rows": None, "batches": None, "by_variable": {}, "regions": None,
+            "valid_date_min": None, "valid_date_max": None,
+            "forecast_cycles": None, "init_date_min": None, "init_date_max": None,
+            "unavailable_reason": (
+                "The store summary is computed during packaging and shipped alongside the "
+                "data. This deployment's copy is missing or out of date, and recomputing "
+                "it here would exceed the memory this instance has. Everything else on "
+                "this page is unaffected."
+            ),
+        }
+    return _compute_summary()
 
 
 def _compute_summary() -> dict:
