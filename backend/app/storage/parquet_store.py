@@ -364,6 +364,11 @@ def _read_summary_cache() -> dict | None:
 # deduplication needs and drops it again, so the counts stay post-dedupe.
 _SUMMARY_COLUMNS = [
     "variable", "value_type", "upload_batch_id", "region_id", "valid_date", "grain",
+    # init_date is here for one reason: a valid-date range alone reads as continuous
+    # coverage, and this store is a SAMPLE - 17 reforecast initialisations a year plus
+    # the live cycles. The count of distinct cycles is what makes that visible, and the
+    # Model page states both. Costs one more column on a read CI already pays for.
+    "init_date",
 ]
 
 
@@ -397,7 +402,8 @@ def _compute_summary() -> dict:
     df = read_dataset(columns=_SUMMARY_COLUMNS)
     if df.empty:
         return {"total_rows": 0, "batches": 0, "by_variable": {}, "regions": 0,
-                "valid_date_min": None, "valid_date_max": None}
+                "valid_date_min": None, "valid_date_max": None,
+                "forecast_cycles": 0, "init_date_min": None, "init_date_max": None}
 
     by_var = (
         df.groupby(["variable", "value_type"]).size()
@@ -411,4 +417,22 @@ def _compute_summary() -> dict:
         "valid_date_min": str(df["valid_date"].min()),
         "valid_date_max": str(df["valid_date"].max()),
         "grain_counts": {k: int(v) for k, v in df["grain"].value_counts().items()},
+        **_cycle_coverage(df),
+    }
+
+
+def _cycle_coverage(df) -> dict:
+    """How many distinct forecast initialisations the store holds, and over what span.
+
+    Reported next to the valid-date range because the range on its own overstates the
+    evidence: 2010 -> today looks like sixteen years of daily data, and it is in fact a
+    few hundred sampled cycles. Saying so is cheaper than being caught not saying it.
+    """
+    inits = df.loc[df["value_type"] == "forecast", "init_date"].dropna()
+    if inits.empty:
+        return {"forecast_cycles": 0, "init_date_min": None, "init_date_max": None}
+    return {
+        "forecast_cycles": int(inits.nunique()),
+        "init_date_min": str(inits.min()),
+        "init_date_max": str(inits.max()),
     }
