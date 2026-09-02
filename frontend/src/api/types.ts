@@ -419,3 +419,18 @@ export interface EnsembleDivergenceResponse {
   headline_note: string | null;
   message: string | null;
 }
+
+/** One pipeline attempt, as recorded when it ran. Includes skipped and failed runs. */
+export interface IngestRunRow {
+  id: number;
+  kind: string;
+  target: string | null;
+  status: "complete" | "skipped" | "failed" | "running" | string;
+  trigger: string;
+  rows_ingested: number;
+  started_at: string | null;
+  finished_at: string | null;
+  seconds: number | null;
+  detail: string | null;
+  error: string | null;
+}

@@ -26,6 +26,13 @@ def ingest_status() -> dict:
     return {**orchestrator.feed_status(), "scheduler": scheduler.status()}
 
 
+@router.get("/runs")
+def ingest_runs(limit: int = Query(25, ge=1, le=200)) -> dict:
+    """Recent pipeline attempts, newest first - including the ones that were skipped or
+    refused. The dashboard renders this as an activity log."""
+    return {"runs": orchestrator.recent_runs(limit)}
+
+
 @router.post("/run-cycle")
 def run_cycle(
     background: BackgroundTasks,
