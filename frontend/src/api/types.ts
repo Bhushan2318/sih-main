@@ -169,6 +169,9 @@ export interface ModelStatusResponse {
     init_date_max?: string | null;
     by_variable?: Record<string, Record<string, number>>;
     grain_counts?: Record<string, number>;
+    // Set when the shipped summary sidecar is missing or stale and recomputing it
+    // here would exceed the serving instance's memory. An explained gap, not blanks.
+    unavailable_reason?: string | null;
   };
   // What the MODEL trained on, from the run's manifest. Deliberately separate from
   // data_volume above, which describes only this server's copy of the store.

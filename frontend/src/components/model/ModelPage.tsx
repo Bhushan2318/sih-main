@@ -149,6 +149,9 @@ export function ModelPage() {
                     </dd>
                   </div>
                 </dl>
+                {vol.unavailable_reason ? (
+                  <p className="notice">{vol.unavailable_reason}</p>
+                ) : null}
                 <p className="muted small">
                   The serving copy carries the cycles needed to score today and to replay
                   recent ones — not the full training archive, which lives where the model
