@@ -197,6 +197,12 @@ class ModelStatusResponse(Schema):
     training_in_progress: bool = False
     last_training_error: Optional[str] = None
     data_volume: dict = Field(default_factory=dict)
+    # What the MODEL learned from, which is not the same thing as what this box holds.
+    # Training happens on a 16 GB runner and can read years of reforecast archive; the
+    # serving box gets only what it needs to answer a request. Reporting the store as if
+    # it were the training base would understate the evidence behind the model - so both
+    # are reported, from their own sources, and neither stands in for the other.
+    training_data: dict = Field(default_factory=dict)
     modelled_variables: list = Field(default_factory=list)
     skipped_variables: dict = Field(default_factory=dict)
     validation_metrics: dict = Field(default_factory=dict)

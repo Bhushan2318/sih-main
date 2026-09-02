@@ -38,6 +38,7 @@ export function ModelPage() {
   const regressors = data.validation_metrics?.regressors ?? {};
   const cuts = data.thresholds?.risk_band_cuts;
   const vol = data.data_volume ?? {};
+  const td = data.training_data ?? {};
 
   return (
     <main className="page page--wide">
@@ -91,41 +92,69 @@ export function ModelPage() {
             {/* ── what it learned from */}
             <section className="card">
               <header className="card__head"><h3>Training data</h3></header>
+              {/* What the model learned from, read from the run's own manifest - not from
+                  this box's copy of the store. Training runs on a 16 GB CI runner against
+                  the full reforecast archive; the 512 MB serving box carries only the
+                  cycles it needs to answer a request, and never trains. Counting rows
+                  here would report a smaller evidence base than the model actually has. */}
               <dl className="metrics metrics--compact">
-                <div><dt>Rows</dt><dd>{(vol.total_rows ?? 0).toLocaleString()}</dd></div>
-                <div><dt>Regions</dt><dd>{vol.regions ?? "—"}</dd></div>
-                <div><dt>Batches</dt><dd>{vol.batches ?? "—"}</dd></div>
+                <div>
+                  <dt>Forecast cycles</dt>
+                  <dd>{typeof td.cycles === "number" ? td.cycles.toLocaleString() : "—"}</dd>
+                </div>
+                <div>
+                  <dt>Held out</dt>
+                  <dd>{typeof td.held_out_cycles === "number" ? td.held_out_cycles.toLocaleString() : "—"}</dd>
+                </div>
+                <div>
+                  <dt>Paired rows</dt>
+                  <dd>{typeof td.paired_rows === "number" ? td.paired_rows.toLocaleString() : "—"}</dd>
+                </div>
                 <div><dt>Variables</dt><dd>{data.modelled_variables.length}</dd></div>
               </dl>
-              <dl className="metrics">
-                <div className="metrics__wide">
-                  <dt>Valid-date range</dt>
-                  <dd className="mono small">
-                    {vol.valid_date_min ?? "—"} → {vol.valid_date_max ?? "—"}
-                  </dd>
-                </div>
-              </dl>
-              {/* A date range on its own reads as continuous coverage. It is not: the
-                  reforecast archive is sampled at a handful of initialisations a year,
-                  plus every live cycle since deployment. State the cycle count next to
-                  the span so nobody has to discover that for themselves. */}
-              <p className="muted small">
-                {typeof vol.forecast_cycles === "number" && vol.forecast_cycles > 0 ? (
-                  <>
-                    Sampled, not continuous: <b>{vol.forecast_cycles.toLocaleString()}</b>{" "}
-                    forecast initialisations
-                    {vol.init_date_min && vol.init_date_max ? (
-                      <> between {String(vol.init_date_min).slice(0, 10)} and{" "}
-                        {String(vol.init_date_max).slice(0, 10)}</>
-                    ) : null}
-                    {" "}— a reforecast sample plus every live cycle since deployment, not
-                    a daily archive.
-                  </>
-                ) : (
-                  <>Cycle count unavailable — the store summary predates this field and is
-                    rebuilt on the next data publish.</>
-                )}
-              </p>
+              {typeof td.cycles === "number" && td.cycles > 0 ? (
+                <p className="muted small">
+                  Trained on <b>{td.cycles.toLocaleString()}</b> forecast cycles
+                  {td.first_train_date ? <> from {String(td.first_train_date).slice(0, 10)}</> : null}
+                  {typeof td.train_cycles === "number" && typeof td.val_cycles === "number" ? (
+                    <>{" "}— {td.train_cycles} train · {td.val_cycles} validation ·{" "}
+                      {td.held_out_cycles} held out</>
+                  ) : null}
+                  . Sampled, not continuous: a reforecast archive of a handful of
+                  initialisations a year, plus the live cycles since deployment.
+                </p>
+              ) : (
+                <p className="muted small">
+                  Training provenance unavailable — this model predates the field; it is
+                  written on the next retrain.
+                </p>
+              )}
+              {/* Everything below describes THIS box's copy of the store, which is
+                  deliberately smaller than what the model trained on: it is a 512 MB
+                  instance that never trains and only needs the cycles it serves. Labelled
+                  so the two counts above and below cannot be read as the same number. */}
+              <div className="panel__section">
+                <header className="card__head"><h4>On this server</h4></header>
+                <dl className="metrics metrics--compact">
+                  <div><dt>Rows</dt><dd>{(vol.total_rows ?? 0).toLocaleString()}</dd></div>
+                  <div><dt>Regions</dt><dd>{vol.regions ?? "—"}</dd></div>
+                  <div><dt>Cycles</dt><dd>{vol.forecast_cycles ?? "—"}</dd></div>
+                  <div><dt>Batches</dt><dd>{vol.batches ?? "—"}</dd></div>
+                </dl>
+                <dl className="metrics">
+                  <div className="metrics__wide">
+                    <dt>Valid-date range</dt>
+                    <dd className="mono small">
+                      {vol.valid_date_min ?? "—"} → {vol.valid_date_max ?? "—"}
+                    </dd>
+                  </div>
+                </dl>
+                <p className="muted small">
+                  The serving copy carries the cycles needed to score today and to replay
+                  recent ones — not the full training archive, which lives where the model
+                  is trained.
+                </p>
+              </div>
               <ul className="taglist">
                 {data.modelled_variables.map((v) => <li key={v} className="tag">{v}</li>)}
               </ul>
