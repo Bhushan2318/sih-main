@@ -50,7 +50,15 @@ export function ReplayFocusChart({
           <YAxis width={58} tickFormatter={(v: number) => fmt(v)} />
           <Tooltip
             labelFormatter={(l) => `Lead day ${l}`}
-            formatter={(v: number) => (v == null ? "—" : `${fmt(v)}${focus.unit ? ` ${focus.unit}` : ""}`)}
+            formatter={(v: unknown) => {
+              // A range series hands this an array, and anything that throws in here
+              // takes the entire chart down with it - which is exactly what happened:
+              // hovering blanked both charts with "v.toFixed is not a function".
+              const one = (x: unknown) =>
+                typeof x === "number" && Number.isFinite(x) ? fmt(x) : "—";
+              const body = Array.isArray(v) ? v.map(one).join(" – ") : one(v);
+              return body === "—" ? body : `${body}${focus.unit ? ` ${focus.unit}` : ""}`;
+            }}
           />
           <Legend />
           <ReferenceLine x={currentLead} stroke={CHART.marker} strokeWidth={2}
@@ -58,7 +66,8 @@ export function ReplayFocusChart({
           {thr != null ? (
             <Area type="monotone" dataKey="band" name={`Within tolerance (±${fmt(thr)})`}
               stroke="none" fill={CHART.observed} fillOpacity={0.07} connectNulls={false}
-              activeDot={false} isAnimationActive={false} legendType="rect" />
+              activeDot={false} isAnimationActive={false} legendType="rect"
+              tooltipType="none" />
           ) : null}
           <Line type="monotone" dataKey="forecast" name="Forecast (ens. mean)"
             stroke={CHART.forecast} strokeWidth={2} dot={{ r: 2 }} />
