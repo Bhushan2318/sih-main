@@ -120,6 +120,22 @@ def _build_commit() -> str:
 # and HEAD is what uptime monitors send by default. UptimeRobot reported this endpoint
 # "down" while the app was serving perfectly, because a rejected method looks identical
 # to a broken service from the outside.
+# Render's free tier does not expose memory metrics, and 512 MB is a hard ceiling that
+# kills the container outright rather than degrading it - so the process reports its own
+# footprint and the number can be read from outside at any time, including mid-judging.
+# Linux only, which is what the container runs; /proc is absent on macOS, where this
+# returns None and the field reads null rather than a guess.
+def _rss_mb() -> "float | None":
+    try:
+        with open("/proc/self/status") as fh:
+            for line in fh:
+                if line.startswith("VmRSS:"):
+                    return round(int(line.split()[1]) / 1024, 1)
+    except (OSError, ValueError, IndexError):
+        return None
+    return None
+
+
 @app.api_route("/api/health", methods=["GET", "HEAD"], tags=["health"])
 def health() -> dict:
     return {
@@ -128,6 +144,7 @@ def health() -> dict:
         "current_run_id": registry.current_run_id(),
         "websocket_clients": manager.connection_count,
         "commit": _build_commit(),
+        "memory_mb": _rss_mb(),
     }
 
 
