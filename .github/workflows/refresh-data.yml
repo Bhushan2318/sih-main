@@ -44,6 +44,10 @@ on:
         description: "Re-pull the cycle even if it is already ingested (replaces its rows)"
         type: boolean
         default: false
+      backfill_years:
+        description: "One-off: ingest these reforecast years before training, e.g. 2010-2015. Empty on a normal refresh."
+        type: string
+        default: ""
 
 # Writing the release asset is the only write this needs.
 permissions:
@@ -99,6 +103,31 @@ jobs:
           else
             echo "no previous asset (first run) - starting from an empty store"
           fi
+
+      - name: Ingest the reforecast backfill (one-off)
+        # Skipped entirely unless `backfill_years` is set, so every scheduled run is
+        # byte-for-byte the workflow it was before this step existed.
+        #
+        # Ingest only the years the published store does NOT already hold. The store
+        # dedupes on read, so re-ingesting a year cannot corrupt a result - but it does
+        # write a second copy of every row into the artifact, and the artifact is pulled
+        # on every container start. Ingesting 2010-2018 over a store that already held
+        # 2016-2019 measured 4.16M rows on disk against 3.59M of actual content.
+        if: inputs.backfill_years != ''
+        working-directory: backend
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download backfill-data -p "backfill-2010-2019.tar.gz" -D /tmp --clobber
+          tar xzf /tmp/backfill-2010-2019.tar.gz -C data/samples
+          python -m scripts.ingest_backfill --years '${{ inputs.backfill_years }}'
+          python -c "
+          import pyarrow.dataset as ds, pandas as pd
+          d = ds.dataset('data/canonical', format='parquet', partitioning='hive').to_table(columns=['value_type','init_date']).to_pandas()
+          f = d[d.value_type=='forecast'].dropna(subset=['init_date'])
+          i = pd.to_datetime(f.init_date)
+          print(f'store now: {len(d):,} rows, {i.nunique()} distinct forecast cycles')
+          print(i.dt.year.value_counts().sort_index().to_string())"
 
       - name: Pull the cycle, verify, retrain
         working-directory: backend
