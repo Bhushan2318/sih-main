@@ -50,6 +50,25 @@ def test_health_on_blank_install(blank_client):
     assert body["current_run_id"] is None
 
 
+def test_health_reports_its_own_memory(blank_client):
+    """The deployed box dies at 512 MB rather than degrading, and Render's free tier puts
+    the memory dashboard behind a paywall - so the process reports its own RSS and the
+    number can be read from outside at any time.
+
+    The key is always present. The value is null where /proc is unavailable (a macOS dev
+    machine), because a guessed number would be worse than none; on Linux, which is what
+    the container runs, it must be a real reading.
+    """
+    import sys
+
+    body = blank_client.get("/api/health").json()
+    assert "memory_mb" in body
+    mem = body["memory_mb"]
+    assert mem is None or (isinstance(mem, (int, float)) and mem > 0)
+    if sys.platform.startswith("linux"):
+        assert mem is not None and mem > 0, "/proc/self/status should be readable on Linux"
+
+
 def test_health_always_reports_a_build_commit_key(blank_client, monkeypatch):
     # CI polls this to tell whether the process answering is the one it just deployed -
     # Render auto-deploys on push, which never touches the refresh workflow, so there is
