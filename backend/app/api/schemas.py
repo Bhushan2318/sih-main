@@ -203,6 +203,9 @@ class ModelStatusResponse(Schema):
     # it were the training base would understate the evidence behind the model - so both
     # are reported, from their own sources, and neither stands in for the other.
     training_data: dict = Field(default_factory=dict)
+    # "compared to what?" - the baseline ladder this run was scored against, on the same
+    # rows. Empty when the run published none, never filled in with numbers from another.
+    baselines: dict = Field(default_factory=dict)
     modelled_variables: list = Field(default_factory=list)
     skipped_variables: dict = Field(default_factory=dict)
     validation_metrics: dict = Field(default_factory=dict)

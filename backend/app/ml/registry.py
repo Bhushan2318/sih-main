@@ -148,6 +148,22 @@ def load_classifier(run_id: str):
     return m, load_feature_columns(run_id).get("classifier", [])
 
 
+def load_baselines(run_id: str) -> Optional[dict]:
+    """The baseline comparison this run published, if it ran one.
+
+    Optional by design: a run trained before baselines existed, or one where the split was
+    too small to fit them, simply has no file and the API reports nothing rather than a
+    stale or invented table.
+    """
+    path = run_dir(run_id) / "baselines.json"
+    if not path.is_file():
+        return None
+    try:
+        return json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+
+
 def load_thresholds(run_id: str) -> Optional[Thresholds]:
     p = run_dir(run_id) / "thresholds.json"
     return Thresholds.from_json(p) if p.exists() else None

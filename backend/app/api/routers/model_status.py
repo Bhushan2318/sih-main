@@ -61,6 +61,7 @@ def model_status() -> schemas.ModelStatusResponse:
         model_trained=True,
         current_run_id=state.run_id,
         training_data=_training_data(manifest),
+        baselines=registry.load_baselines(state.run_id) or {},
         last_trained_at=_last_trained_at(),
         training_in_progress=upload_service.training_in_progress(),
         last_training_error=upload_service.last_training_error(),
