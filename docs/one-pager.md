@@ -60,9 +60,27 @@ What is stable enough to write down is the shape of the evidence:
   only, out-of-fold folds are grouped by forecast cycle so no cycle spans a fold, and no
   observed day appears on both sides of the train/test split. Each is a test in the suite,
   written so it cannot pass vacuously.
-- **The ground truth's own uncertainty is measured.** Against MERRA-2 over 21,492 paired
-  city-days, two leading reanalyses disagree by 24–43% of a bust threshold. Stated up
-  front rather than waiting to be asked.
+- **The ground truth's own uncertainty is measured.** Measured across ERA5 vs MERRA-2
+  over **{N}** paired city-days: **{X}–{Y}%** of the bust threshold. Stated up front
+  rather than waiting to be asked.
+
+  > **PLACEHOLDER — do not publish this line with braces in it.** The figures that stood
+  > here before (21,492 / 24–43%) were carried over from a handoff document that git does
+  > not track, and no output in this repo backs them. Regenerate and substitute:
+  >
+  > ```
+  > cd backend && python -m scripts.compare_verification_products
+  > # writes data/analysis/verification_product_agreement.csv (gitignored)
+  > ```
+  >
+  > **N** — the script prints `paired city-days: <N> across <M> cities`; it is also the
+  > `n` column, identical across variables.
+  > **X and Y** — the lowest and highest `mae_pct_of_threshold` in the CSV (printed as the
+  > `MAE % of thr` column).
+  >
+  > Drop them in, delete this block, and commit in the same change — the point of the
+  > exercise is that the number and its source move together. Note the run hits two live
+  > APIs city by city and takes a while; nothing else depends on it.
 
 ## What it does not do
 
