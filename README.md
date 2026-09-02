@@ -46,12 +46,19 @@ phased build order.
 
 Real sample data (`backend/data/samples/`, built by `backend/scripts/`) is NOAA GEFSv12
 reforecast (forecast) + ERA5 (observations), now joined by live operational cycles — no
-synthetic data anywhere. `pytest` (136 tests) runs against the real files.
+synthetic data anywhere. The test suite runs against those real files.
 
-Held-out test metrics on the 2019 sample: temperature MAE 0.68 °C (R² 0.79), pressure
-0.74 hPa (R² 0.56), humidity 4.45 %RH (R² 0.64), rainfall 2.95 mm (R² 0.41); bust
-classifier ROC-AUC 0.76 / F1 0.65. Small-sample — one year, 17 forecast cycles, 30 points
-— so directional.
+**Current metrics are served, not written down here.** The deployed model reports them at
+[`/api/model/status`](https://sanket-a0dd.onrender.com/api/model/status) and the site's
+**About** tab renders them, alongside the baseline ladder — climatology, lead-day and
+ensemble-spread — scored on the same held-out rows. A figure copied into this file is
+right until the next retrain and quietly wrong afterwards, which is the failure this
+project exists to avoid; this README had exactly that problem, claiming ROC-AUC 0.76 from
+a 17-cycle run long after the deployed model was trained on ten years.
+
+What is stable enough to state: the classifier is scored only on forecast cycles it never
+trained on, spanning a decade of the GEFSv12 reforecast archive, and it is compared
+against those baselines on identical rows rather than reported alone.
 
 > Regressor errors dropped ~17% on 2026-08-29 when a one-day forecast/observation
 > misalignment was found and fixed: lead day *k* was built from forecast hours
@@ -96,6 +103,39 @@ If PowerShell blocks the activate script with an execution-policy error, run onc
   confidence decay across the horizon and the peak region from the scored cycle already in
   hand — a figure that cannot be computed renders as an em dash with the reason, never as a
   placeholder.
+
+## Limitations
+
+Stated plainly, because a reader should hit these before drawing conclusions.
+
+- **Coverage is sampled, not continuous.** The reforecast archive is a handful of
+  initialisations per year, not a daily record, plus the live cycles since deployment. A
+  date range on its own would overstate it, so the site reports the cycle count beside it.
+- **City points, not regional coverage.** Region-level readings are indicative. IMD's 36
+  meteorological subdivisions are the right unit and are not what this uses.
+- **5 of 31 GEFS ensemble members**, so spread-derived features are a noisy estimate of
+  true ensemble spread. Widening it requires a retrain, not a config change.
+- **ERA5 precipitation is weak over India** relative to gauge-based gridded products, and
+  rainfall carries that caveat. Rainfall is also the hardest variable here: zero-inflated
+  and heavily skewed.
+- **The ground truth has its own error.** Measured against an independent reanalysis over
+  ~21,000 paired city-days, two leading products disagree by roughly a quarter to a half
+  of a bust threshold. That is the irreducible uncertainty in the label itself.
+- **"Bust" is defined on surface-variable error**, not the synoptic criterion of Rodwell
+  et al. (2013) — Z500 anomaly correlation below 0.4 at day 6. This is a deliberate
+  choice, not an oversight: surface error is what reaches agriculture and disaster
+  response, whereas Z500 is what reaches meteorologists.
+- **The serving instance has 512 MB and cannot train.** It carries only the cycles needed
+  to score and replay; training runs on CI against the full archive. The site reports both
+  separately rather than conflating them.
+
+## What would make this conclusive
+
+The evidence base scales with data volume, and the gaps are known rather than vague: the
+full 31-member operational ensemble instead of five; IMD's 36 subdivisions as the region
+unit instead of city points; IMDAA and IMD gauge-based gridded rainfall as observations
+instead of ERA5 alone; and the synoptic Z500 bust definition reported alongside the
+surface-error one.
 
 ## Layout
 
