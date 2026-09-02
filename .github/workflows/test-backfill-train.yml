@@ -80,6 +80,11 @@ jobs:
 
       - name: Train, sampling memory to a file
         working-directory: backend
+        # `ps -C python3` matched nothing: the job launches `python -m ...`, so the process
+        # comm is `python` and the run reported a peak of 36 MB while really using ~2.3 GB.
+        # Match any comm starting with `python` instead, and keep MemAvailable as the
+        # cross-check - it is the figure that does not depend on getting a name right.
+        #
         # continue-on-error, and the sampler writes to a FILE: the previous attempt was
         # SIGTERMed (143) mid-training and took the reporting block with it, so the run
         # produced no peak figure at all. A kill is the answer we came for, so it must
@@ -87,7 +92,7 @@ jobs:
         continue-on-error: true
         run: |
           ( while true; do
-              echo "$(date +%s) $(awk '/MemAvailable/{print $2}' /proc/meminfo) $(ps -o rss= -C python3 2>/dev/null | sort -rn | head -1)" >> mem.log
+              echo "$(date +%s) $(awk '/MemAvailable/{print $2}' /proc/meminfo) $(ps -eo rss=,comm= 2>/dev/null | awk '$2 ~ /^python/ {print $1}' | sort -rn | head -1)" >> mem.log
               sleep 2
             done ) &
           SAMPLER=$!
