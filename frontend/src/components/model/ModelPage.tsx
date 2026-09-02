@@ -105,6 +105,27 @@ export function ModelPage() {
                   </dd>
                 </div>
               </dl>
+              {/* A date range on its own reads as continuous coverage. It is not: the
+                  reforecast archive is sampled at a handful of initialisations a year,
+                  plus every live cycle since deployment. State the cycle count next to
+                  the span so nobody has to discover that for themselves. */}
+              <p className="muted small">
+                {typeof vol.forecast_cycles === "number" && vol.forecast_cycles > 0 ? (
+                  <>
+                    Sampled, not continuous: <b>{vol.forecast_cycles.toLocaleString()}</b>{" "}
+                    forecast initialisations
+                    {vol.init_date_min && vol.init_date_max ? (
+                      <> between {String(vol.init_date_min).slice(0, 10)} and{" "}
+                        {String(vol.init_date_max).slice(0, 10)}</>
+                    ) : null}
+                    {" "}— a reforecast sample plus every live cycle since deployment, not
+                    a daily archive.
+                  </>
+                ) : (
+                  <>Cycle count unavailable — the store summary predates this field and is
+                    rebuilt on the next data publish.</>
+                )}
+              </p>
               <ul className="taglist">
                 {data.modelled_variables.map((v) => <li key={v} className="tag">{v}</li>)}
               </ul>
