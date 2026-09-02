@@ -21,6 +21,7 @@ Touches no model, no store and no serving code.
 from __future__ import annotations
 
 import argparse
+import json
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -87,6 +88,9 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--run-id", help="eval events to score (default: the most recent)")
     ap.add_argument("--no-write", action="store_true", help="print only, don't touch docs")
+    ap.add_argument("--write-run-artifact", action="store_true",
+                    help="also write baselines.json into the model run directory, so the "
+                         "comparison ships with the model and is served beside its metrics")
     args = ap.parse_args()
 
     path = (EVAL_DIR / f"{args.run_id}.parquet") if args.run_id else _latest_eval()
@@ -178,6 +182,35 @@ def main() -> int:
 
     section = HEADING + "\n\n" + header + "\n".join(tbl) + "\n" + "\n".join(lead_tbl) + "\n"
     print("\n" + section)
+
+    # Written into the run directory on purpose. A markdown file in the repo drifts from
+    # whatever is deployed the moment either changes; a file inside the run is packaged
+    # with that run, served beside its metrics, and cannot end up describing a different
+    # model than the one answering requests.
+    if args.write_run_artifact:
+        from app.ml import registry  # noqa: PLC0415 - keeps the CLI import-light
+        run_dir = registry.run_dir(run_id)
+        if run_dir.is_dir():
+            payload = {
+                "run_id": run_id,
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "git_sha": _git_sha(),
+                "test_events": int(len(test)),
+                "test_cycles": int(n_test_cycles),
+                "bust_rate": float(y_test.mean()),
+                "lead_bust_correlation": {"train": corr["train"], "test": corr["test"]},
+                "models": [
+                    {"name": name, "brier": m["brier"], "bss": m["bss"],
+                     "roc_auc": m["roc_auc"], "f1": m["f1"],
+                     "is_model": name == MODEL_ROW}
+                    for name, m in rows
+                ],
+            }
+            (run_dir / "baselines.json").write_text(json.dumps(payload, indent=2))
+            print(f"wrote {run_dir / 'baselines.json'}")
+        else:
+            print(f"run directory {run_dir} not found; skipped the run artifact",
+                  file=sys.stderr)
 
     if args.no_write:
         return 0

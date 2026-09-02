@@ -184,6 +184,19 @@ export interface ModelStatusResponse {
     paired_rows?: number | null;
     first_train_date?: string | null;
   };
+  // The baseline ladder the deployed run was scored against, on the same rows. Absent
+  // when the run published none - never populated from a different run.
+  baselines?: {
+    run_id?: string;
+    test_events?: number;
+    test_cycles?: number;
+    bust_rate?: number;
+    lead_bust_correlation?: { train?: number | null; test?: number | null };
+    models?: {
+      name: string; brier: number | null; bss: number | null;
+      roc_auc: number | null; f1: number | null; is_model?: boolean;
+    }[];
+  };
   modelled_variables: string[];
   skipped_variables: Record<string, string>;
   validation_metrics: {

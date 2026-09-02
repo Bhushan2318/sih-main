@@ -158,7 +158,7 @@ jobs:
           i = pd.to_datetime(f.init_date)
           print(f'TRAINING store: {len(d):,} rows, {i.nunique()} cycles')
           print(i.dt.year.value_counts().sort_index().to_string())"
-          python -m app.ml.train_pipeline
+          python -m app.ml.train_pipeline --emit-eval
           echo "serving store before=$BEFORE after=$(du -sh data/canonical | cut -f1)"
 
       - name: Prove the archive training did not touch the serving store
@@ -183,6 +183,19 @@ jobs:
           d = ds.dataset('data/canonical', format='parquet', partitioning='hive').to_table(columns=['value_type','init_date']).to_pandas()
           f = d[d.value_type=='forecast'].dropna(subset=['init_date'])
           print(f'SHIPPING store: {len(d):,} rows, {pd.to_datetime(f.init_date).nunique()} cycles')"
+
+      - name: Score the baseline ladder for this run
+        # "ROC-AUC 0.84" claims nothing without "against what?". This scores climatology,
+        # lead-day and ensemble-spread baselines on the EXACT rows the classifier was
+        # scored on - the event frames the training step above just published - and writes
+        # the comparison into the run directory, so it ships with the model and is served
+        # beside its metrics.
+        #
+        # Never fatal: a run whose split is too small to fit baselines should still
+        # publish its model. The API reports no table rather than a stale one.
+        continue-on-error: true
+        working-directory: backend
+        run: python -m scripts.run_baselines --no-write --write-run-artifact
 
       - name: Package
         id: pack
