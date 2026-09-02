@@ -109,6 +109,17 @@ jobs:
           gh release download backfill-data -p "backfill-2010-2019.tar.gz" -D /tmp --clobber
           tar xzf /tmp/backfill-2010-2019.tar.gz -C data/samples
           python -m scripts.ingest_backfill --years '${{ inputs.backfill_years }}'
+          # Regenerate the summary sidecar, exactly as package_for_deploy does on every
+          # publish. Without this the store signature no longer matches the shipped
+          # cache, /api/model/status falls back to deduplicating the whole store on the
+          # serving box, and the measurement reports ~500 MB that no deployed
+          # configuration would ever pay. Measured before this line existed: model/status
+          # went 0.28 s / 398 MB -> 9.72 s / 918 MB, and every later reading inherited it
+          # because RSS is a high-water mark.
+          python -c "
+          from app.storage import parquet_store
+          s = parquet_store.write_summary_cache()
+          print(f'summary cached: {s[\"total_rows\"]:,} rows, {s[\"forecast_cycles\"]} cycles')" 
           python -c "
           import pyarrow.dataset as ds, pandas as pd
           d = ds.dataset('data/canonical', format='parquet', partitioning='hive').to_table(columns=['value_type','init_date']).to_pandas()
