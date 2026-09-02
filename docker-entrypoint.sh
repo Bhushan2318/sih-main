@@ -18,6 +18,18 @@ set -e
 if [ -n "$DATA_ASSET_URL" ]; then
   echo "fetching model+data: $DATA_ASSET_URL"
   if curl -fsSL --retry 3 --retry-delay 2 -o /tmp/data.tar.gz "$DATA_ASSET_URL"; then
+    # Clear the canonical store before extracting, and only once the download has
+    # succeeded. tar overwrites what the archive contains but never removes what it does
+    # not, and packaging now COMPACTS the store - dropping whole batch_id= partitions
+    # whose rows were entirely superseded. Extracting a compacted store over an older one
+    # therefore leaves orphan partitions behind. store_signature() enumerates every
+    # partition on disk, so it stops matching the summary.json shipped beside it, and the
+    # Model page falls back to reporting the store as unavailable. The orphans are also
+    # still read, quietly undoing part of what compaction bought.
+    #
+    # After the curl, never before: deleting first would turn a GitHub outage into an
+    # empty store, and the fallback baked into the image exists precisely to prevent that.
+    rm -rf /app/data/canonical
     tar -xzf /tmp/data.tar.gz -C /app
     rm -f /tmp/data.tar.gz
     echo "model+data refreshed at startup"
