@@ -495,7 +495,14 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
   .app__body--ops { height: auto; grid-template-columns: minmax(0, 1fr) 380px; }
   .app__body--ops .map-wrap { flex: none; align-self: stretch; aspect-ratio: auto; }
   .app__body--ops .map { height: auto; }
-  .app__body--ops > .panel { height: auto; overflow-y: visible; }
+  /* max-height and position must be released together with overflow, or the panel
+     still LAYS OUT at calc(100vh - 88px) while its content renders past that: the
+     following section is placed against the capped box and the detail chart paints on
+     top of the summary chart. Reported from a phone, where the panel is tallest because
+     the layout is a single column. Releasing overflow alone is what caused it. */
+  .app__body--ops > .panel {
+    height: auto; overflow-y: visible; max-height: none; position: static;
+  }
 }
 @media (max-width: 960px) { .app__body--ops { grid-template-columns: minmax(0, 1fr); } }
 
@@ -1002,6 +1009,11 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
   .viewtabs, .hero__tabs, .filters, .replay__pick, .replay__ticks, .lead-selector {
     flex-wrap: wrap;
   }
+  /* Five tabs no longer fit one row on a phone, so the last one wraps alone and reads
+     like a mistake. Centring the wrapped row makes it read as a deliberate two-line nav.
+     Deliberately NOT solved by shrinking the tabs: they were widened to clear the 44px
+     touch target, and taking that back would trade a cosmetic nit for a usability one. */
+  .viewtabs { justify-content: center; row-gap: 4px; }
 }
 
 /* ─────────────────────────────────────────────────────────────── recharts trim */
