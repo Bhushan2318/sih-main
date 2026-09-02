@@ -53,14 +53,22 @@ export function FeedFreshness() {
         ) : (
           <span className="muted small">auto-pull off</span>
         )}
-        <button
-          type="button"
-          className="btn btn--ghost btn--sm"
-          onClick={() => refresh.mutate()}
-          disabled={refresh.isPending || last?.status === "running"}
-        >
-          {refresh.isPending || last?.status === "running" ? "Pulling…" : "Refresh now"}
-        </button>
+        {/* Only where the deployment can actually pull. The button used to render
+            everywhere, and the endpoint has no guard of its own, so on the deployed box -
+            LIVE_INGEST_ENABLED=false, and the GRIB decoders are deliberately not in the
+            image - pressing it scheduled a background pull that could only fail, on the
+            instance with the least memory headroom. Nothing here says the feed is
+            broken: the cycle in the store is stated either way, and CI does the pulling. */}
+        {data.enabled ? (
+          <button
+            type="button"
+            className="btn btn--ghost btn--sm"
+            onClick={() => refresh.mutate()}
+            disabled={refresh.isPending || last?.status === "running"}
+          >
+            {refresh.isPending || last?.status === "running" ? "Pulling…" : "Refresh now"}
+          </button>
+        ) : null}
       </div>
 
       {failed && last?.error ? (
