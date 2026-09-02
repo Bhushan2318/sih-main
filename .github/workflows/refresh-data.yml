@@ -45,9 +45,9 @@ on:
         type: boolean
         default: false
       backfill_years:
-        description: "One-off: ingest these reforecast years before training, e.g. 2010-2015. Empty on a normal refresh."
+        description: "Reforecast years to train on, added to a throwaway copy of the store"
         type: string
-        default: ""
+        default: "2010-2015"
 
 # Writing the release asset is the only write this needs.
 permissions:
@@ -63,6 +63,11 @@ env:
   TAG: data-latest
   # Overridable via a repo variable so a fork or a moved service does not need a code edit.
   SITE: ${{ vars.SITE_URL || 'https://sanket-a0dd.onrender.com' }}
+  # Every run trains on the archive, scheduled runs included. This is not optional: the
+  # published artifact carries only the serving store, so a run that trained on whatever
+  # it restored would quietly replace a model built from 170 cycles with one built from
+  # 72, publish it, and look entirely healthy doing so.
+  BACKFILL_YEARS: ${{ inputs.backfill_years || '2010-2015' }}
 
 jobs:
   refresh:
@@ -104,6 +109,18 @@ jobs:
             echo "no previous asset (first run) - starting from an empty store"
           fi
 
+      - name: Pull the cycle, verify, retrain
+        working-directory: backend
+        # Exit 2 means the cycle was refused as too incomplete to publish; the failure is
+        # the point, and every step after this is skipped so nothing stale is shipped.
+        run: |
+          python -m scripts.refresh_for_deploy \
+            --skip-train \
+            ${{ inputs.force_train && '--force-train' || '' }} \
+            ${{ inputs.skip_forecast && '--skip-forecast' || '' }} \
+            ${{ inputs.force_cycle && '--force-cycle' || '' }} \
+            ${{ inputs.cycle && format('--cycle {0}', inputs.cycle) || '' }}
+
       - name: Train on the full archive, in a throwaway copy of the store
         # One-off, skipped entirely unless `backfill_years` is set, so every scheduled
         # run is byte-for-byte the workflow it was before this existed.
@@ -121,18 +138,19 @@ jobs:
         #
         # A temp DB as well as a temp store: ingest writes batch rows, and the packaged
         # metadata.db should describe what actually ships, not the training copy.
-        if: inputs.backfill_years != ''
         working-directory: backend
         env:
           GH_TOKEN: ${{ github.token }}
           CANONICAL_DIR: /tmp/train_store
           DB_PATH: /tmp/train.db
         run: |
+          find data/canonical -name '*.parquet' | sort | xargs shasum -a 256 \
+            | shasum -a 256 > /tmp/store_before_archive
           cp -r data/canonical /tmp/train_store
           BEFORE=$(du -sh data/canonical | cut -f1)
           gh release download backfill-data -p "backfill-2010-2019.tar.gz" -D /tmp --clobber
           tar xzf /tmp/backfill-2010-2019.tar.gz -C data/samples
-          python -m scripts.ingest_backfill --years '${{ inputs.backfill_years }}'
+          python -m scripts.ingest_backfill --years "$BACKFILL_YEARS"
           python -c "
           import pyarrow.dataset as ds, pandas as pd
           d = ds.dataset('/tmp/train_store', format='parquet', partitioning='hive').to_table(columns=['value_type','init_date']).to_pandas()
@@ -143,35 +161,28 @@ jobs:
           python -m app.ml.train_pipeline
           echo "serving store before=$BEFORE after=$(du -sh data/canonical | cut -f1)"
 
-      - name: Prove the serving store was not touched
-        # The whole safety argument is that the shipped store is the one already running
-        # in production. Assert it rather than trust it: a checksum over every parquet
-        # file, compared against the artifact that was restored.
-        if: inputs.backfill_years != ''
+      - name: Prove the archive training did not touch the serving store
+        # The safety argument is that the box receives the store it already runs, plus
+        # whatever this run's own cycle pull legitimately added - and nothing from the
+        # archive. So the checksum brackets the archive step specifically: taken just
+        # before the copy, compared just after training. Comparing against the published
+        # artifact instead would fail for a good reason (the cycle pull above) and teach
+        # everyone to ignore it.
         working-directory: backend
         run: |
-          mkdir -p /tmp/verify && tar xzf /tmp/prev.tar.gz -C /tmp/verify
-          A=$(cd /tmp/verify && find data/canonical -name '*.parquet' | sort | xargs shasum -a 256 | shasum -a 256)
-          B=$(find data/canonical -name '*.parquet' | sort | xargs shasum -a 256 | shasum -a 256)
-          echo "published store checksum: $A"
-          echo "store to be shipped     : $B"
-          if [ "$A" != "$B" ]; then
-            echo "::error::the serving store changed; refusing to publish"
+          AFTER=$(find data/canonical -name '*.parquet' | sort | xargs shasum -a 256 | shasum -a 256)
+          BEFORE=$(cat /tmp/store_before_archive)
+          echo "before archive: $BEFORE"
+          echo "after  archive: $AFTER"
+          if [ "$BEFORE" != "$AFTER" ]; then
+            echo "::error::archive training modified the serving store; refusing to publish"
             exit 1
           fi
-          echo "identical - the box receives exactly the store it already runs"
-
-      - name: Pull the cycle, verify, retrain
-        working-directory: backend
-        # Exit 2 means the cycle was refused as too incomplete to publish; the failure is
-        # the point, and every step after this is skipped so nothing stale is shipped.
-        run: |
-          python -m scripts.refresh_for_deploy \
-            ${{ inputs.backfill_years && '--skip-train' || '' }} \
-            ${{ inputs.force_train && '--force-train' || '' }} \
-            ${{ inputs.skip_forecast && '--skip-forecast' || '' }} \
-            ${{ inputs.force_cycle && '--force-cycle' || '' }} \
-            ${{ inputs.cycle && format('--cycle {0}', inputs.cycle) || '' }}
+          python -c "
+          import pyarrow.dataset as ds, pandas as pd
+          d = ds.dataset('data/canonical', format='parquet', partitioning='hive').to_table(columns=['value_type','init_date']).to_pandas()
+          f = d[d.value_type=='forecast'].dropna(subset=['init_date'])
+          print(f'SHIPPING store: {len(d):,} rows, {pd.to_datetime(f.init_date).nunique()} cycles')"
 
       - name: Package
         id: pack
