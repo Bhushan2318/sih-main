@@ -24,10 +24,12 @@ export function ReplayProbabilityChart({
   points,
   currentLead,
   cuts,
+  variable,
 }: {
-  points: { lead: number; p: number | null }[];
+  points: { lead: number; p: number | null; busted: boolean | null }[];
   currentLead: number;
   cuts?: { medium?: number; high?: number };
+  variable?: string;
 }) {
   const any = points.some((d) => d.p != null);
   if (!any) return null;
@@ -58,13 +60,36 @@ export function ReplayProbabilityChart({
               label={{ value: "bust", position: "right", fontSize: 9, fill: CHART.axis, dy: -4, dx: -30 }} />
           ) : null}
           <ReferenceLine x={currentLead} stroke={CHART.marker} strokeWidth={2} />
+          {/* The prediction is the line; the OUTCOME is the fill of each marker. Encoding
+              both on one mark keeps a single y-axis - the alternative, a second series at
+              0/1, would put a binary on a probability scale and read as a second
+              forecast. A filled marker is a lead day where the observed error really did
+              exceed this variable's bust threshold. */}
           <Line type="monotone" dataKey="p" name="P(bust)" stroke={CHART.forecast}
-            strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5 }} connectNulls={false} />
+            strokeWidth={2} activeDot={{ r: 5 }} connectNulls={false}
+            dot={(props: any) => {
+              const { cx, cy, payload, key } = props;
+              if (cx == null || cy == null) return <g key={key} />;
+              const hit = payload?.busted === true;
+              return (
+                <circle key={key} cx={cx} cy={cy} r={hit ? 4.5 : 3}
+                  fill={hit ? CHART.high : "#fff"}
+                  stroke={hit ? CHART.high : CHART.forecast} strokeWidth={2} />
+              );
+            }} />
         </LineChart>
       </ResponsiveContainer>
+      {/* Identity is never colour alone: the marker shape and this line both carry it. */}
       <p className="muted small">
-        Scored by the deployed model from this cycle&apos;s forecast alone — no observation
-        is used to produce it.
+        <span style={{ color: CHART.high }}>●</span> observed bust
+        {variable ? <> — {variable.replace(/_/g, " ")} error exceeded its threshold</> : null}
+        {"  ·  "}
+        <span style={{ color: CHART.forecast }}>○</span> threshold not exceeded for this
+        variable
+      </p>
+      <p className="muted small">
+        The line is scored by the deployed model from this cycle&apos;s forecast alone — no
+        observation is used to produce it. The markers are the outcome, added afterwards.
       </p>
     </div>
   );
