@@ -29,6 +29,8 @@ os.environ["RAW_UPLOAD_DIR"] = str(_TMP / "raw_uploads")
 # cases, and without this they would delete the developer's real trained runs under
 # backend/data/models/.
 os.environ["MODEL_DIR"] = str(_TMP / "models")
+# Tests train against a throwaway store; the guard in full_retrain defaults to off.
+os.environ["ALLOW_LOCAL_RETRAIN"] = "true"
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 GENERATED_SAMPLES = BACKEND_DIR / "data" / "samples"

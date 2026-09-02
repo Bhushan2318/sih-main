@@ -44,6 +44,12 @@ class Settings(BaseSettings):
     # Minimum number of newly-final observation rows before an automatic retrain.
     live_retrain_min_new_rows: int = 500
 
+    # Training peaks around 2.3 GB. The serving container has 512 MB and is killed, not
+    # throttled, when it exceeds that - so training is refused unless a process is
+    # explicitly declared as one that may train. Defaults to FALSE: a new deployment is
+    # safe by default, and the paths that legitimately train opt in.
+    allow_local_retrain: bool = False
+
     # ---- serving ------------------------------------------------------------------
     # Warm the guided-replay ranking and the ensemble view in a background thread at
     # startup, so the first request for either is instant. Worth it on a workstation.

@@ -178,6 +178,20 @@ def full_retrain(triggered_by_batch_id: str | None = None, make_current: bool = 
     run_id = registry.new_run_id()
     report = TrainReport(run_id=run_id, status="failed")
 
+    # Guarded here rather than at each route, because there are five call sites and one of
+    # them is a daemon thread two modules away (live/orchestrator -> upload_service.
+    # run_retrain -> here). A guard on the endpoints would have to be repeated at each and
+    # would still miss that path.
+    if not settings.allow_local_retrain:
+        report.status = "refused"
+        report.error = (
+            "Training is disabled on this deployment. It peaks around 2.3 GB and this "
+            "instance has 512 MB, so a retrain here would kill the process rather than "
+            "slow it. Models are trained in CI and shipped as a release artifact. Set "
+            "ALLOW_LOCAL_RETRAIN=true to train locally or in CI."
+        )
+        return report
+
     try:
         # Provisional (near-real-time) observations are deliberately withheld from
         # training: the models measure error against ERA5, and verifying against a
