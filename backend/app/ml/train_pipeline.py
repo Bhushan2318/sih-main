@@ -24,6 +24,10 @@ import pandas as pd
 
 warnings.filterwarnings("ignore")
 
+from pathlib import Path
+
+from app.config import settings
+from app.db.base import resolve_path
 from app.features import engineering as fe
 from app.features import pivot as pv
 from app.ml import classifier as clf_mod
@@ -168,7 +172,8 @@ def _split_by_cycle(paired: pd.DataFrame):
     return set(cycles[:a]), set(cycles[a:b]), set(cycles[b:])
 
 
-def full_retrain(triggered_by_batch_id: str | None = None, make_current: bool = True) -> TrainReport:
+def full_retrain(triggered_by_batch_id: str | None = None, make_current: bool = True,
+                 *, emit_eval: bool = False) -> TrainReport:
     t0 = time.time()
     run_id = registry.new_run_id()
     report = TrainReport(run_id=run_id, status="failed")
@@ -280,6 +285,17 @@ def full_retrain(triggered_by_batch_id: str | None = None, make_current: bool = 
             "risk_band_cuts": risk_cuts,
         }
 
+        # ---- optional: dump the scored event frames for offline analysis -----------
+        # Off by default and never enabled on the deploy path, so this changes nothing
+        # about what a normal retrain produces. `scripts/run_baselines.py` reads these
+        # so the baseline ladder is scored on the *identical* rows and labels as the
+        # classifier above - not a re-derived split, which is the only way a comparison
+        # against it means anything. Writes to data/analysis (gitignored, and outside
+        # data/samples, which conftest parametrises tests over).
+        if emit_eval:
+            _emit_eval_events(run_id, clf_art,
+                              {"train": event_tr, "val": event_va, "test": event_te})
+
         # ---- SHAP ----------------------------------------------------------------
         shap_frames = []
         for var, art in artifacts.items():
@@ -332,6 +348,36 @@ def full_retrain(triggered_by_batch_id: str | None = None, make_current: bool = 
         return report
 
 
+def _emit_eval_events(run_id: str, clf_art, splits: dict) -> Path:
+    """Write each split's event frame plus this model's predicted P(bust) to one parquet.
+
+    The point is provenance: a baseline is only meaningful if it is scored on the same
+    rows, the same labels and the same split boundary as the model it is compared to, so
+    those rows are published by the run that produced them rather than rebuilt later.
+    """
+    out_dir = resolve_path(settings.data_dir) / "analysis" / "eval_events"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    frames = []
+    for name, ev in splits.items():
+        if ev is None or ev.empty:
+            continue
+        f = ev.copy()
+        f["split"] = name
+        f["model_proba"] = clf_mod.predict_bust_probability(clf_art, ev)
+        frames.append(f)
+    out = out_dir / f"{run_id}.parquet"
+    combined = pd.concat(frames, ignore_index=True)
+    # region_id is categorical with per-split category sets; concat downgrades it to
+    # object, which is what a reader wants anyway. Cast the rest back to plain dtypes so
+    # the file round-trips without depending on pandas category ordering.
+    for col in combined.columns:
+        if str(combined[col].dtype) == "category":
+            combined[col] = combined[col].astype(str)
+    combined.to_parquet(out, index=False)
+    print(f"eval events -> {out}  ({len(combined):,} rows)")
+    return out
+
+
 def _event_mean_error(paired: pd.DataFrame) -> pd.DataFrame:
     em = (paired.groupby(fe.EVENT_KEYS + ["variable"], observed=True)
           .agg(fc_mean=("forecast_value", "mean"), obs=("observed_value", "mean"))
@@ -381,19 +427,32 @@ def _print_report(r: TrainReport) -> None:
     for var, t in r.thresholds["bust_threshold"].items():
         print(f"  {var:26} {t:8.3f}")
     print(f"risk band cuts on P(bust): {r.thresholds['risk_band_cuts']}")
-    print("\nNOTE: small-sample metrics - one year, 17 cycles, 30 points. Treat as directional.")
+    # Derived, never hardcoded: this line was once a literal "one year, 17 cycles" and
+    # would have quietly become a false claim the moment the backfill shipped. The whole
+    # project turns on not printing a number that is not true.
+    n_cycles = sum(r.split_cycles.get(k, 0) for k in ("train", "val", "test"))
+    n_test = (r.classifier_metrics.get("test") or {}).get("n", 0)
+    scale = (f"{n_cycles} initialisations, {r.split_cycles.get('test', 0)} held out "
+             f"({n_test:,} test events)")
+    if n_cycles < 40:
+        print(f"\nNOTE: small-sample metrics - {scale}. Treat as directional.")
+    else:
+        print(f"\nSample: {scale}.")
 
 
 def _main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true", help="train + report, don't flip current.json")
     ap.add_argument("--json", action="store_true", help="also dump the report as JSON")
+    ap.add_argument("--emit-eval", action="store_true",
+                    help="also write the scored event frames to data/analysis/eval_events "
+                         "(input for scripts/run_baselines.py)")
     args = ap.parse_args()
 
     from app.db.base import init_db
     init_db()
 
-    r = full_retrain(make_current=not args.dry_run)
+    r = full_retrain(make_current=not args.dry_run, emit_eval=args.emit_eval)
     _print_report(r)
     if args.json:
         from dataclasses import asdict
