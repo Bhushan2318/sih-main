@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Topology } from "topojson-specification";
 import type { RegionSummary, ReplayRegionStep } from "../../api/types";
-import { useReplay, useReplayCycles } from "../../hooks/useDashboardData";
+import { useModelStatus, useReplay, useReplayCycles } from "../../hooks/useDashboardData";
 import { EmptyState, ErrorState, LoadingState } from "../common/States";
 import { IndiaChoroplethMap } from "../map/IndiaChoroplethMap";
 import { MapLegend } from "../map/MapLegend";
 import { ReplayFocusChart } from "./ReplayFocusChart";
+import { ReplayProbabilityChart } from "./ReplayProbabilityChart";
 
 const STEP_MS = 2200;
 
@@ -22,6 +23,7 @@ export function ReplayView({ topology }: { topology: Topology | null }) {
   const [focusRegionId, setFocusRegionId] = useState<string | null>(null);
 
   const cyclesQuery = useReplayCycles(true);
+  const statusQuery = useModelStatus();
   const replayQuery = useReplay(selectedInit, true);
   const replay = replayQuery.data;
   const steps = replay?.steps ?? [];
@@ -193,7 +195,22 @@ export function ReplayView({ topology }: { topology: Topology | null }) {
           </div>
 
           {shownFocus ? (
-            <ReplayFocusChart focus={shownFocus} currentLead={step.lead_time_days} />
+            <>
+              <ReplayFocusChart focus={shownFocus} currentLead={step.lead_time_days} />
+              {/* The same region's predicted probability across the same lead days, taken
+                  from the steps already in this payload - so the outcome and the call
+                  that preceded it are read on one axis instead of being correlated by
+                  eye between a chart and a number. */}
+              <ReplayProbabilityChart
+                currentLead={step.lead_time_days}
+                cuts={statusQuery.data?.thresholds?.risk_band_cuts}
+                points={(replayQuery.data?.steps ?? []).map((st) => ({
+                  lead: st.lead_time_days,
+                  p: st.regions.find((r) => r.region_id === shownFocus.region_id)
+                       ?.bust_probability ?? null,
+                }))}
+              />
+            </>
           ) : null}
         </div>
       </div>
