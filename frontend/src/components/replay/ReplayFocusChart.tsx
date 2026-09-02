@@ -47,7 +47,14 @@ export function ReplayFocusChart({
         <ComposedChart data={data} margin={{ top: 20, right: 14, bottom: 4, left: -6 }}>
           <CartesianGrid strokeDasharray="3 3" />
           <XAxis dataKey="lead" tickFormatter={(d) => `D${d}`} />
-          <YAxis width={58} tickFormatter={(v: number) => fmt(v)} />
+          {/* Scale to the data, not to zero. Recharts defaults a numeric axis to a
+              zero-based domain, which is fatal here: pressure lives near 1020 hPa, so a
+              0-1200 axis compresses the entire real variation into 3% of the plot and
+              draws the +-3.3 hPa bust threshold thinner than a pixel. A 19.7 hPa error -
+              a badly blown forecast - rendered as ~4px of separation, so the chart showed
+              two identical lines beside a 98% bust call and read as the model being
+              wrong. The band is a data series, so an auto domain always contains it. */}
+          <YAxis width={58} domain={["auto", "auto"]} tickFormatter={(v: number) => fmt(v)} />
           <Tooltip
             labelFormatter={(l) => `Lead day ${l}`}
             formatter={(v: unknown) => {
