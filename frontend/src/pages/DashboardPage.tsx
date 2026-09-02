@@ -97,12 +97,23 @@ export function DashboardPage() {
     <div className="app">
       <header className="topbar">
         <div className="topbar__inner">
-          <div className="brand">
-            <SanketGlyph />
-            <span className="brand__name">Sanket</span>
+          {/* The brand is the way home: it returns to Operations and scrolls back to the
+              opening screen. A <button> rather than an <a> because navigation here is
+              local state, not a URL - there is no router in this app. */}
+          <button
+            type="button"
+            className="brand"
+            aria-label="Sanket - back to the opening screen"
+            onClick={() => {
+              setView("live");
+              window.scrollTo({ top: 0, behavior: prefersReducedMotion() ? "auto" : "smooth" });
+            }}
+          >
+            <img className="brand__glyph" src="/logo.png" alt="" width={40} height={32} />
+            <img className="brand__wordmark" src="/wordmark.png" alt="Sanket" />
             <span className="brand__div" aria-hidden="true" />
             <span className="brand__sub">Forecast Bust Detection</span>
-          </div>
+          </button>
 
           <nav className="viewtabs" role="tablist" aria-label="View">
             {TABS.map((t) => (
@@ -289,19 +300,7 @@ function ScrollCue() {
   );
 }
 
-/**
- * The mark: two traces leaving one origin and coming apart. That divergence between the
- * forecast and what actually happened is the whole product, so the logo states it rather
- * than decorating around it.
- */
-function SanketGlyph() {
-  return (
-    <svg className="brand__glyph" viewBox="0 0 32 32" role="img" aria-label="Sanket">
-      <circle cx="16" cy="16" r="15" fill="#0b1220" />
-      <path d="M6 16h8" stroke="#fff" strokeWidth="2.4" strokeLinecap="round" fill="none" />
-      <path d="M14 16l12-6" stroke="#fff" strokeWidth="2.4" strokeLinecap="round" fill="none" />
-      <path d="M14 16l12 7" stroke="#f5254a" strokeWidth="2.4" strokeLinecap="round" fill="none" />
-      <circle cx="14" cy="16" r="2.6" fill="#2b4eff" />
-    </svg>
-  );
+/** Matches scrollToOperations: the CSS reduced-motion override cannot reach a scroll option. */
+function prefersReducedMotion(): boolean {
+  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
