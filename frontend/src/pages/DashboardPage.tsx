@@ -14,6 +14,7 @@ import { IndiaChoroplethMap, loadTopology } from "../components/map/IndiaChoropl
 import { LeadDayRail } from "../components/map/LeadDayRail";
 import { LeadDaySelector } from "../components/map/LeadDaySelector";
 import { MapLegend } from "../components/map/MapLegend";
+import { AboutPage } from "../components/about/AboutPage";
 import { ReplayView } from "../components/replay/ReplayView";
 import { useAllRegions, useEnsembleDivergence, useModelStatus } from "../hooks/useDashboardData";
 import { useLiveSocket } from "../hooks/useLiveSocket";
@@ -24,13 +25,16 @@ import { useMediaQuery } from "../hooks/useMediaQuery";
  * get their own tab so the screen a judge stares at is not sharing room with a run id, a
  * metrics table and a file dropzone.
  */
-type View = "live" | "alerts" | "model" | "replay";
+type View = "live" | "alerts" | "model" | "replay" | "about";
 
 const TABS: { id: View; label: string }[] = [
   { id: "live", label: "Operations" },
   { id: "alerts", label: "Alerts" },
   { id: "model", label: "Model" },
   { id: "replay", label: "Replay a real bust" },
+  // The link goes to judges who open it unattended, with nobody to explain what they are
+  // looking at. The case for the project therefore has to be reachable from the page.
+  { id: "about", label: "About" },
 ];
 
 export function DashboardPage() {
@@ -133,7 +137,9 @@ export function DashboardPage() {
         </div>
       </header>
 
-      {view === "replay" ? (
+      {view === "about" ? (
+        <AboutPage onReplay={() => setView("replay")} />
+      ) : view === "replay" ? (
         <main className="app__body app__body--replay">
           <ReplayView topology={topology} />
         </main>
@@ -162,7 +168,7 @@ export function DashboardPage() {
           <section className={heroFills ? "screen1" : undefined}>
             <HeroDivergence data={ensembleQuery.data} />
             <KpiStrip all={allRegions} day={regions} />
-            {heroFills ? <ScrollCue /> : null}
+            {heroFills ? <OpeningCues onReplay={() => setView("replay")} /> : null}
             {regions?.regions.length ? (
               <RiskTicker
                 regions={regions.regions}
@@ -260,6 +266,18 @@ function scrollToOperations() {
  * map completely, so something has to name what is below it - a bare chevron would leave
  * a judge guessing whether scrolling is worth it.
  */
+function OpeningCues({ onReplay }: { onReplay: () => void }) {
+  return (
+    <div className="cuerow">
+      {/* Named for the payoff, not the feature. "Replay" is a label; this is a reason. */}
+      <button type="button" className="cuerow__primary" onClick={onReplay}>
+        Watch it call a real bust →
+      </button>
+      <ScrollCue />
+    </div>
+  );
+}
+
 function ScrollCue() {
   return (
     <button type="button" className="scrollcue" onClick={scrollToOperations}>

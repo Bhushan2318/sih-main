@@ -104,30 +104,62 @@ jobs:
             echo "no previous asset (first run) - starting from an empty store"
           fi
 
-      - name: Ingest the reforecast backfill (one-off)
-        # Skipped entirely unless `backfill_years` is set, so every scheduled run is
-        # byte-for-byte the workflow it was before this step existed.
+      - name: Train on the full archive, in a throwaway copy of the store
+        # One-off, skipped entirely unless `backfill_years` is set, so every scheduled
+        # run is byte-for-byte the workflow it was before this existed.
         #
-        # Ingest only the years the published store does NOT already hold. The store
-        # dedupes on read, so re-ingesting a year cannot corrupt a result - but it does
-        # write a second copy of every row into the artifact, and the artifact is pulled
-        # on every container start. Ingesting 2010-2018 over a store that already held
-        # 2016-2019 measured 4.16M rows on disk against 3.59M of actual content.
+        # The serving store is NEVER modified. The backfill is ingested into a copy and
+        # the model is trained against that; packaging below then ships the original
+        # store with the new model. This matters because the box has 512 MB and dies
+        # rather than degrades: measured, ten years of archive costs +70 MB at serve
+        # time, against 76 MB of headroom. Training does not need to happen where
+        # serving happens - the runner has 16 GB and never answers a request.
+        #
+        # Replay only ever offers the 10 newest cycles (replay_service._MAX_CYCLES), and
+        # scoring reads one cycle at a time, so the older archive is of no use on the box
+        # even before the memory cost is counted.
+        #
+        # A temp DB as well as a temp store: ingest writes batch rows, and the packaged
+        # metadata.db should describe what actually ships, not the training copy.
         if: inputs.backfill_years != ''
         working-directory: backend
         env:
           GH_TOKEN: ${{ github.token }}
+          CANONICAL_DIR: /tmp/train_store
+          DB_PATH: /tmp/train.db
         run: |
+          cp -r data/canonical /tmp/train_store
+          BEFORE=$(du -sh data/canonical | cut -f1)
           gh release download backfill-data -p "backfill-2010-2019.tar.gz" -D /tmp --clobber
           tar xzf /tmp/backfill-2010-2019.tar.gz -C data/samples
           python -m scripts.ingest_backfill --years '${{ inputs.backfill_years }}'
           python -c "
           import pyarrow.dataset as ds, pandas as pd
-          d = ds.dataset('data/canonical', format='parquet', partitioning='hive').to_table(columns=['value_type','init_date']).to_pandas()
+          d = ds.dataset('/tmp/train_store', format='parquet', partitioning='hive').to_table(columns=['value_type','init_date']).to_pandas()
           f = d[d.value_type=='forecast'].dropna(subset=['init_date'])
           i = pd.to_datetime(f.init_date)
-          print(f'store now: {len(d):,} rows, {i.nunique()} distinct forecast cycles')
+          print(f'TRAINING store: {len(d):,} rows, {i.nunique()} cycles')
           print(i.dt.year.value_counts().sort_index().to_string())"
+          python -m app.ml.train_pipeline
+          echo "serving store before=$BEFORE after=$(du -sh data/canonical | cut -f1)"
+
+      - name: Prove the serving store was not touched
+        # The whole safety argument is that the shipped store is the one already running
+        # in production. Assert it rather than trust it: a checksum over every parquet
+        # file, compared against the artifact that was restored.
+        if: inputs.backfill_years != ''
+        working-directory: backend
+        run: |
+          mkdir -p /tmp/verify && tar xzf /tmp/prev.tar.gz -C /tmp/verify
+          A=$(cd /tmp/verify && find data/canonical -name '*.parquet' | sort | xargs shasum -a 256 | shasum -a 256)
+          B=$(find data/canonical -name '*.parquet' | sort | xargs shasum -a 256 | shasum -a 256)
+          echo "published store checksum: $A"
+          echo "store to be shipped     : $B"
+          if [ "$A" != "$B" ]; then
+            echo "::error::the serving store changed; refusing to publish"
+            exit 1
+          fi
+          echo "identical - the box receives exactly the store it already runs"
 
       - name: Pull the cycle, verify, retrain
         working-directory: backend
@@ -135,6 +167,7 @@ jobs:
         # the point, and every step after this is skipped so nothing stale is shipped.
         run: |
           python -m scripts.refresh_for_deploy \
+            ${{ inputs.backfill_years && '--skip-train' || '' }} \
             ${{ inputs.force_train && '--force-train' || '' }} \
             ${{ inputs.skip_forecast && '--skip-forecast' || '' }} \
             ${{ inputs.force_cycle && '--force-cycle' || '' }} \
