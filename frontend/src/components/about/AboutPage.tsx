@@ -41,14 +41,20 @@ export function AboutPage({ onReplay }: { onReplay: () => void }) {
 
       {/* The single most useful thing a first-time visitor can do, said before anything
           else. Replay is the most convincing view here and it is the last tab. */}
-      <p className="notice">
-        <b>Start here:</b> Replay takes a real forecast cycle from the archive, scores it
-        with the deployed model, and shows what this system would have told a forecaster
-        that day — before anyone knew the outcome.{" "}
-        <button type="button" className="chip" onClick={onReplay}>
-          Open Replay →
-        </button>
-      </p>
+      <div className="notice">
+        <p style={{ margin: 0 }}>
+          <b>Start here:</b> Replay takes a real forecast cycle from the archive, scores it
+          with the deployed model, and shows what this system would have told a forecaster
+          that day — before anyone knew the outcome.
+        </p>
+        {/* Its own line: inline, it broke mid-sentence after "outcome." and read as a
+            stray control rather than the one thing worth clicking. */}
+        <p style={{ margin: "0.6rem 0 0" }}>
+          <button type="button" className="chip" onClick={onReplay}>
+            Open Replay →
+          </button>
+        </p>
+      </div>
 
       <div className="page--split">
         <section className="card">
