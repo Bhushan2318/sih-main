@@ -78,6 +78,10 @@ jobs:
                   "http://127.0.0.1:$PORT$ep" 2>/dev/null || echo "ERR -")
             R=$(peak); [ -n "$R" ] && [ "$R" -gt "$MAX" ] && MAX=$R
             echo "| \`$ep\` | ${OUT% *} | ${OUT#* }s | $((R / 1024)) |"
+            # An endpoint that errors returns in milliseconds and costs no memory, which
+            # is indistinguishable from a cheap endpoint in the peak alone. Record it so
+            # the verdict cannot be read off a run where nothing was actually scored.
+            case "$OUT" in 200\ *) ;; *) echo "FAILED $ep -> $OUT" >> /tmp/failures ;; esac
           done
           echo ""
           echo "**$LABEL peak RSS: $((MAX / 1024)) MB**"
@@ -94,7 +98,8 @@ jobs:
           d = ds.dataset('data/canonical', format='parquet', partitioning='hive').to_table(columns=['value_type','init_date']).to_pandas()
           f = d[d.value_type=='forecast'].dropna(subset=['init_date'])
           print(f'published store: {len(d):,} rows on disk, {pd.to_datetime(f.init_date).nunique()} cycles')"
-          { echo "### Published store"; echo ""; /tmp/measure.sh published; echo ""; } >> "$GITHUB_STEP_SUMMARY"
+          { echo "### Published store"; echo ""; /tmp/measure.sh published; echo ""; } \
+            | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Ingest the backfill
         working-directory: backend
@@ -118,11 +123,17 @@ jobs:
         working-directory: backend
         run: |
           { echo "### Backfilled store (\`${{ inputs.backfill_years }}\` added)"; echo ""
-            /tmp/measure.sh backfilled; echo ""; } >> "$GITHUB_STEP_SUMMARY"
+            /tmp/measure.sh backfilled; echo ""; } | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Verdict
         run: |
           A=$(cat /tmp/peak_published); B=$(cat /tmp/peak_backfilled)
+          if [ -s /tmp/failures ]; then
+            echo "::error::endpoints failed; the peaks below measured nothing useful"
+            cat /tmp/failures
+            cat /tmp/failures >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
           {
             echo "### Verdict"
             echo ""
