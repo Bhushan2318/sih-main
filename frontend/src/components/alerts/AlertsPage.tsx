@@ -34,7 +34,7 @@ export function AlertsPage({ onSelect, filter, onFilter }: {
         <div>
           <h1 className="pagehead__title">Alerts</h1>
           <p className="pagehead__sub">
-            Every region scoring above the watch cut in the current cycle, worst first.
+            Every region above the watch level in the current forecast run, worst first.
             {stats && stats.total >= LIMIT ? ` Capped at the ${LIMIT} most severe.` : ""}
           </p>
         </div>
@@ -68,11 +68,11 @@ export function AlertsPage({ onSelect, filter, onFilter }: {
             note={<>of <b>{stats.total}</b> alerts shown</>} />
           <Stat cap="watch" label="In the watch band" value={String(stats.watch)}
             note={<>across <b>{stats.regions}</b> distinct regions</>} />
-          <Stat cap="blue" label="Peak probability" value={`${(stats.peak.bust_probability * 100).toFixed(0)}%`}
+          <Stat cap="blue" label="Peak bust risk" value={`${(stats.peak.bust_probability * 100).toFixed(0)}%`}
             note={<><b>{stats.peak.region_name ?? stats.peak.region_id}</b> · D{stats.peak.lead_time_days}</>} />
-          <Stat cap="blue" label="Most-cited driver" value={stats.topDriver?.[0] ?? "—"}
+          <Stat cap="blue" label="Most common cause" value={stats.topDriver?.[0] ?? "—"}
             note={stats.topDriver
-              ? <>dominant in <b>{stats.topDriver[1]}</b> of {stats.total}</>
+              ? <>the main cause in <b>{stats.topDriver[1]}</b> of {stats.total}</>
               : <>no dominant variable recorded</>} />
         </div>
       ) : null}
@@ -86,9 +86,9 @@ export function AlertsPage({ onSelect, filter, onFilter }: {
                   <th>Region</th>
                   <th className="dtable__num">Lead</th>
                   <th>Valid date</th>
-                  <th className="dtable__num">P(bust)</th>
+                  <th className="dtable__num">Bust risk</th>
                   <th>Band</th>
-                  <th>Dominant driver</th>
+                  <th>Main cause</th>
                 </tr>
               </thead>
               <tbody>

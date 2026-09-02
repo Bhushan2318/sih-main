@@ -49,20 +49,21 @@ export function HeroDivergence({ data }: { data?: EnsembleDivergenceResponse }) 
           <p className="hero__sub">{data.national_note ?? data.headline_note}</p>
 
           <p className="hero__why">
-            Averaged across every scored region in this cycle.
+            Averaged across every region scored in this forecast run — one run is all ten
+            days issued at a single hour.
           </p>
 
           {mean != null ? (
             <div className="hero__gauge">
               <Ring value={mean} />
               <div className="hero__gaugemeta">
-                <span className="hero__gaugelabel">Mean bust probability</span>
+                <span className="hero__gaugelabel">Mean bust risk · 0% holds, 100% busts</span>
                 <strong className="hero__gaugebig">
                   {data.n_high_regions} of {data.n_scored_regions} regions in the top band
                 </strong>
                 {delta != null ? (
                   <span className={deltaClass(delta)}>
-                    {delta >= 0 ? "▲" : "▼"} {delta >= 0 ? "+" : ""}{delta.toFixed(2)} vs cycle {data.prior_init_date}
+                    {delta >= 0 ? "▲" : "▼"} {delta >= 0 ? "+" : ""}{(delta * 100).toFixed(1)} points vs run {data.prior_init_date}
                   </span>
                 ) : (
                   <span className="hero__delta hero__delta--none">{data.prior_note}</span>
@@ -104,7 +105,7 @@ export function HeroDivergence({ data }: { data?: EnsembleDivergenceResponse }) 
           ) : (
             <div className="hero__key">
               <b><i style={{ background: CHART.forecast }} />What actually happened</b>
-              <b><i style={{ background: CHART.axis }} />Perfect calibration</b>
+              <b><i style={{ background: CHART.axis }} />Where dots would sit if always right</b>
             </div>
           )}
 
@@ -152,7 +153,7 @@ function NationalChart({ data }: { data: EnsembleDivergenceResponse }) {
             }
             return [
               `${v.toFixed(1)}%  ·  ${item.payload.high}/${item.payload.n} in the top band`,
-              "Mean P(bust)",
+              "Mean bust risk",
             ];
           }}
         />
@@ -161,7 +162,7 @@ function NationalChart({ data }: { data: EnsembleDivergenceResponse }) {
           isAnimationActive={false} name="Calmest to worst region"
         />
         <Line
-          type="monotone" dataKey="mean" name="Mean P(bust)"
+          type="monotone" dataKey="mean" name="Mean bust risk"
           stroke={CHART.forecast} strokeWidth={2.6} dot={{ r: 2.5 }}
         />
       </ComposedChart>
@@ -221,10 +222,10 @@ function SkillChart({ data }: { data: EnsembleDivergenceResponse }) {
 function SkillNumbers({ skill }: { skill: NonNullable<EnsembleDivergenceResponse["skill"]> }) {
   return (
     <dl className="hero__skill">
-      <div><dt>ROC-AUC</dt><dd>{num(skill.roc_auc, 3)}</dd></div>
-      <div><dt>Precision</dt><dd>{num(skill.precision, 2)}</dd></div>
-      <div><dt>Recall</dt><dd>{num(skill.recall, 2)}</dd></div>
-      <div><dt>Brier</dt><dd>{num(skill.brier, 3)}</dd></div>
+      <div><dt>Ranking (ROC-AUC)</dt><dd>{num(skill.roc_auc, 3)}</dd></div>
+      <div><dt>Warnings right</dt><dd>{num(skill.precision, 2)}</dd></div>
+      <div><dt>Busts caught</dt><dd>{num(skill.recall, 2)}</dd></div>
+      <div><dt>Probability error</dt><dd>{num(skill.brier, 3)}</dd></div>
     </dl>
   );
 }
@@ -261,7 +262,7 @@ function Ring({ value }: { value: number }) {
           transform="rotate(-90 64 64)"
         />
       </svg>
-      <span className="hero__ringvalue">{value.toFixed(2)}</span>
+      <span className="hero__ringvalue">{(value * 100).toFixed(0)}%</span>
     </div>
   );
 }

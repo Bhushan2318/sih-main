@@ -32,8 +32,8 @@ const TABS: { id: View; label: string }[] = [
   { id: "alerts", label: "Alerts" },
   { id: "model", label: "Model" },
   { id: "replay", label: "Replay a real bust" },
-  // The link goes to judges who open it unattended, with nobody to explain what they are
-  // looking at. The case for the project therefore has to be reachable from the page.
+  // The project is pitched live, but the link is also opened unattended afterwards with
+  // nobody there to explain it. The case for the project has to be reachable from the page.
   { id: "about", label: "About" },
 ];
 

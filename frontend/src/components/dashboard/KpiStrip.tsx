@@ -16,8 +16,8 @@ export function KpiStrip({ all, day }: { all?: AllRegionsResponse; day?: Regions
     <section className="kpis" aria-label="Cycle summary">
       <Kpi
         cap={stats.meanCap}
-        label="Mean P(bust)"
-        value={stats.mean != null ? stats.mean.toFixed(2) : "—"}
+        label="Mean bust risk"
+        value={stats.mean != null ? `${(stats.mean * 100).toFixed(0)}%` : "—"}
         note={
           stats.scored
             ? <>across <b>{stats.scored}</b> scored regions · day {stats.lead}</>
@@ -41,7 +41,7 @@ export function KpiStrip({ all, day }: { all?: AllRegionsResponse; day?: Regions
       />
       <Kpi
         cap="blue"
-        label="Confidence decay"
+        label="Confidence change"
         value={
           stats.decayPct != null ? (
             <>
@@ -56,7 +56,7 @@ export function KpiStrip({ all, day }: { all?: AllRegionsResponse; day?: Regions
         note={
           stats.decayPct != null && stats.decayFrom != null && stats.decayTo != null ? (
             <>
-              day {stats.decayFrom} → day {stats.decayTo} mean confidence
+              from day {stats.decayFrom} to day {stats.decayTo}
             </>
           ) : (
             "needs two or more scored lead days"
@@ -66,7 +66,7 @@ export function KpiStrip({ all, day }: { all?: AllRegionsResponse; day?: Regions
       <Kpi
         cap="watch"
         label="Peak risk"
-        value={stats.peak ? stats.peak.value.toFixed(2) : "—"}
+        value={stats.peak ? `${(stats.peak.value * 100).toFixed(0)}%` : "—"}
         note={
           stats.peak ? (
             <>

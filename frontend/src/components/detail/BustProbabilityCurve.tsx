@@ -68,7 +68,7 @@ export function BustProbabilityCurve({ points, cuts }: {
           />
           <Tooltip
             formatter={(v: number, _n, item) =>
-              [`${v}%  (${bandLabel(item.payload.band)})`, item.payload.driver ? `driver: ${item.payload.driver}` : "P(bust)"]
+              [`${v}%  (${bandLabel(item.payload.band)})`, item.payload.driver ? `mostly driven by: ${item.payload.driver}` : "Bust risk"]
             }
             labelFormatter={(l) => `Lead day ${l}`}
           />
@@ -88,7 +88,7 @@ export function BustProbabilityCurve({ points, cuts }: {
           <span><i style={{ background: CHART.low }} />low &lt; {watch.toFixed(0)}%</span>
           <span><i style={{ background: CHART.medium }} />watch {watch.toFixed(0)}–{bust.toFixed(0)}%</span>
           <span><i style={{ background: CHART.high }} />bust ≥ {bust.toFixed(0)}%</span>
-          <em>percentile cuts from this model&rsquo;s own training run</em>
+          <em>band edges set from this model&rsquo;s own training run, not chosen by hand</em>
         </p>
       ) : null}
     </>

@@ -20,9 +20,10 @@ export function ShapFactorsList({ factors, method }: { factors: TopFactor[]; met
       {/* never let the UI imply SHAP ran when it didn't */}
       <p className="muted small">
         {method === "shap"
-          ? "Mean |SHAP| on the validation split of the current run."
+          ? "How much each input pushed this prediction, averaged over the validation split (SHAP)."
           : method === "feature_importance_fallback"
-            ? "SHAP unavailable — showing XGBoost feature importances instead."
+            ? "SHAP unavailable — showing the model's own feature-importance ranking instead, " +
+              "which reflects what it relies on overall rather than for this region."
             : "Attribution method unknown."}
       </p>
     </div>

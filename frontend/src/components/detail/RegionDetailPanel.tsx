@@ -69,7 +69,7 @@ export function RegionDetailPanel({
             </div>
           </div>
           {worst.dominant_variable ? (
-            <p className="muted small">Dominant driver: {worst.dominant_variable.replace(/_/g, " ")}</p>
+            <p className="muted small">Mostly driven by: {worst.dominant_variable.replace(/_/g, " ")}</p>
           ) : null}
         </section>
       ) : null}
@@ -80,7 +80,7 @@ export function RegionDetailPanel({
       </section>
 
       <section className="panel__section">
-        <h3>Variable trajectory</h3>
+        <h3>Forecast vs what actually happened</h3>
         {available.length ? (
           <>
             <div className="tabs" role="tablist">
@@ -100,13 +100,19 @@ export function RegionDetailPanel({
               <>
                 <VariableTrajectoryChart series={current} />
                 <dl className="metrics">
-                  <div><dt>MAE</dt><dd>{fmt(current.model_mae)} {current.unit ?? ""}</dd></div>
-                  <div><dt>RMSE</dt><dd>{fmt(current.model_rmse)}</dd></div>
-                  <div><dt>R²</dt><dd>{fmt(current.model_r2)}</dd></div>
+                  <div><dt>Average error (MAE)</dt><dd>{fmt(current.model_mae)} {current.unit ?? ""}</dd></div>
+                  <div><dt>Typical error (RMSE)</dt><dd>{fmt(current.model_rmse)}</dd></div>
+                  <div><dt>Variance explained (R²)</dt><dd>{fmt(current.model_r2)}</dd></div>
                   <div><dt>Bust threshold</dt><dd>{fmt(current.bust_threshold)} {current.unit ?? ""}</dd></div>
                 </dl>
                 <p className="muted small">
-                  Model metrics from the <b>{current.metrics_split ?? "unknown"}</b> split of the current run.
+                  Average error is how far this variable&apos;s forecast lands from reality on a
+                  normal day{current.unit ? <>, in {current.unit}</> : null}. It counts as a bust
+                  once the error passes the threshold.
+                </p>
+                <p className="muted small">
+                  Measured on forecasts this model never trained on (the{" "}
+                  <b>{current.metrics_split ?? "unknown"}</b> split of the current run).
                 </p>
               </>
             ) : null}
@@ -116,20 +122,22 @@ export function RegionDetailPanel({
         )}
         {unavailable.length ? (
           <p className="muted small">
-            Not modelled (too few paired rows): {unavailable.map((v) => v.variable).join(", ")}
+            Not modelled (too few matched forecast–observation pairs):{" "}
+            {unavailable.map((v) => v.variable).join(", ")}
           </p>
         ) : null}
       </section>
 
       <section className="panel__section">
-        <h3>Why — top factors</h3>
+        <h3>Why this region — what drove the prediction</h3>
         <ShapFactorsList factors={data.top_factors} method={data.top_factors_method} />
       </section>
 
       <section className="panel__section">
-        <h3>Analog cases</h3>
+        <h3>Similar past cases</h3>
         <p className="muted small">
-          Similarity search is not implemented, so no analogs are shown rather than invented ones.
+          Searching for similar past forecasts is not built yet, so nothing is shown here
+          rather than an invented match.
         </p>
       </section>
     </aside>

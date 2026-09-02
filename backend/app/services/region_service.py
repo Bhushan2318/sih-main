@@ -55,11 +55,11 @@ def _last_trained_at():
 def _risk_band_definitions(state) -> dict:
     cuts = state.thresholds.risk_band_cuts
     return {
-        "low": f"P(bust) < {cuts['medium']:.3f}",
-        "medium": f"{cuts['medium']:.3f} <= P(bust) < {cuts['high']:.3f}",
-        "high": f"P(bust) >= {cuts['high']:.3f}",
-        "basis": "percentile bands of the classifier's predicted probabilities on the "
-                 "validation split of the current training run",
+        "low": f"bust risk below {cuts['medium'] * 100:.0f}%",
+        "medium": f"bust risk {cuts['medium'] * 100:.0f}% to {cuts['high'] * 100:.0f}%",
+        "high": f"bust risk {cuts['high'] * 100:.0f}% or above",
+        "basis": "Band edges are set from how this model's own predictions were spread "
+                 "on its validation data, not chosen by hand.",
     }
 
 

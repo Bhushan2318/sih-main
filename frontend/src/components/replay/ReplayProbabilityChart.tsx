@@ -38,7 +38,7 @@ export function ReplayProbabilityChart({
   return (
     <div className="replay-focus">
       <div className="replay-focus__head">
-        <strong>Predicted P(bust)</strong>
+        <strong>Predicted bust risk</strong>
         <span className="muted small">what the model said, before the outcome</span>
       </div>
       <ResponsiveContainer width="100%" height={132}>
@@ -65,7 +65,7 @@ export function ReplayProbabilityChart({
               0/1, would put a binary on a probability scale and read as a second
               forecast. A filled marker is a lead day where the observed error really did
               exceed this variable's bust threshold. */}
-          <Line type="monotone" dataKey="p" name="P(bust)" stroke={CHART.forecast}
+          <Line type="monotone" dataKey="p" name="Bust risk" stroke={CHART.forecast}
             strokeWidth={2} activeDot={{ r: 5 }} connectNulls={false}
             dot={(props: any) => {
               const { cx, cy, payload, key } = props;

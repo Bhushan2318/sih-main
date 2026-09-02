@@ -21,12 +21,13 @@ one. It answers a different question, the one a duty forecaster actually has at 
 A *bust* is a forecast whose error lands in the tail of that variable's own historical
 error distribution — the 90th percentile. Sanket predicts the probability of that,
 per region, per variable, per lead day out to Day 10, and attributes each prediction to
-the features that drove it via SHAP.
+the inputs that drove it, using SHAP.
 
-Correction and confidence are different services. NCMRWF already runs quantile mapping
-and EMOS, and busts still happen, because correction removes *systematic* error while
-busts are *flow-dependent*. Knowing when to distrust a forecast is what decides whether a
-warning goes out.
+Correction and confidence are different services. NCMRWF already corrects its forecasts
+statistically, and busts still happen: correction removes the errors a model makes
+*consistently*, while a bust comes from the particular weather pattern of that day, which
+is not consistent and so is not corrected away. Knowing when to distrust a forecast is
+what decides whether a warning goes out.
 
 ## How well it works
 
