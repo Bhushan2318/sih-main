@@ -1,5 +1,6 @@
 import {
-  CartesianGrid, Legend, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis,
+  Area, CartesianGrid, ComposedChart, Legend, Line, ReferenceLine, ResponsiveContainer,
+  Tooltip, XAxis, YAxis,
 } from "recharts";
 import type { ReplayFocusSeries } from "../../api/types";
 import { CHART } from "../../theme";
@@ -16,11 +17,20 @@ export function ReplayFocusChart({
   focus: ReplayFocusSeries;
   currentLead: number;
 }) {
+  // The band is the bust criterion drawn in the units already on screen: a forecast
+  // inside it is within tolerance, one outside it is a bust. Without it, two lines far
+  // apart tell a reader nothing about whether "far" is far enough to matter - which is
+  // the only question this chart exists to answer.
+  const thr = focus.bust_threshold;
   const data = focus.points.map((p) => ({
     lead: p.lead_time_days,
     forecast: p.predicted_value,
     observed: p.observed_value,
     spread: p.ensemble_spread,
+    band:
+      thr != null && p.observed_value != null
+        ? [p.observed_value - thr, p.observed_value + thr]
+        : null,
   }));
   const anyObserved = data.some((d) => d.observed != null);
 
@@ -34,7 +44,7 @@ export function ReplayFocusChart({
         </span>
       </div>
       <ResponsiveContainer width="100%" height={220}>
-        <LineChart data={data} margin={{ top: 20, right: 14, bottom: 4, left: -6 }}>
+        <ComposedChart data={data} margin={{ top: 20, right: 14, bottom: 4, left: -6 }}>
           <CartesianGrid strokeDasharray="3 3" />
           <XAxis dataKey="lead" tickFormatter={(d) => `D${d}`} />
           <YAxis width={58} tickFormatter={(v: number) => fmt(v)} />
@@ -45,13 +55,18 @@ export function ReplayFocusChart({
           <Legend />
           <ReferenceLine x={currentLead} stroke={CHART.marker} strokeWidth={2}
             label={{ value: `Day ${currentLead}`, position: "top", fontSize: 10, fill: CHART.marker }} />
+          {thr != null ? (
+            <Area type="monotone" dataKey="band" name={`Within tolerance (±${fmt(thr)})`}
+              stroke="none" fill={CHART.observed} fillOpacity={0.07} connectNulls={false}
+              activeDot={false} isAnimationActive={false} legendType="rect" />
+          ) : null}
           <Line type="monotone" dataKey="forecast" name="Forecast (ens. mean)"
             stroke={CHART.forecast} strokeWidth={2} dot={{ r: 2 }} />
           {anyObserved ? (
             <Line type="monotone" dataKey="observed" name="Observed"
               stroke={CHART.observed} strokeWidth={2} strokeDasharray="6 4" dot={{ r: 2 }} connectNulls={false} />
           ) : null}
-        </LineChart>
+        </ComposedChart>
       </ResponsiveContainer>
       {!anyObserved ? (
         <p className="muted small">This cycle has not verified, so no observed values are drawn.</p>
