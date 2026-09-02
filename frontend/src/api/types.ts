@@ -170,6 +170,17 @@ export interface ModelStatusResponse {
     by_variable?: Record<string, Record<string, number>>;
     grain_counts?: Record<string, number>;
   };
+  // What the MODEL trained on, from the run's manifest. Deliberately separate from
+  // data_volume above, which describes only this server's copy of the store.
+  training_data?: {
+    cycles?: number | null;
+    train_cycles?: number | null;
+    val_cycles?: number | null;
+    held_out_cycles?: number | null;
+    canonical_rows?: number | null;
+    paired_rows?: number | null;
+    first_train_date?: string | null;
+  };
   modelled_variables: string[];
   skipped_variables: Record<string, string>;
   validation_metrics: {
