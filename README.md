@@ -223,7 +223,7 @@ With the backend venv activated:
 
 | Task | Command |
 |---|---|
-| Run the test suite | `python -m pytest -q` |
+| Run the test suite | `pip install -r requirements-dev.txt` once, then `python -m pytest -q` |
 | Full model retrain | `python -m app.ml.train_pipeline` |
 | Rebuild the sample data | `python scripts/fetch_gefs_reforecast_sample.py` then `python scripts/fetch_era5_observations.py` (needs `requirements-live.txt`) |
 | Ingest a file from the CLI | `python -m app.ingestion.pipeline --file <path> --confirm-all` |
