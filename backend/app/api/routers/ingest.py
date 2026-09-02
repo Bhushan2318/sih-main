@@ -33,6 +33,27 @@ def ingest_runs(limit: int = Query(25, ge=1, le=200)) -> dict:
     return {"runs": orchestrator.recent_runs(limit)}
 
 
+def _require_live_ingest() -> None:
+    """Refuse when this deployment does not do its own ingestion.
+
+    The setting was previously only *reported*. The scheduler declined to start
+    (live/scheduler.py:57), but a manual POST reached the same orchestrator jobs anyway -
+    so "live ingestion is off" described the background timer, not the API. These routes
+    write to the canonical store, which changes store_signature() and puts the shipped
+    summary.json out of step with the store beside it.
+
+    Checked at the top of each handler, before either branch: `wait=true` runs the job
+    inline, so a guard placed after that check would let the synchronous path through.
+    """
+    if not settings.live_ingest_enabled:
+        raise HTTPException(
+            409,
+            "Live ingestion is disabled on this deployment. Forecast cycles and "
+            "observations are pulled in CI and shipped as a release artifact; this "
+            "instance only serves them. Set LIVE_INGEST_ENABLED=true to enable pulling.",
+        )
+
+
 @router.post("/run-cycle")
 def run_cycle(
     background: BackgroundTasks,
@@ -42,6 +63,7 @@ def run_cycle(
     wait: bool = Query(False, description="run inline and return the result instead of scheduling it"),
 ) -> dict:
     """Pull one operational GEFS cycle now ("Refresh now")."""
+    _require_live_ingest()
     if cycle_hour is not None and init_date is None:
         raise HTTPException(400, "cycle_hour requires init_date")
 
@@ -64,6 +86,7 @@ def refresh_observations(
     wait: bool = Query(False),
 ) -> dict:
     """Pull observations for one verification tier now."""
+    _require_live_ingest()
     if wait:
         return orchestrator.run_observation_refresh(tier, days_back, trigger="manual")
     background.add_task(orchestrator.run_observation_refresh, tier, days_back, "manual")
@@ -81,6 +104,7 @@ def backfill(
     Deliberately long-running - each cycle is a few minutes - so it always runs in the
     background and reports through /api/ingest/status.
     """
+    _require_live_ingest()
     threading.Thread(
         target=orchestrator.backfill_cycles, args=(cycles, stride_hours),
         name="live-backfill", daemon=True,
