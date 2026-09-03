@@ -144,7 +144,10 @@ export function ModelPage() {
                 </dl>
                 <dl className="metrics">
                   <div className="metrics__wide">
-                    <dt>Valid-date range</dt>
+                    {/* Labelled with its scope. Read bare, this range says the model only
+                        knows 2016 onward - understating the evidence base by two decades,
+                        since training reaches back to first_train_date. */}
+                    <dt>Valid-date range on this server</dt>
                     <dd className="mono small">
                       {vol.valid_date_min ?? "—"} → {vol.valid_date_max ?? "—"}
                     </dd>
@@ -157,6 +160,11 @@ export function ModelPage() {
                   The serving copy carries the cycles needed to score today and to replay
                   recent ones — not the full training archive, which lives where the model
                   is trained.
+                  {td.first_train_date ? (
+                    <> The model itself was trained on data going back to{" "}
+                      <b>{String(td.first_train_date).slice(0, 10)}</b>; this range is only
+                      what this 512&nbsp;MB box carries.</>
+                  ) : null}
                 </p>
               </div>
               <ul className="taglist">

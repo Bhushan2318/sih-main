@@ -233,7 +233,32 @@ export function ReplayView({ topology }: { topology: Topology | null }) {
                 })}
               />
             </>
-          ) : null}
+          ) : (
+            /* No focus series: _focus_for_region filters on observed_value.notna(), so a
+               cycle that has not verified yet yields none and BOTH charts rendered as
+               null - blank space with no explanation, which reads as a broken page.
+               Say why instead.
+
+               Deliberately not falling back to drawing the probability chart alone: its
+               markers encode "observed bust" vs "threshold not exceeded", and on an
+               unverified cycle that would assert a negative outcome where the truth is
+               simply not known yet. */
+            <div className="replay-focus">
+              <div className="replay-focus__head">
+                <strong>No forecast-vs-observed chart for this run</strong>
+              </div>
+              <p className="muted small">
+                This cycle is recent enough that the days it forecasts have not all
+                happened yet, so there is nothing to compare its forecast against. The map,
+                the risk numbers and the narration above are all scored and real — only the
+                verification chart needs observations that do not exist yet.
+              </p>
+              <p className="muted small">
+                Pick a cycle marked <b>outcome known</b> in the dropdown to see the model
+                checked against what actually happened.
+              </p>
+            </div>
+          )}
         </div>
       </div>
 

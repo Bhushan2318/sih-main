@@ -38,9 +38,15 @@ export function ReplayFocusChart({
     <div className="replay-focus">
       <div className="replay-focus__head">
         <strong>{focus.region_name ?? focus.region_id}</strong>
+        {/* The worst-list above shows each region's dominant variable FOR THAT LEAD DAY;
+            this chart plots the one variable that dominated the WHOLE cycle. They usually
+            agree and occasionally do not - on 2019-10-16 Ladakh reads pressure on Day 1
+            and temperature on Days 2-10 - so the scope is stated rather than left to be
+            inferred from two labels sitting side by side. */}
         <span className="muted small">
           {focus.variable.replace(/_/g, " ")}
           {focus.unit ? ` · ${focus.unit}` : ""}
+          <span className="muted"> · biggest driver across this whole run</span>
         </span>
       </div>
       <ResponsiveContainer width="100%" height={220}>

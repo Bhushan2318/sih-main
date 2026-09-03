@@ -40,8 +40,9 @@ climatology, lead-day, ensemble-spread — scored on the same held-out rows, bec
 
 What is stable enough to write down is the shape of the evidence:
 
-- The model is scored only on **forecast cycles it never trained on**, spanning a decade
-  of the GEFS reforecast archive rather than a single season.
+- The model is scored only on **forecast cycles it never trained on**, spanning two
+  decades of the GEFS reforecast archive rather than a single season — twenty independent
+  monsoons, not one.
 - A lead-day-only baseline has **no skill** on this task, because a bust is defined
   against each variable's own error percentile rather than an absolute error — so the
   label does not simply grow with lead time. The measured lead/bust correlation is
@@ -75,10 +76,10 @@ What is stable enough to write down is the shape of the evidence:
 
 ## What it does not do
 
-One year of dense data plus a sampled multi-year reforecast archive — not a continuous
-record. 35 city points, not full regional coverage. 5 of 31 GEFS members, so spread
-features are a noisy estimate of true ensemble spread. ERA5 precipitation is weak over
-India relative to IMD gauge-based products, and rainfall carries that caveat. Bust is
+A sampled multi-decade reforecast archive plus live cycles since deployment — not a
+continuous record. 35 city points, not full regional coverage. 5 of 31 GEFS members, so
+spread features are a noisy estimate of true ensemble spread. ERA5 precipitation is weak
+over India relative to IMD gauge-based products, and rainfall carries that caveat. Bust is
 defined on surface-variable error, not the synoptic Z500 criterion of Rodwell et al.
 (2013) — a deliberate choice, because surface error is what reaches agriculture and
 disaster response.

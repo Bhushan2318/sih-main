@@ -57,7 +57,7 @@ project exists to avoid; this README had exactly that problem, claiming ROC-AUC 
 a 17-cycle run long after the deployed model was trained on ten years.
 
 What is stable enough to state: the classifier is scored only on forecast cycles it never
-trained on, spanning a decade of the GEFSv12 reforecast archive, and it is compared
+trained on, spanning two decades of the GEFSv12 reforecast archive, and it is compared
 against those baselines on identical rows rather than reported alone.
 
 > Regressor errors dropped ~17% on 2026-08-29 when a one-day forecast/observation
