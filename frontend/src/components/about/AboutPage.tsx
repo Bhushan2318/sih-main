@@ -85,7 +85,7 @@ export function AboutPage({ onReplay }: { onReplay: () => void }) {
 
         <section className="card">
           <header className="card__head"><h3>How well it works</h3></header>
-          <dl className="metrics metrics--compact">
+          <dl className="metrics metrics--compact metrics--hero">
             <div><dt>ROC-AUC</dt><dd>{n3(clf.roc_auc)}</dd></div>
             <div><dt>F1</dt><dd>{n3(clf.f1)}</dd></div>
             <div><dt>Brier</dt><dd>{n3(clf.brier)}</dd></div>
@@ -102,8 +102,8 @@ export function AboutPage({ onReplay }: { onReplay: () => void }) {
           </p>
           <p className="muted small">
             Measured on the <b>{String(clf.split ?? "held-out")}</b> split — forecast
-            cycles the model never trained on
-            {typeof td.held_out_cycles === "number" ? <>, {td.held_out_cycles} of them</> : null}
+            cycles the model never trained on{" "}
+            {typeof td.held_out_cycles === "number" ? <>— {td.held_out_cycles} of them</> : null}
             {typeof td.cycles === "number" ? <> out of {td.cycles} in total</> : null}.
           </p>
           <p className="muted small">

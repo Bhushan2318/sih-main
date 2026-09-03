@@ -573,7 +573,11 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
    a tab switch reads as moving through one product rather than into a settings screen. */
 .page { padding: 20px 1.3rem 2.5rem; max-width: 1100px; margin: 0 auto; }
 .page--wide { max-width: none; }
-.page--split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; align-items: start; }
+/* stretch, not start: the two cards in a row rarely have equal content, and hugging
+   left a tall grey void under the shorter one (the About tab's "question it answers"
+   card against the metrics card beside it). Stretching makes the pair share a row
+   height, so the surface is continuous. Children lay out from the top regardless. */
+.page--split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; align-items: stretch; }
 @media (max-width: 860px) { .page--split { grid-template-columns: minmax(0, 1fr); } }
 .page > .card, .page > .panel { margin-bottom: 14px; }
 .page--split > .card, .page--split > .panel { margin-bottom: 0; }
@@ -610,6 +614,12 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 .dtable tbody tr:last-child td { border-bottom: 0; }
 .dtable__num { text-align: right; font-variant-numeric: tabular-nums; }
 .dtable__strong { font-weight: 600; color: var(--ink); }
+/* The model's own row in the baseline ladder. The class was already emitted by
+   AboutPage; nothing matched it, so the row that carries the argument looked identical
+   to the baselines it beats. Tinted ground + a blue rule, not colour alone. */
+.dtable tr.is-active { background: var(--blue-wash); }
+.dtable tr.is-active td { color: var(--ink); font-weight: 600; border-top: 1px solid var(--blue); border-bottom: 1px solid var(--blue); }
+.dtable tr.is-active td:first-child { box-shadow: inset 3px 0 0 var(--blue); }
 .dtable__row { cursor: pointer; transition: background 0.13s; }
 .dtable__row:hover { background: var(--card-2); }
 .dtable__row:focus-visible { outline: 2px solid var(--blue); outline-offset: -2px; }
@@ -801,6 +811,15 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
   margin: 0; font-family: var(--f-m); font-variant-numeric: tabular-nums;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+/* The About tab's four headline metrics ARE the proof the page exists to present, and
+   they were rendering at the same size as every incidental figure on the site. Display
+   weight here, borrowed from .kpi__value so the two surfaces read as one system. */
+.metrics--hero { gap: 0.5rem 1.1rem; margin: 0.35rem 0 0.9rem; }
+.metrics--hero dd {
+  font-family: var(--f-d); font-variation-settings: "wdth" 92, "wght" 700;
+  font-size: clamp(22px, 2vw, 30px); letter-spacing: -0.02em; line-height: 1.1;
+}
+.metrics--hero dt { font-size: 9.5px; margin-bottom: 2px; }
 
 .factors { list-style: none; margin: 0.5rem 0; padding: 0; }
 .factors li {
@@ -847,6 +866,11 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 .dropzone--over { border-color: var(--blue); background: var(--blue-wash); color: var(--blue); }
 .upload-result { margin-top: 0.6rem; }
 .notes { margin: 0.35rem 0; padding-left: 1.1rem; color: var(--ink-3); font-size: 0.76rem; }
+/* Separated items: these two lists carry the trust argument and the limitations, and run
+   3-5 lines each. Undifferentiated they read as one grey block and get skipped. */
+.notes li + li { margin-top: 0.6rem; padding-top: 0.6rem; border-top: 1px solid var(--rule); }
+.notes li b, .notes li strong { color: var(--ink); }
+.notes::marker, .notes li::marker { color: var(--ink-3); }
 
 /* ───────────────────────────────────────────────────────────────────── modal */
 .modal-backdrop {
