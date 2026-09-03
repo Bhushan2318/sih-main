@@ -217,6 +217,12 @@ export function AboutPage({ onReplay }: { onReplay: () => void }) {
               ones.
             </li>
             <li>
+              <b>It does not send alerts to anyone.</b> Warnings appear in this interface
+              and nowhere else — there is no SMS, email or push delivery, and nothing is
+              dispatched to a duty desk. This is a decision-support view a forecaster
+              reads, not a warning system that acts on its own.
+            </li>
+            <li>
               A bust is defined on <b>surface-variable error</b>, not the synoptic Z500
               criterion of Rodwell et al. (2013). That is a deliberate choice: surface
               error is what reaches agriculture and disaster response, whereas Z500 is

@@ -240,8 +240,13 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 
 /* Every hero size is capped against BOTH vw and vh: on a wide-but-short laptop the
    headline has to give way vertically or it pushes the chart off the opening screen. */
+/* Top-aligned, not centred. The panel beside this starts at the top of the grid row, so
+   centring the text left the eyebrow sitting 63px below the chart's tab row — measured —
+   and the two columns read as unrelated blocks rather than one composition. The padding
+   drops the eyebrow onto the tab row's optical line rather than the panel's border. */
 .hero__lead {
-  min-width: 0; display: flex; flex-direction: column; justify-content: center;
+  min-width: 0; display: flex; flex-direction: column; justify-content: space-between;
+  padding-top: clamp(10px, 2.4vh, 26px); padding-bottom: clamp(4px, 1vh, 12px);
   animation: sk-rise 0.6s cubic-bezier(0.2, 0.7, 0.25, 1) both;
 }
 .hero__kick { display: flex; align-items: center; gap: 14px; margin-bottom: clamp(12px, 1.7vh, 20px); }
@@ -277,7 +282,13 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
   text-transform: uppercase; color: var(--ink-3);
 }
 
-.hero__gauge { display: flex; align-items: center; gap: clamp(22px, 2vw, 34px); flex-wrap: wrap; }
+/* `margin-top: auto` sinks the gauge to the foot of the column, so the left side now
+   aligns with the panel at BOTH ends: eyebrow against the tab row, gauge against the
+   chart's key and provenance line. Without it the column is top-heavy and leaves ~180px
+   of dead white beneath the ring. */
+.hero__gauge {
+  display: flex; align-items: center; gap: clamp(22px, 2vw, 34px); flex-wrap: wrap;
+}
 .hero__ring {
   position: relative; flex: none;
   width: clamp(108px, min(8vw, 15.5vh), 156px); height: clamp(108px, min(8vw, 15.5vh), 156px);
@@ -577,7 +588,10 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
    left a tall grey void under the shorter one (the About tab's "question it answers"
    card against the metrics card beside it). Stretching makes the pair share a row
    height, so the surface is continuous. Children lay out from the top regardless. */
-.page--split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; align-items: stretch; }
+/* `start`, not `stretch`. Stretch forced both cards to the taller one's height, and on
+   a wide screen the shorter card carried ~500px of empty white inside its border. Cards
+   now end where their content ends. */
+.page--split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; align-items: start; }
 @media (max-width: 860px) { .page--split { grid-template-columns: minmax(0, 1fr); } }
 .page > .card, .page > .panel { margin-bottom: 14px; }
 .page--split > .card, .page--split > .panel { margin-bottom: 0; }
