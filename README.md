@@ -137,10 +137,128 @@ unit instead of city points; IMDAA and IMD gauge-based gridded rainfall as obser
 instead of ERA5 alone; and the synoptic Z500 bust definition reported alongside the
 surface-error one.
 
-## Layout
+## System architecture
 
-- `backend/` — FastAPI app, ingestion/schema-mapping, XGBoost training + inference, SQLite + parquet storage.
-- `frontend/` — React + Vite + TypeScript dashboard.
+Raw forecasts and observations enter at the top left and run left to right into the
+canonical store. There the path splits: one branch trains, the other serves, and they
+never swap roles.
+
+```
+   SOURCES                    INGEST                      STORE
+┌──────────────────┐    ┌────────────────────┐    ┌─────────────────────┐
+│ NOAA GEFS        │    │ format-agnostic    │    │ canonical store     │
+│  · NOMADS        │    │ parsers            │    │                     │
+│    (India subset,│    │ SchemaMapper       │    │ hive-partitioned    │
+│     last ~3 days)├───►│ geo resolver       ├───►│ Parquet             │
+│  · AWS S3        │    │ (point-in-polygon) │    │ +                   │
+│    (byte-ranged) │    │ completeness guard │    │ SQLite lineage      │
+│                  │    │  → refuse, never   │    │                     │
+│ ERA5             │    │    patch           │    │                     │
+│  provisional     │    │                    │    │                     │
+│  → final         │    │                    │    │                     │
+└──────────────────┘    └────────────────────┘    └──────────┬──────────┘
+                                                             │
+                              ┌──────────────────────────────┴────┐
+                              ▼                                   ▼
+                  TRAIN — GitHub Actions              SERVE — Render free
+                  ┌───────────────────────┐           ┌──────────────────────┐
+                  │ 16 GB · never serves  │           │ 512 MB · never trains│
+                  │                       │           │                      │
+                  │ error regressors      │  model    │ FastAPI              │
+                  │ bust classifier       │  release  │ scored-cycle cache   │
+                  │ thresholds · SHAP     ├──────────►│ built SPA, one origin│
+                  │ baseline ladder       │  artifact │ /api/*   /ws         │
+                  └───────────────────────┘           └──────────┬───────────┘
+                                                                 │
+                                                                 ▼
+                                                        React dashboard
+                                                        map · detail · alerts
+                                                        model · replay · about
+```
+
+**The split down the middle is the load-bearing decision.** Training peaks around 2.3 GB;
+the serving box has 512 MB and is *killed* rather than throttled when it exceeds that. So
+training runs on a CI runner that never answers a request, and the serving process never
+trains. The model therefore carries the full archive while the box carries only what it
+must serve — and a checksum step fails the run if training ever touches the serving store.
+
+The CI/CD half of this — what triggers a retrain, what gets packaged, how the deploy
+fires — is drawn separately under [Deploying](#deploying-github-actions--render-free).
+
+## Monorepo architecture
+
+Two deployables in one repo, plus the workflows that join them. There is no shared
+package and no build orchestrator: the frontend compiles to static files that the backend
+image copies in, which is why one process can serve both from a single origin.
+
+```
+sih-main/
+├── backend/                  FastAPI service — API, ML, ingestion, storage
+│   ├── app/
+│   │   ├── api/              routers + Pydantic response schemas (the contract)
+│   │   ├── db/               SQLAlchemy models, session, CRUD — lineage and metadata
+│   │   ├── features/         feature engineering, pivot to forecast-event grain
+│   │   ├── ingestion/        parsers, SchemaMapper, canonical schema, pipeline
+│   │   ├── live/             NOAA GEFS feed, observations, scheduler, orchestrator
+│   │   ├── ml/               regressors, classifier, thresholds, SHAP, registry, training
+│   │   ├── realtime/         WebSocket broadcaster + typed retrain events
+│   │   ├── services/         read-side logic behind each router
+│   │   ├── storage/          hive-partitioned Parquet store
+│   │   ├── utils/            geo resolution, India state codes
+│   │   ├── config.py         env-driven settings (pydantic-settings)
+│   │   └── main.py           app assembly, lifespan, static SPA mount
+│   ├── data/                 samples, canonical store, trained runs, geo (gitignored)
+│   ├── scripts/              data fetch, backfill, packaging, deploy refresh
+│   └── tests/                pytest suite — runs against the real sample files
+│
+├── frontend/                 React + Vite + TypeScript dashboard
+│   └── src/
+│       ├── api/              typed fetch clients, mirroring backend/app/api/schemas.py
+│       ├── components/       about · alerts · common · dashboard · detail
+│       │                     map · model · replay · upload
+│       ├── hooks/            TanStack Query hooks, live socket, media queries
+│       ├── pages/            DashboardPage — the tab shell
+│       ├── store/            zustand store for live events
+│       ├── styles.css        the entire design system, hand-written
+│       └── theme.ts          chart palette, mirroring the CSS tokens
+│
+├── docs/                     plan, audit, known issues, one-pager, analysis outputs
+├── .github/workflows/        refresh · backfill · memory measurement · warm-on-push
+├── Dockerfile                one image: builds the SPA, pulls the model, serves both
+└── render.yaml               service definition, so the host is not hand-wired
+```
+
+Two conventions worth knowing before editing:
+
+- **`frontend/src/api/types.ts` mirrors `backend/app/api/schemas.py` by hand.** There is no
+  codegen step. Change a response shape and both files move together.
+- **`theme.ts` mirrors the CSS custom properties in `styles.css`.** Recharts measures and
+  interpolates real colour strings, so it cannot read `var(--blue)` — the duplication is
+  deliberate and commented at both ends.
+
+## Technology stack
+
+| Layer | Choice | Why this one |
+|---|---|---|
+| API | **FastAPI** + **uvicorn** | Typed request/response models double as the OpenAPI contract |
+| Validation | **Pydantic v2**, **pydantic-settings** | Response shapes are schemas, so an empty state cannot silently become a placeholder |
+| ML | **XGBoost**, **scikit-learn**, **SHAP** | Gradient boosting on tabular features; SHAP is precomputed at train time, never on the request path |
+| Data | **pandas**, **NumPy**, **PyArrow** | Arrow column projection is what keeps scoring inside the memory budget |
+| Storage | **Parquet** (hive-partitioned) + **SQLite** via **SQLAlchemy 2** | Columnar for analytical reads; SQLite holds lineage and run history, not measurements |
+| Geo | **Shapely** (STRtree), **d3-geo**, **topojson-client** | Point-in-polygon region resolution server-side; TopoJSON keeps the map payload small |
+| Schema mapping | **RapidFuzz** | Confidence-scored column matching, so arbitrary CSV/XLSX uploads map to the canonical schema |
+| Realtime | **websockets** | Typed retrain events; the client falls back to polling where the host cannot proxy them |
+| UI | **React 18**, **TypeScript 5.5**, **Vite 5** | — |
+| UI state | **TanStack Query 5**, **Zustand 4** | Query owns server state and cache invalidation; Zustand holds only live-socket events |
+| Charts | **Recharts 2** | — |
+| Styling | **Hand-written CSS**, one `styles.css` | No framework. The design system is ~40 KB of tokens and components, versioned as source |
+| Tests | **pytest**, **httpx** | 230+ tests against real sample files — no fixtures that fabricate measurements |
+| Live feed *(optional)* | **eccodes** / **ecmwflibs**, **cfgrib**, **xarray** | GRIB2 decoding, kept out of `requirements.txt` so the 512 MB image never installs it |
+| Runtime | **Python 3.11 / 3.12** (3.9 works, **not 3.13**), **Node 18+** | One pinned dependency has no 3.13 wheel |
+| Infra | **Docker**, **Render** free tier, **GitHub Actions**, **GitHub Releases** | Releases act as the model artifact store, so no object storage to pay for |
+
+Every core dependency installs as a **prebuilt wheel** on Windows, macOS and Linux — a
+plain `pip install -r requirements.txt` never invokes a compiler. Total hosting cost: **$0**.
 
 ## Backend setup
 
