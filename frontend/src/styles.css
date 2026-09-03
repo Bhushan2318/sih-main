@@ -942,6 +942,33 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 .viewtab:hover { background: var(--card); }
 .viewtab.is-active { background: var(--ink); color: #fff; }
 
+/* ─────────────────────────────────────────────── compact topbar, narrow screens only
+   Measured before: 209px of a 390px phone (246px at 360px) - a quarter of the viewport
+   spent on navigation, because the five tabs total 400px and wrap onto a second 44px
+   row. Desktop is untouched and still measures exactly 59px, which --topbar-h and both
+   calc(100vh - var(--topbar-h)) rules depend on.
+
+   The 44px touch-target floor is deliberately NOT lowered: it came from a real audit
+   (Apple 44pt, Android 48dp) and shrinking it would trade one usability problem for a
+   worse one. The height comes out of the wrap, the padding and the redundant subtitle
+   instead. */
+@media (max-width: 700px) {
+  /* the wordmark already says it; 129px of tagline is what a phone can least afford */
+  .brand__sub, .brand__div { display: none; }
+  /* full label costs 130px and is the sole reason the row wraps */
+  .viewtab__tail { display: none; }
+  .topbar__inner { gap: 8px 10px; padding: 0.4rem 0.9rem; min-height: 0; }
+  .viewtabs { gap: 2px; width: 100%; justify-content: space-between; }
+  .viewtab { padding: 6px 8px; }
+  /* The status pills wrapped onto a SECOND row at 360px (65px tall instead of 28px),
+     which is why a 360 phone paid 246px against 390's 209px. Tightened so the pair
+     always fits one line. Nothing is hidden - the cycle and the bust count are exactly
+     what makes the header honest about which forecast is loaded. */
+  .topbar__right { gap: 6px; }
+  .pill { font-size: 9.5px; letter-spacing: 0.06em; gap: 5px; padding: 3px 7px; }
+  .pill i { width: 6px; height: 6px; }
+}
+
 .app__body--replay { display: block; padding: 14px 1.3rem 2rem; }
 .replay { max-width: 1180px; margin: 0 auto; }
 .replay__intro { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.6rem 1.2rem; margin-bottom: 0.7rem; }

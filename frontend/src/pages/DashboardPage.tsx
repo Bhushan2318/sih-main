@@ -27,11 +27,15 @@ import { useMediaQuery } from "../hooks/useMediaQuery";
  */
 type View = "live" | "alerts" | "model" | "replay" | "about";
 
-const TABS: { id: View; label: string }[] = [
+/** `tail` is dropped on narrow screens. "Replay a real bust" is 130px of a 400px tab row
+ *  against a 390px viewport, so it alone forces the row to wrap onto a second 44px line -
+ *  and 44px is the touch-target floor we must not lower. Shortening it to "Replay" is what
+ *  gets all five tabs onto one row; desktop still reads the full label. */
+const TABS: { id: View; label: string; tail?: string }[] = [
   { id: "live", label: "Operations" },
   { id: "alerts", label: "Alerts" },
   { id: "model", label: "Model" },
-  { id: "replay", label: "Replay a real bust" },
+  { id: "replay", label: "Replay", tail: " a real bust" },
   // The project is pitched live, but the link is also opened unattended afterwards with
   // nobody there to explain it. The case for the project has to be reachable from the page.
   { id: "about", label: "About" },
@@ -126,6 +130,7 @@ export function DashboardPage() {
                 onClick={() => setView(t.id)}
               >
                 {t.label}
+                {t.tail ? <span className="viewtab__tail">{t.tail}</span> : null}
               </button>
             ))}
           </nav>
