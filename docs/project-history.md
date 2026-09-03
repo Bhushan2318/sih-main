@@ -47,72 +47,72 @@ setup had to work on a machine other than the one that wrote it.
 
 ## 30 Aug · The product takes shape
 
-`2d192a7` `913488a` `47fec08` `a9a2b9d` `e535a98`
+`0919035` `16a403d` `4e50aec` `737a2ac` `1226689`
 
 Guided replay arrives — scoring a real historical cycle with the deployed model — along
 with an all-lead-days regions endpoint and a rebuild onto 36 city points. The upload →
 confirm-mapping → retrain loop is hardened, and CI starts running the README's own setup
 steps on clean Windows and Linux, so the documented path is tested rather than assumed.
 
-`a9a2b9d` is the design pass: the project becomes **Sanket**, gains the Divergence visual
+`737a2ac` is the design pass: the project becomes **Sanket**, gains the Divergence visual
 system and a national hero view, and adopts the low/watch/bust vocabulary.
 
 ## 31 Aug · Making it survive a free tier
 
-`b01da43` … `8ea9a16`
+`0f0882d` … `72182d7`
 
 The layout settles into a full-viewport opening screen and four tabs. Then deployment,
 and the constraint that shaped everything after it: **512 MB, and the container is killed
 rather than throttled.**
 
-- `761b791` — serving memory **947 MB → 343 MB**, via Arrow predicate pushdown, 16,384-row
+- `f17587b` — serving memory **947 MB → 343 MB**, via Arrow predicate pushdown, 16,384-row
   groups, and not deduplicating where it wasn't needed. Scored output verified identical
   throughout.
-- `03a7368` — the store summary is computed during packaging and shipped, never on the box.
-- `4ffb7eb` — the data is fetched at container **start**, not at build. Docker caches a RUN
+- `1da4a04` — the store summary is computed during packaging and shipped, never on the box.
+- `7b19a3c` — the data is fetched at container **start**, not at build. Docker caches a RUN
   layer on its command string, so a data-only refresh would have redeployed stale data
   while reporting success.
-- `ba1012f` + `c26e978` — a cycle too incomplete to trust is **refused**, not published,
+- `03ffc5a` + `b778233` — a cycle too incomplete to trust is **refused**, not published,
   and gaps NOAA drops are refilled from S3 first. A short rainfall *sum* is roughly half
   the real accumulation, and rainfall drives most busts.
-- `8ea9a16` — the refresh becomes catch-up driven: each run ingests whichever recent cycles
+- `72182d7` — the refresh becomes catch-up driven: each run ingests whichever recent cycles
   the store lacks. This is what makes GitHub's 3–5 hour cron lateness harmless.
 
-Also that day, and easy to overlook: `b931842` put the whole thing on Render + GitHub
-Actions for **$0**; `cc05567` packed only the *current* model run into the release asset,
-after naive tarring grew it ~8 MB every six hours; `dcd219b` made the startup cache warm
+Also that day, and easy to overlook: `f0caad7` put the whole thing on Render + GitHub
+Actions for **$0**; `518241d` packed only the *current* model run into the release asset,
+after naive tarring grew it ~8 MB every six hours; `299ff50` made the startup cache warm
 optional and disabled it on Render, where warming in the background while a real request
-scored had been OOM-killing the box; `daf3dbb` made a cold start degrade instead of showing
-a parser error; `b6f0138` answered **HEAD** as well as GET on `/api/health`, because uptime
-monitors send HEAD and a 405 looks identical to an outage from outside; and `20370cd`
+scored had been OOM-killing the box; `2df5710` made a cold start degrade instead of showing
+a parser error; `65d9e42` answered **HEAD** as well as GET on `/api/health`, because uptime
+monitors send HEAD and a 405 looks identical to an outage from outside; and `5333593`
 deleted the side-panel components the new layout had superseded.
 
 ## 1 Sep · Mobile, honesty, and ten years of data
 
-`0243dc2` … `ea466f0`
+`2e27552` … `f7315c1`
 
-Cache warming after both kinds of deploy — `0243dc2` for scheduled publishes and `7c63895`
+Cache warming after both kinds of deploy — `2e27552` for scheduled publishes and `5043c53`
 for pushes, which bypass the refresh workflow entirely — so the first visitor is never the
 one who waits.
 
 The mobile pass, across ten viewports in two engines because judges open links on phones:
-`d2d0486` stopped the Model and Replay tabs scrolling sideways on **10 of 10** phone
+`c116f35` stopped the Model and Replay tabs scrolling sideways on **10 of 10** phone
 profiles (a single-column `1fr` track is `minmax(auto, 1fr)`, and that auto floor is
-min-content, so it cannot shrink); `32fd0be` raised tap targets from 19–32px to ≥44px,
+min-content, so it cannot shrink); `9f238db` raised tap targets from 19–32px to ≥44px,
 gated on `(hover: none) and (pointer: coarse)` so a mouse-driven laptop can never match;
-and `3b39502` let touch and keyboard users catch a ticker item that previously paused only
+and `34d963b` let touch and keyboard users catch a ticker item that previously paused only
 on hover.
 
-The backfill also needed CI work that is invisible in the result: `d9c08cb` installed the
-live extras in the gather job, `87e93ed` tested on a real runner whether ten years fit,
-and `bad8439` made that test survive being killed — since a kill was the answer it existed
+The backfill also needed CI work that is invisible in the result: `8792e80` installed the
+live extras in the gather job, `e410219` tested on a real runner whether ten years fit,
+and `de2ef71` made that test survive being killed — since a kill was the answer it existed
 to detect.
 
-`b3fadf2` measures how much the ground truth itself disagrees with an independent
+`cf58aff` measures how much the ground truth itself disagrees with an independent
 reanalysis — the beginning of the MERRA-2 comparison now committed under `docs/analysis/`.
 
-Then the backfill: `626214a` makes the reforecast fetch year-agnostic and pulls 2010–2019
-in parallel; `66201b0` and `ea466f0` make ten years of training data fit in memory — the
+Then the backfill: `ef4ced9` makes the reforecast fetch year-agnostic and pulls 2010–2019
+in parallel; `f3cf45b` and `f7315c1` make ten years of training data fit in memory — the
 training frame is built in chunks of cycles, cutting peak memory **5×** — *without
 changing a single result*.
 
@@ -121,54 +121,54 @@ changing a single result*.
 The longest day, and mostly not about features.
 
 **Proving the model is worth believing**
-- `da6f7c5` — tests for the three ways the pipeline could score itself unfairly: thresholds
+- `f3b805b` — tests for the three ways the pipeline could score itself unfairly: thresholds
   fitted on train only (asserted so it cannot pass vacuously), out-of-fold folds grouped by
   cycle, no observed day on both sides of the split. All three came back clean.
-- `2661573` + `9451ff9` — a baseline ladder answering "compared to what?", scored on the
+- `62531ff` + `1c3cdf0` — a baseline ladder answering "compared to what?", scored on the
   pipeline's own event frames and **published inside the model run**, so the comparison
   cannot describe a different model than the one answering requests.
-- `96c0ecf` — every refresh trains on the archive. Without this the next cron run would
+- `11db033` — every refresh trains on the archive. Without this the next cron run would
   have replaced a 170-cycle model with a 72-cycle one and looked healthy doing it.
 
 **Shipping ten years without spending memory**
-- `73656eb` — training provenance is read from the run manifest, because training and
+- `8bf1f89` — training provenance is read from the run manifest, because training and
   serving now deliberately see different data: CI trains on the full archive with 16 GB,
   the box carries only what it must serve.
-- `35649da` — compaction drops superseded rows (~15% of the store) on every publish, with
+- `d2d8b78` — compaction drops superseded rows (~15% of the store) on every publish, with
   scored output verified byte-identical across all 72 cycles.
-- `7b9aaa6` — the box refuses to summarise a large store rather than dying on it; measured
+- `b652f3f` — the box refuses to summarise a large store rather than dying on it; measured
   at 918 MB peak, which is an instant kill at 512.
-- `d3da3ce` — `/api/health` reports its own memory, because the platform paywalls metrics.
-- `4fd1294` — CI gains the ability to publish the backfill and to measure what it costs to
-  serve; `2c8a84b` and `bd25e3a` then fixed that harness twice, once to show its working
+- `506e4e6` — `/api/health` reports its own memory, because the platform paywalls metrics.
+- `fa2e77b` — CI gains the ability to publish the backfill and to measure what it costs to
+  serve; `4a6486f` and `5920d58` then fixed that harness twice, once to show its working
   and once because it was measuring a store no deployment would ever run.
-- `f6eed9a` — test-only dependencies stopped shipping into the 512 MB image, and a dead
+- `6db471b` — test-only dependencies stopped shipping into the 512 MB image, and a dead
   frontend dependency was removed.
 
 **Saying true things**
-- `e8da777` — the Model page stops implying continuous coverage.
-- `47b43a7` — a results file naming a superseded run is removed.
-- `0bea411` — the README stops *understating* the project: it advertised ROC-AUC 0.76 while
+- `ea83a46` — the Model page stops implying continuous coverage.
+- `4e647cf` — a results file naming a superseded run is removed.
+- `b090241` — the README stops *understating* the project: it advertised ROC-AUC 0.76 while
   the site served 0.843. Limitations written down.
-- `a64bc00` — the pipeline's own history is surfaced, **refusals included**.
-- `6186483` — a one-pager drafted as the item that could not be fixed late; later folded
+- `d274948` — the pipeline's own history is surfaced, **refusals included**.
+- `fa9ebd6` — a one-pager drafted as the item that could not be fixed late; later folded
   into the About tab so it could not drift, and reduced to what does not go stale.
-- `51d30d2` → the MERRA-2 figures become a placeholder naming its own source, then
-  `a52f4c5` and `4e7512d` commit the comparison and its 21,492 paired city-days, and the
+- `5643729` → the MERRA-2 figures become a placeholder naming its own source, then
+  `98be94e` and `501dbc5` commit the comparison and its 21,492 paired city-days, and the
   figures are filled in from data that is now in the repo.
 
 **Bugs found by looking, not by tests**
-- `14ea159` — hovering the replay chart blanked it. A range series hands the tooltip an
+- `cb58392` — hovering the replay chart blanked it. A range series hands the tooltip an
   array; the formatter called `.toFixed()` on it and the throw unmounted both charts.
-- `25ee5f9` — on a phone, the region detail panel painted over the chart below it. The
+- `33d4dc6` — on a phone, the region detail panel painted over the chart below it. The
   mobile override released `overflow` but not `max-height`, so the panel laid out short and
   rendered past it.
-- `2f23b47` — "Refresh now" was rendered on a deployment that cannot ingest.
+- `0330d43` — "Refresh now" was rendered on a deployment that cannot ingest.
 
 **Making the product explain itself**
-- `b8d6213` — an About tab, and an opening-screen cue pointing at Replay, which until then
+- `8114785` — an About tab, and an opening-screen cue pointing at Replay, which until then
   was the fourth tab with nothing suggesting it existed.
-- `f587c89` + `b217814` — Replay now verifies its own prediction: a tolerance band showing
+- `91e58d5` + `12ad0ce` — Replay now verifies its own prediction: a tolerance band showing
   what counts as a bust, and the actual outcome encoded on the probability markers.
 
 ---
