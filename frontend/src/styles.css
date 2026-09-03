@@ -593,6 +593,19 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
    now end where their content ends. */
 .page--split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; align-items: start; }
 @media (max-width: 860px) { .page--split { grid-template-columns: minmax(0, 1fr); } }
+/* The About page's two columns. Each stacks its own cards, so a short card is followed by
+   the next one rather than by a band of empty page. `align-items: start` keeps the columns
+   independent — stretching them would reintroduce exactly the gap this replaced. */
+.page--cols {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 14px; align-items: start;
+}
+.page__col { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.page__col > .card { margin-bottom: 0; }
+/* minmax(0, 1fr), never a bare 1fr — the auto floor is min-content and the page scrolls
+   sideways. Same trap as the hero and the map grid. */
+@media (max-width: 860px) { .page--cols { grid-template-columns: minmax(0, 1fr); } }
+
 .page > .card, .page > .panel { margin-bottom: 14px; }
 .page--split > .card, .page--split > .panel { margin-bottom: 0; }
 
