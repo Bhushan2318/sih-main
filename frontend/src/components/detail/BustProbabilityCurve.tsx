@@ -72,9 +72,14 @@ export function BustProbabilityCurve({ points, cuts }: {
             }
             labelFormatter={(l) => `Lead day ${l}`}
           />
+          {/* `tooltipType="none"` is load-bearing. This Area and the Line below share the
+              dataKey, and Recharts emits one tooltip row per series - so the fill silently
+              printed "mostly driven by: rainfall_mm : 25.88% (low)" a second time, identical
+              to the line's own row. The Area is ground, not a series anyone reads a value
+              off, so it opts out of the tooltip entirely. */}
           <Area
             type="monotone" dataKey="probability" stroke="none" fill="url(#bustFill)"
-            isAnimationActive={false} legendType="none"
+            isAnimationActive={false} legendType="none" tooltipType="none"
           />
           <Line
             type="monotone" dataKey="probability" stroke={CHART.observed} strokeWidth={2}

@@ -46,10 +46,8 @@ export function HeroDivergence({ data }: { data?: EnsembleDivergenceResponse }) 
             )}
           </h1>
 
-          {/* The by-lead-day trend is NOT restated here. The chart to the right plots
-              exactly that curve, and a sentence saying "falls from 0.49 at Day 2 to 0.47
-              at Day 10" beside a picture of the same thing is the same fact twice. This
-              paragraph says what the chart cannot: what the number is averaged over. */}
+          <p className="hero__sub">{data.national_note ?? data.headline_note}</p>
+
           <p className="hero__why">
             Averaged across every region scored in this forecast run — one run is all ten
             days issued at a single hour.
