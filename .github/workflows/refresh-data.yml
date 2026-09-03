@@ -47,7 +47,7 @@ on:
       backfill_years:
         description: "Reforecast years to train on, added to a throwaway copy of the store"
         type: string
-        default: "2010-2015"
+        default: "2000-2019"
 
 # Writing the release asset is the only write this needs.
 permissions:
@@ -67,7 +67,7 @@ env:
   # published artifact carries only the serving store, so a run that trained on whatever
   # it restored would quietly replace a model built from 170 cycles with one built from
   # 72, publish it, and look entirely healthy doing so.
-  BACKFILL_YEARS: ${{ inputs.backfill_years || '2010-2015' }}
+  BACKFILL_YEARS: ${{ inputs.backfill_years || '2000-2019' }}
   # This job is the one that legitimately trains: 16 GB runner, no requests to serve.
   # full_retrain refuses without it, so the 512 MB serving box cannot be made to train.
   ALLOW_LOCAL_RETRAIN: "true"
@@ -151,8 +151,8 @@ jobs:
             | shasum -a 256 > /tmp/store_before_archive
           cp -r data/canonical /tmp/train_store
           BEFORE=$(du -sh data/canonical | cut -f1)
-          gh release download backfill-data -p "backfill-2010-2019.tar.gz" -D /tmp --clobber
-          tar xzf /tmp/backfill-2010-2019.tar.gz -C data/samples
+          gh release download backfill-data -p "backfill-2000-2019.tar.gz" -D /tmp --clobber
+          tar xzf /tmp/backfill-2000-2019.tar.gz -C data/samples
           python -m scripts.ingest_backfill --years "$BACKFILL_YEARS"
           python -c "
           import pyarrow.dataset as ds, pandas as pd
