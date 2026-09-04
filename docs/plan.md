@@ -1,4 +1,4 @@
-d# Sanket — Implementation Plan
+# Sanket — Implementation Plan
 
 ## Context
 

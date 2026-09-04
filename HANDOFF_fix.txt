@@ -1,5 +1,0 @@
-# Fix these two lines in HANDOFF.md:
-# 1. "Deadline | **Fri 5 Sept 2026**" → "Deadline | **Fri 4 Sept 2026**"
-# 2. "Judges are sent the link and open it whenever they like. There is no
-#    presentation slot and no narrator." → DELETE this line. There IS a
-#    live pitch, in addition to the link being submitted.

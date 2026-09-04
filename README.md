@@ -1,14 +1,67 @@
-# Sanket
+<div align="center">
 
-AI-based forecast bust detection for medium-range (Day 1–10) weather forecasts across
-Indian regions — Smart India Hackathon 2026, Problem Statement 26079 (NCMRWF / Ministry
-of Earth Sciences).
+<img src="frontend/public/logo.png" alt="Sanket" height="72">
 
-FastAPI + XGBoost backend, React dashboard centered on a clickable India map. See
-[`docs/plan.md`](docs/plan.md) for the full architecture, canonical data schema, and
-phased build order.
+# Sanket · संकेत
 
-**Status**: Phases 1–6 complete, including the Phase 5 design pass.
+**Predicting where tomorrow's weather forecast will be wrong — and saying why.**
+
+Smart India Hackathon 2026 · Problem Statement 26079 · NCMRWF, Ministry of Earth Sciences
+
+[![Live demo](https://img.shields.io/badge/Live_demo-sanket--a0dd.onrender.com-2b4eff?style=for-the-badge)](https://sanket-a0dd.onrender.com)
+
+![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
+![XGBoost](https://img.shields.io/badge/XGBoost-EB5B25?logo=xgboost&logoColor=white)
+![React](https://img.shields.io/badge/React_18-20232a?logo=react&logoColor=61dafb)
+![TypeScript](https://img.shields.io/badge/TypeScript-3178c6?logo=typescript&logoColor=white)
+![Parquet](https://img.shields.io/badge/Apache_Parquet-50ABF1?logo=apacheparquet&logoColor=white)
+![Tests](https://img.shields.io/badge/tests-233_passing-00a882)
+![Hosting](https://img.shields.io/badge/hosting_cost-%240-00a882)
+
+</div>
+
+![Sanket — the national picture for the current forecast cycle](docs/images/hero.png)
+
+---
+
+## The question it answers
+
+Every operational centre already issues a forecast. Sanket does not try to make a better
+one. It answers the question a duty forecaster actually has at 6am:
+
+> **"How likely is the forecast I am holding to be badly wrong today?"**
+
+A **bust** is a forecast whose error lands in the tail of that variable's own historical
+error distribution — the 90th percentile, computed on training data only. Sanket predicts
+the probability of that, per region, per variable, out to Day 10, and attributes every
+prediction to the inputs that drove it.
+
+Correction and confidence are different services. NCMRWF already corrects its forecasts
+statistically, and busts still happen: correction removes the errors a model makes
+*consistently*, while a bust comes from the particular weather pattern of that day.
+Knowing when to distrust a forecast is what decides whether a warning goes out.
+
+## What it looks like
+
+**Operations** — the national map, the horizon rail, and the region behind them. Every
+figure is scored from the live model; nothing here is a placeholder.
+
+![Operations — national map with region detail](docs/images/operations.png)
+
+**Replay a real bust** — the most convincing view. It takes a real historical forecast
+cycle, scores it with the deployed model, and steps through its lead days, showing what
+the system would have told a forecaster that day, *before anyone knew the outcome*.
+
+![Guided replay of a real historical bust](docs/images/replay.png)
+
+**About** — the evidence, including the baseline ladder every claim is measured against.
+
+![About — metrics and the baseline comparison](docs/images/about.png)
+
+## How it was built
+
+<details>
+<summary><b>Build log</b> — what each phase added, in order</summary>
 
 - **Phase 1** — stack, folder scaffolding, canonical schema.
 - **Phase 2** — ingestion + schema-mapping. Format-agnostic parsers (CSV/TSV/XLSX/JSON,
@@ -31,6 +84,12 @@ phased build order.
   region detail panel (bust-probability curve, per-variable forecast-vs-observed
   trajectories, SHAP factors), alerts panel, and an upload + column-confirmation flow —
   all live over the WebSocket. See [`frontend/README.md`](frontend/README.md).
+- **Phase 5** — the design pass. A single committed visual world: synoptic chart paper,
+  Archivo/Public Sans/DM Mono, and a three-stop risk ramp (calm → watch → bust) used as a
+  scale and never as decoration. A KPI strip derives mean P(bust), high-risk count,
+  confidence decay across the horizon and the peak region from the scored cycle already in
+  hand — a figure that cannot be computed renders as an em dash with the reason, never as a
+  placeholder.
 - **Phase 6** — live ingestion. A background scheduler pulls each published NOAA GEFS
   operational cycle (0.25°, Day 1–10, the same 5 members the models were trained on) and
   refreshes observations in two tiers: near-real-time *provisional* values that fill the
@@ -43,6 +102,8 @@ phased build order.
   while a narration — assembled from that cycle's own scored numbers, nothing scripted —
   explains which region climbed, by how much, and which variable drove it, alongside the
   forecast-vs-observed trajectory for the variable that diverged most. `GET /api/replay`.
+
+</details>
 
 Real sample data (`backend/data/samples/`, built by `backend/scripts/`) is NOAA GEFSv12
 reforecast (forecast) + ERA5 (observations), now joined by live operational cycles — no
@@ -66,6 +127,8 @@ against those baselines on identical rows rather than reported alone.
 > against the following day's observation. The convention is now
 > `valid_date = init + (lead − 1)`; see
 > [`backend/scripts/fix_forecast_valid_date_offset.py`](backend/scripts/fix_forecast_valid_date_offset.py).
+
+## Quick start
 
 Run both halves together — two terminals.
 
@@ -96,13 +159,6 @@ npm run dev                                   # dashboard at http://localhost:51
 If PowerShell blocks the activate script with an execution-policy error, run once:
 `Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned`. Or use
 **Command Prompt** instead, where activation is `.venv\Scripts\activate.bat`.
-
-- **Phase 5** — the design pass. A single committed visual world: synoptic chart paper,
-  Archivo/Public Sans/DM Mono, and a three-stop risk ramp (calm → watch → bust) used as a
-  scale and never as decoration. A KPI strip derives mean P(bust), high-risk count,
-  confidence decay across the horizon and the peak region from the scored cycle already in
-  hand — a figure that cannot be computed renders as an em dash with the reason, never as a
-  placeholder.
 
 ## Limitations
 
