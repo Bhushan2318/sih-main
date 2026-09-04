@@ -1,17 +1,3 @@
-"""Ensemble divergence: the moment a cycle's forecast and reality come apart.
-
-This is the one view built from the *raw* ensemble rather than a summary statistic. The
-five GEFS members are already in the canonical store (`ensemble_member_id` ∈ c00, p01-p04),
-so the spread is drawn as five real traces instead of a shaded band inferred from a
-standard deviation - which is the difference between showing a judge the ensemble and
-telling them about it.
-
-Nothing here fabricates a member, a value, or a comparison. Where a cycle has not verified
-yet, `observed` is simply short; where there is no comparable prior cycle, the delta is
-null and `prior_note` says why rather than reaching back years for a number that would
-look like a trend but isn't.
-"""
-
 from __future__ import annotations
 
 import logging
@@ -30,13 +16,9 @@ log = logging.getLogger(__name__)
 NOT_TRAINED_MSG = "No model has been trained yet, so no cycle can be scored."
 NO_SCORE_MSG = "No forecast cycle in the store could be scored by the current model."
 
-# 0 deg and 360 deg are the same bearing, so member traces around north look like a
-# collapse that never happened. Never headline the divergence view with it.
+# 0 and 360 degrees are the same bearing, so member traces around north look like a collapse.
 _UNCHARTABLE = {"wind_direction_deg"}
 
-# A "prior cycle" is only a fair comparison if it is genuinely recent. The store holds a
-# 2019 reforecast archive alongside live 2026 cycles; differencing across that gap would
-# render as a trend arrow while meaning nothing.
 _PRIOR_MAX_GAP = timedelta(days=7)
 
 _lock = threading.Lock()
@@ -96,12 +78,10 @@ def _build(state, scored, want_region: Optional[str]) -> schemas.EnsembleDiverge
     region_rows = ev[ev["region_id"] == region_id].sort_values("lead_time_days")
     members, mean_pts, observed = _traces(scored, init, region_id, variable)
 
-    # Where the cycle turns: the first lead day this region reaches the top risk band.
     high_cut = float(state.thresholds.risk_band_cuts["high"])
     crossed = region_rows[region_rows["bust_probability"] >= high_cut]
     crossover = int(crossed["lead_time_days"].iloc[0]) if not crossed.empty else None
 
-    # Cycle-wide: how many regions reach the top band, and by which lead day.
     high_rows = ev[ev["bust_probability"] >= high_cut]
     n_high = int(high_rows["region_id"].nunique())
     high_by_lead = int(high_rows["lead_time_days"].min()) if not high_rows.empty else None
@@ -140,13 +120,6 @@ def _build(state, scored, want_region: Optional[str]) -> schemas.EnsembleDiverge
 
 
 def _national(ev: pd.DataFrame) -> list:
-    """Risk across every scored region, per lead day.
-
-    This is the default view because it is the question the product answers: not "how bad
-    is one island", but "how far out does the forecast stop being trustworthy anywhere".
-    The min/max band is every region's actual range, not a confidence interval - regions
-    are not samples from a distribution and dressing them up as one would be a lie.
-    """
     if ev.empty:
         return []
     out = []
@@ -166,13 +139,6 @@ def _national(ev: pd.DataFrame) -> list:
 
 
 def _skill(state) -> schemas.ModelSkill:
-    """How accurate the guesses were, taken from the held-out split the model never saw.
-
-    Read straight off the raw persisted metrics rather than the flattened summary, because
-    the calibration bins live per split and the flattening drops them. Preference is
-    test > val > train, and the split is always named: reporting training-split numbers as
-    "accuracy" is the most common way a demo quietly overstates itself.
-    """
     clf = ((state.metrics or {}).get("classifier") or {})
     for split in ("test", "val", "train"):
         m = clf.get(split)
@@ -217,20 +183,6 @@ def _national_note(r: schemas.EnsembleDivergenceResponse) -> Optional[str]:
 
 
 def _pick_subject(ev: pd.DataFrame, per_variable: pd.DataFrame, want_region: Optional[str]):
-    """Pick what the divergence chart should actually show.
-
-    The chart draws the *ensemble*, so the subject has to be chosen on ensemble behaviour,
-    not on the classifier's output. Ranking by peak P(bust) and then drawing member traces
-    asks one question and answers another: the headline region can easily be one whose
-    members agree closely and whose risk comes from somewhere else entirely.
-
-    Spread is measured against each variable's own **bust threshold** - the error size that
-    actually counts as a bust for that variable, in the same units. That is what makes the
-    comparison meaningful across millimetres and hectopascals, and it avoids the trap of a
-    relative growth ratio: Rajasthan's soil moisture starts near zero spread every cycle, so
-    percentage growth there explodes to four figures while the absolute disagreement stays
-    meteorologically irrelevant.
-    """
     if ev.empty or per_variable.empty:
         return None, None, None
 
@@ -254,14 +206,12 @@ def _pick_subject(ev: pd.DataFrame, per_variable: pd.DataFrame, want_region: Opt
             continue
         window = max(1, len(spread) // 3)
         early, late = float(spread[:window].mean()), float(spread[-window:].mean())
-        # The ensemble has to end up disagreeing by a decent fraction of a bust before it
-        # is worth headlining; otherwise a tidy little chart says nothing.
         if late < 0.15 * threshold:
             continue
         rows.append({
             "region_id": rid,
             "variable": var,
-            "gain": (late - early) / threshold,   # growth, in units of "one bust"
+            "gain": (late - early) / threshold,
             "late": late,
             "early": early,
             "threshold": threshold,
@@ -282,8 +232,6 @@ def _pick_subject(ev: pd.DataFrame, per_variable: pd.DataFrame, want_region: Opt
 
 
 def _traces(scored, init: pd.Timestamp, region_id: str, variable: str):
-    """Five real member traces, the ensemble mean the model actually used, and whatever
-    has verified so far."""
     pv = scored.per_variable
     pv = pv[(pv["region_id"].astype(str) == region_id) & (pv["variable"] == variable)]
     pv = pv.sort_values("lead_time_days")
@@ -306,10 +254,6 @@ def _traces(scored, init: pd.Timestamp, region_id: str, variable: str):
         if pd.notna(getattr(r, "observed_value", None))
     ]
 
-    # Only the five columns a member trace is drawn from. Without the projection this read
-    # returns 1,620 rows but costs ~130 MB: a filter on value columns cannot prune row
-    # groups, so Arrow decodes every column of every candidate group before discarding
-    # them. Narrowing the projection narrows what is decoded, not just what is returned.
     raw = parquet_store.read_dataset(
         variables=[variable], value_types=["forecast"], init_dates=[init.date()],
         columns=["region_id", "ensemble_member_id", "lead_time_days", "valid_date", "value"],
@@ -322,7 +266,6 @@ def _traces(scored, init: pd.Timestamp, region_id: str, variable: str):
             grp = grp.sort_values("lead_time_days")
             members.append(schemas.EnsembleMemberTrace(
                 member_id=member_id,
-                # c00 is the unperturbed control run, not one of the perturbed members.
                 is_control=member_id.lower().endswith("c00"),
                 points=[
                     schemas.EnsemblePoint(
@@ -338,11 +281,6 @@ def _traces(scored, init: pd.Timestamp, region_id: str, variable: str):
 
 
 def _prior_cycle_mean(state, init: pd.Timestamp):
-    """Mean P(bust) of the previous cycle, when there genuinely is one.
-
-    Scoring is cached, so this is cheap for a cycle already scored and bounded for one
-    that is not. It deliberately refuses to compare across an archive gap.
-    """
     try:
         cycles = [pd.Timestamp(c).normalize() for c in inference.available_cycles()]
     except Exception:  # noqa: BLE001
@@ -365,20 +303,11 @@ def _prior_cycle_mean(state, init: pd.Timestamp):
 
 
 def _provenance(observed) -> str:
-    """Where these numbers came from, said plainly. Judges should not have to take the
-    chart on trust."""
     verified = "verified against ERA5 reanalysis" if observed else "not yet verified"
     return f"NOAA GEFS 0.25 deg ensemble - {verified}"
 
 
 def _subject_reason(pick: Optional[dict], unit: Optional[str], pinned: bool) -> Optional[str]:
-    """Say on screen why this region and variable are the ones being charted, in the
-    variable's own units, so the picture never looks arbitrarily chosen.
-
-    The scope word matters: when the caller pinned a region, this series is only the widest
-    divergence *within that region*, and claiming it is the widest in the cycle would be a
-    small lie told confidently.
-    """
     if not pick:
         return None
     u = f" {unit}" if unit else ""
@@ -398,7 +327,6 @@ def _eyebrow(init: pd.Timestamp, region_name: str, variable: str) -> str:
 
 
 def _note(r: schemas.EnsembleDivergenceResponse, mean_pts, observed) -> str:
-    """One sentence, every number in it taken from this cycle's own scoring."""
     bits = []
     if r.n_high_regions and r.high_by_lead:
         bits.append(
@@ -420,7 +348,6 @@ def _note(r: schemas.EnsembleDivergenceResponse, mean_pts, observed) -> str:
             f"{_label(r.variable or '')}."
         )
 
-    # Say which way the ensemble is wrong, but only where it has actually verified.
     by_lead = {p.lead_time_days: p.value for p in mean_pts if p.value is not None}
     gaps = [
         (o.lead_time_days, by_lead[o.lead_time_days] - o.value)

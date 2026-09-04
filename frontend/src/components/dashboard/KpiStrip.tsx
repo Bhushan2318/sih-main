@@ -1,13 +1,6 @@
 import { useMemo } from "react";
 import type { AllRegionsResponse, RegionsResponse } from "../../api/types";
 
-/**
- * The four numbers that answer "how much should I trust this cycle?" at a glance.
- *
- * Every value is derived from the scored cycle already in hand - there is no second
- * request and nothing is assumed. A figure that cannot be computed from real data renders
- * as an em dash with the reason, never as a plausible-looking placeholder.
- */
 export function KpiStrip({ all, day }: { all?: AllRegionsResponse; day?: RegionsResponse }) {
   const stats = useMemo(() => derive(all, day), [all, day]);
   if (!stats) return null;
@@ -111,9 +104,6 @@ function derive(all?: AllRegionsResponse, day?: RegionsResponse) {
     null,
   );
 
-  // Confidence decay across the horizon: mean confidence on the first lead day this cycle
-  // covers versus the last. It is the single clearest statement of "the forecast gets less
-  // trustworthy the further out you look", and it comes free with the all-days payload.
   const withConfidence = all.days
     .map((d) => ({ lead: d.lead_time_days, mean: meanConfidence(d) }))
     .filter((d): d is { lead: number; mean: number } => d.mean != null)

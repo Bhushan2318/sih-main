@@ -17,7 +17,6 @@ export function ShapFactorsList({ factors, method }: { factors: TopFactor[]; met
           </li>
         ))}
       </ul>
-      {/* never let the UI imply SHAP ran when it didn't */}
       <p className="muted small">
         {method === "shap"
           ? "How much each input pushed this prediction, averaged over the validation split (SHAP)."

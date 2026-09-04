@@ -1,15 +1,3 @@
-/**
- * Where the API lives.
- *
- * In development the Vite dev server and the API are two processes on two ports, so the
- * default has to be an absolute localhost URL. In a deployed build FastAPI serves the
- * built SPA itself, so the API is same-origin and the right base is the empty string -
- * hard-coding localhost there would make every request from the hosted page fail.
- *
- * `import.meta.env.DEV` is compiled to a constant by Vite, so this branch is resolved at
- * build time rather than sniffed from window.location at runtime. Either var still wins
- * when set, which is what a split deployment (API on another host) would need.
- */
 const BASE = import.meta.env.VITE_API_BASE_URL ?? (import.meta.env.DEV ? "http://localhost:8000" : "");
 
 export class ApiError extends Error {
@@ -30,14 +18,6 @@ async function parseError(res: Response): Promise<string> {
   }
 }
 
-/**
- * Parse a successful response, or explain why it could not be parsed.
- *
- * `res.json()` on its own leaks the browser's raw parser error to the user - Safari words
- * it "The string did not match the expected pattern", which tells nobody anything. A 200
- * carrying HTML is a specific, common situation on a host that sleeps: the platform's own
- * holding page is served while the container wakes, so say that rather than blaming JSON.
- */
 async function readJson<T>(res: Response): Promise<T> {
   const text = await res.text();
   try {
@@ -79,12 +59,6 @@ export async function apiPostFile<T>(path: string, file: File): Promise<T> {
 
 export const API_BASE = BASE;
 
-/**
- * The live socket, derived from the page's own origin in a deployed build so it follows
- * http->ws and https->wss without configuration. Render Free terminates TLS and does not
- * proxy websockets, so this will fail there - that is handled, not fatal: the socket
- * retries with backoff, reports "closed", and every query falls back to 60 s polling.
- */
 export const WS_URL =
   import.meta.env.VITE_WS_URL ??
   (import.meta.env.DEV

@@ -5,11 +5,6 @@ import {
 import type { ReplayFocusSeries } from "../../api/types";
 import { CHART } from "../../theme";
 
-/**
- * The one variable that diverged most over the replayed cycle: forecast vs what was
- * actually observed, across lead days. A vertical marker tracks the current replay step.
- * Observed is drawn only where the forecast verified - gaps stay gaps.
- */
 export function ReplayFocusChart({
   focus,
   currentLead,
@@ -17,10 +12,7 @@ export function ReplayFocusChart({
   focus: ReplayFocusSeries;
   currentLead: number;
 }) {
-  // The band is the bust criterion drawn in the units already on screen: a forecast
-  // inside it is within tolerance, one outside it is a bust. Without it, two lines far
-  // apart tell a reader nothing about whether "far" is far enough to matter - which is
-  // the only question this chart exists to answer.
+
   const thr = focus.bust_threshold;
   const data = focus.points.map((p) => ({
     lead: p.lead_time_days,
@@ -38,11 +30,6 @@ export function ReplayFocusChart({
     <div className="replay-focus">
       <div className="replay-focus__head">
         <strong>{focus.region_name ?? focus.region_id}</strong>
-        {/* The worst-list above shows each region's dominant variable FOR THAT LEAD DAY;
-            this chart plots the one variable that dominated the WHOLE cycle. They usually
-            agree and occasionally do not - on 2019-10-16 Ladakh reads pressure on Day 1
-            and temperature on Days 2-10 - so the scope is stated rather than left to be
-            inferred from two labels sitting side by side. */}
         <span className="muted small">
           {focus.variable.replace(/_/g, " ")}
           {focus.unit ? ` · ${focus.unit}` : ""}
@@ -53,20 +40,11 @@ export function ReplayFocusChart({
         <ComposedChart data={data} margin={{ top: 20, right: 14, bottom: 4, left: -6 }}>
           <CartesianGrid strokeDasharray="3 3" />
           <XAxis dataKey="lead" tickFormatter={(d) => `D${d}`} />
-          {/* Scale to the data, not to zero. Recharts defaults a numeric axis to a
-              zero-based domain, which is fatal here: pressure lives near 1020 hPa, so a
-              0-1200 axis compresses the entire real variation into 3% of the plot and
-              draws the +-3.3 hPa bust threshold thinner than a pixel. A 19.7 hPa error -
-              a badly blown forecast - rendered as ~4px of separation, so the chart showed
-              two identical lines beside a 98% bust call and read as the model being
-              wrong. The band is a data series, so an auto domain always contains it. */}
           <YAxis width={58} domain={["auto", "auto"]} tickFormatter={(v: number) => fmt(v)} />
           <Tooltip
             labelFormatter={(l) => `Lead day ${l}`}
             formatter={(v: unknown) => {
-              // A range series hands this an array, and anything that throws in here
-              // takes the entire chart down with it - which is exactly what happened:
-              // hovering blanked both charts with "v.toFixed is not a function".
+
               const one = (x: unknown) =>
                 typeof x === "number" && Number.isFinite(x) ? fmt(x) : "—";
               const body = Array.isArray(v) ? v.map(one).join(" – ") : one(v);

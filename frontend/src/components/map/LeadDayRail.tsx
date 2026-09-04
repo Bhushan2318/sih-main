@@ -1,18 +1,6 @@
 import { useMemo } from "react";
 import type { AllRegionsResponse, RegionsResponse } from "../../api/types";
 
-/**
- * The whole 10-day horizon, down the side of the map.
- *
- * The lead-day pills could only say which day you were looking at. The same payload
- * already carries every day's scored regions, so the rail shows how the country's risk is
- * composed at each lead - and replaces the pills rather than sitting beside them.
- *
- * The driver is deliberately NOT repeated on every row. It is the same variable for runs
- * of consecutive days, and printing "rainfall_mm" five times down a narrow column is
- * noise; where it changes is the only part that carries information, so that gets one
- * sentence underneath instead.
- */
 export function LeadDayRail({ all, value, onChange }: {
   all?: AllRegionsResponse;
   value: number;
@@ -40,7 +28,6 @@ export function LeadDayRail({ all, value, onChange }: {
           >
             <span className="railrow__day">D{r.lead}</span>
 
-            {/* one bar per lead day: the country's composition, not a value on a scale */}
             <span className="railrow__bar" aria-hidden="true">
               {r.low ? <i className="railrow__seg railrow__seg--low" style={{ flexGrow: r.low }} /> : null}
               {r.watch ? <i className="railrow__seg railrow__seg--watch" style={{ flexGrow: r.watch }} /> : null}
@@ -79,7 +66,6 @@ type Row = {
   driver: string | null;
 };
 
-/** One lead day, counted from its own scored regions. Days with nothing scored drop out. */
 function summarise(day: RegionsResponse): Row | null {
   const regions = day.regions ?? [];
   if (!regions.length) return null;
@@ -111,12 +97,6 @@ function summarise(day: RegionsResponse): Row | null {
   };
 }
 
-/**
- * One sentence about which variable is breaking the forecast, and where that changes.
- *
- * Collapsing the per-day drivers into runs is the whole point: "rainfall to D6, then
- * atmospheric moisture" is a claim about the atmosphere; ten repeated labels is a list.
- */
 function driverRuns(rows: Row[]): string | null {
   const named = rows.filter((r) => r.driver);
   if (!named.length) return null;
@@ -129,12 +109,11 @@ function driverRuns(rows: Row[]): string | null {
   }
 
   if (runs.length === 1) return `${pretty(runs[0].driver)} is the main cause at every lead day.`;
-  // More than a couple of switches is churn rather than a story - say so plainly.
+
   if (runs.length > 3) return `The main cause changes ${runs.length - 1} times across the ten days.`;
   return `Mostly driven by: ${runs.map((r) => `${pretty(r.driver)} ${span(r)}`).join(", then ")}.`;
 }
 
 const span = (r: { from: number; to: number }) => (r.from === r.to ? `at D${r.from}` : `D${r.from}–D${r.to}`);
 
-/** Column names are snake_case on the wire; they read as prose here. */
 const pretty = (v: string) => v.replace(/_(pct|mm|c|hpa|ms|deg|kgm2)$/, "").replace(/_/g, " ");

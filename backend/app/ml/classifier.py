@@ -1,7 +1,3 @@
-"""The bust classifier: one XGBClassifier at event grain, trained on the regressors'
-out-of-fold predicted errors (never on actual error).
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -85,20 +81,11 @@ def _evaluate(y_true, proba, threshold: float = 0.5) -> dict:
 
 
 def _reliability(y_true, proba, bins: int = 5) -> list:
-    """Reliability (calibration) of the predicted probabilities.
-
-    ROC-AUC only says the ranking is right; it says nothing about whether a stated 70%
-    means 70%. For a probabilistic product that second question is the one an operational
-    forecaster actually cares about - a well-ranked but badly calibrated model quietly
-    tells everyone the wrong number. Bins are only reported where real samples landed, so
-    an empty bin is absent rather than drawn as a zero.
-    """
     y_true = np.asarray(y_true, int)
     proba = np.asarray(proba, float)
     if len(y_true) == 0:
         return []
     edges = np.linspace(0.0, 1.0, bins + 1)
-    # right=False keeps 1.0 inside the last bin rather than in one of its own
     idx = np.clip(np.digitize(proba, edges[1:-1], right=False), 0, bins - 1)
     out = []
     for b in range(bins):

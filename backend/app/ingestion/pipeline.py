@@ -1,20 +1,3 @@
-"""End-to-end ingestion: raw upload -> canonical parquet rows + SQLite lineage.
-
-    ingest_upload(session, path, filename)                 first pass
-    confirm_mapping(session, batch_id, mappings)           resume after the user confirms
-
-Flow:
-  hash + store raw file -> parse -> schema-map -> (confirm gate) -> canonicalize
-  -> append parquet partition -> persist ColumnMapping rows + SourceProfile -> mark ingested
-
-Honesty rules enforced here:
-  * a row that cannot be given a valid_date is counted in skipped_row_count and listed in
-    notes - never silently dropped, never given a fabricated date
-  * value_type is only set from a real signal (a value_type column, the mapping, or a
-    surfaced low-confidence filename hint); it is never assumed
-  * region_id may be None (with region_resolution_method='unresolved') rather than guessed
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -48,7 +31,7 @@ _KMH_TO_MS = 1.0 / 3.6
 @dataclass
 class IngestResult:
     batch_id: str
-    status: str                      # pending_confirmation | ingested | failed
+    status: str
     layout: Optional[str] = None
     detected_format: Optional[str] = None
     row_count_raw: int = 0
@@ -57,14 +40,10 @@ class IngestResult:
     canonical_variables_found: list = field(default_factory=list)
     region_resolution_rate: float = 0.0
     profile_match: str = "none"
-    mapping_proposals: list = field(default_factory=list)   # dicts, only when pending
+    mapping_proposals: list = field(default_factory=list)
     notes: list = field(default_factory=list)
     should_retrain: bool = False
 
-
-# --------------------------------------------------------------------------------------
-# helpers
-# --------------------------------------------------------------------------------------
 
 def _sha256(path: Path) -> str:
     h = hashlib.sha256()
@@ -113,7 +92,6 @@ def _mapping_rows_for_db(result: sm.MappingResult) -> list[dict]:
 
 
 def _dimension_columns(result: sm.MappingResult) -> dict:
-    """{dimension_name: source_column} for recognised dimension columns."""
     out = {}
     for p in result.proposals:
         if p.role == sm.ROLE_DIMENSION and p.suggested_variable:
@@ -143,8 +121,6 @@ def _coerce_date(v) -> Optional[date]:
 
 
 def _reconcile_time(init_d, valid_d, lead_days) -> tuple[Optional[date], Optional[date], Optional[int]]:
-    """Any two of {init_date, valid_date, lead_time_days} determine the third. With fewer
-    than two known, leave as-is (caller decides whether the row is usable)."""
     have = sum(x is not None for x in (init_d, valid_d, lead_days))
     if have < 2:
         return init_d, valid_d, lead_days
@@ -159,10 +135,6 @@ def _reconcile_time(init_d, valid_d, lead_days) -> tuple[Optional[date], Optiona
     return init_d, valid_d, lead_days
 
 
-# --------------------------------------------------------------------------------------
-# canonicalisation
-# --------------------------------------------------------------------------------------
-
 def to_canonical_rows(
     df: pd.DataFrame,
     result: sm.MappingResult,
@@ -172,7 +144,6 @@ def to_canonical_rows(
     grain: str,
     filename_hint: str = "",
 ) -> tuple[pd.DataFrame, int, list]:
-    """Return (canonical_df, skipped_row_count, notes)."""
     notes: list = []
     resolver = get_resolver()
     ingested_at = datetime.now(timezone.utc)
@@ -184,7 +155,6 @@ def to_canonical_rows(
     member_col = dims.get("ensemble_member_id")
     vt_col = result.value_type_column
 
-    # measurement plan: [(source_column, variable, value_type_or_None, unit_conversion)]
     plan: list[tuple] = []
     if result.layout == "long":
         var_name_col = next((p.source_column for p in result.proposals
@@ -201,7 +171,6 @@ def to_canonical_rows(
             notes.append("no accepted measurement columns; nothing ingested")
             return pd.DataFrame(), len(df), notes
 
-    # region cache keyed by (name, round(lat,3), round(lon,3))
     _region_cache: dict = {}
 
     def _resolve_region(name, lat, lon):
@@ -238,7 +207,6 @@ def to_canonical_rows(
         valid_d = _coerce_date(row.get(valid_col)) if valid_col else None
         lead = _num(row, lead_col)
         if lead is not None:
-            # lead may be days or hours; treat >=24 with no decimals as hours
             lead = int(round(lead / 24)) if lead >= 24 else int(round(lead))
         init_d, valid_d, lead = _reconcile_time(init_d, valid_d, lead)
 
@@ -254,7 +222,6 @@ def to_canonical_rows(
         if rm.region_id is not None:
             resolved_regions += 1
 
-        # build the (variable, value_type, raw_value, unit) list for this row
         emissions: list[tuple] = []
         if result.layout == "long":
             var_label = row.get(var_name_col)
@@ -278,7 +245,6 @@ def to_canonical_rows(
 
         for variable, vt, raw, unit, scol in emissions:
             if vt is None:
-                # no value_type signal for this row - cannot place it honestly
                 skipped += 1
                 continue
             value = _apply_unit(raw, unit)
@@ -336,10 +302,6 @@ def _confidence_for(result: sm.MappingResult, source_column: str) -> float:
     return 0.0
 
 
-# --------------------------------------------------------------------------------------
-# orchestration
-# --------------------------------------------------------------------------------------
-
 def _load_profiles(session: Session):
     return crud.all_source_profiles(session)
 
@@ -366,8 +328,6 @@ def _finish_canonicalization(
         source_file=batch.original_filename,
         grain=parsed.grain,
     )
-    # Stamped after canonicalisation rather than mapped from a column: how settled an
-    # observation is comes from which endpoint served it, not from anything in the file.
     if verification_status and not canon_df.empty:
         canon_df["verification_status"] = canon_df["value_type"].map(
             lambda vt: verification_status if vt == "observed" else None
@@ -482,11 +442,6 @@ def ingest_upload(
 
 
 def confirm_mapping(session: Session, batch_id: str, mappings: list) -> IngestResult:
-    """Resume a pending batch with the user's confirmed column mappings.
-
-    `mappings`: [{source_column, variable?, value_type?, role?, unit_conversion?}]
-    Columns omitted keep the mapper's proposal; role='unmapped' excludes a column.
-    """
     batch = crud.get_upload_batch(session, batch_id)
     if batch is None:
         raise ValueError(f"unknown batch {batch_id}")
@@ -503,13 +458,6 @@ def confirm_mapping(session: Session, batch_id: str, mappings: list) -> IngestRe
 def _apply_confirmations(result: sm.MappingResult, mappings: list) -> None:
     by_col = {m["source_column"]: m for m in mappings}
 
-    # Excluding the detected value_type column must actually stop it being used. The
-    # per-row value read from that column takes precedence over every column's confirmed
-    # value_type (see to_canonical_rows: `vt = row_vt or col_vt`), so leaving it set would
-    # let a mis-detected discriminator silently override an explicit confirmation. That is
-    # not hypothetical: a free-text provenance column reading "...Open-Meteo forecast-api..."
-    # was detected as a discriminator and relabelled a whole file of observations as
-    # forecasts.
     vt_col = result.value_type_column
     if vt_col is not None:
         m = by_col.get(vt_col)
@@ -524,8 +472,6 @@ def _apply_confirmations(result: sm.MappingResult, mappings: list) -> None:
     for p in result.proposals:
         m = by_col.get(p.source_column)
         if not m:
-            # anything the mapper proposed for confirmation but the user didn't touch
-            # stays out of the accepted set
             if p.decision == "needs_confirmation":
                 p.decision = "unmapped"
                 p.role = sm.ROLE_UNMAPPED
@@ -541,11 +487,6 @@ def _apply_confirmations(result: sm.MappingResult, mappings: list) -> None:
         p.unit_conversion = m.get("unit_conversion", p.unit_conversion)
         p.decision, p.method = "confirmed", "manual"
 
-    # Surface (don't silently swallow) the case where the confirmation still lands two
-    # measurement columns on one canonical (variable, value_type). Two genuinely distinct
-    # series can legitimately share a canonical name - GEFS carries both mslp_hpa and
-    # psfc_hpa as pressure - so this is a loud note, not a drop; the confirm UI is where
-    # an accidental avg/max/min-onto-one-variable gets pared back to a single column.
     accepted: dict = {}
     for p in result.proposals:
         if p.role == sm.ROLE_MEASUREMENT and p.decision in ("auto_accept", "confirmed") \
@@ -560,10 +501,6 @@ def _apply_confirmations(result: sm.MappingResult, mappings: list) -> None:
                 "kept as distinct series (dedupe keys on source column)"
             )
 
-
-# --------------------------------------------------------------------------------------
-# Phase 2 CLI smoke (no API yet)
-# --------------------------------------------------------------------------------------
 
 def _main() -> None:
     ap = argparse.ArgumentParser(description="ingest one file into the canonical store")
@@ -586,8 +523,6 @@ def _main() -> None:
     with get_session() as session:
         res = ingest_upload(session, src, src.name)
         if res.status == "pending_confirmation" and args.confirm_all:
-            # accept each needs_confirmation measurement, but for a collision group
-            # (several columns -> same variable) keep only the highest-confidence one.
             seen: dict = {}
             confirmations = []
             cands = sorted(

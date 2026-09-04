@@ -1,12 +1,3 @@
-"""Guided replay: step through one real historical forecast cycle lead day by lead day
-and narrate how a bust developed.
-
-Every number comes from `inference.score_cycle` run on a cycle that is actually in the
-canonical store; every sentence is generated here from those numbers. Nothing is
-scripted, fabricated, or synthesised - if a cycle has not verified, that is stated,
-not filled in.
-"""
-
 from __future__ import annotations
 
 from typing import Optional
@@ -23,15 +14,10 @@ from app.services.region_service import (
     _unit,
 )
 
-# Newest-first cap for the picker. Each entry costs one `score_cycle` on the first call
-# (then cached), so keep it modest - the live operational cycles that Phase 6 pulls are
-# short and un-verified and would only clutter the list anyway.
 _MAX_CYCLES = 10
 
 _cycles_memo: "tuple[str, list[schemas.ReplayCycleSummary]] | None" = None
 
-
-# --------------------------------------------------------------------------- cycle list
 
 def _cycle_summary(state, init) -> Optional[schemas.ReplayCycleSummary]:
     sc = inference.score_cycle(state, init)
@@ -59,9 +45,6 @@ def _cycle_summary(state, init) -> Optional[schemas.ReplayCycleSummary]:
         if not prz.empty:
             peak_abs_err = float((prz["predicted_value"] - prz["observed_value"]).abs().mean())
 
-    # "growth" = how much more likely a bust is in the medium range (days 4-10) than in
-    # the short range (days 1-3). A bust that only emerges further out is exactly what
-    # this project is about, so the picker should surface those cycles first.
     near = ev.loc[ev["lead_time_days"] <= 3, "bust_probability"].mean()
     far = ev.loc[ev["lead_time_days"] >= 4, "bust_probability"].mean()
     if pd.notna(near) and pd.notna(far):
@@ -84,8 +67,6 @@ def _cycle_summary(state, init) -> Optional[schemas.ReplayCycleSummary]:
 
 
 def list_cycles() -> list[schemas.ReplayCycleSummary]:
-    """Every scoreable forecast cycle, ranked so the most demo-worthy - a real,
-    verified bust that grew with lead time - sits first."""
     global _cycles_memo
     state = inference.load_model_state()
     if state is None:
@@ -98,8 +79,6 @@ def list_cycles() -> list[schemas.ReplayCycleSummary]:
         s = _cycle_summary(state, init)
         if s is not None:
             out.append(s)
-    # Demo-worthy = verified, then a bust that actually grows into the medium range,
-    # then how high it gets, then how much of the cycle we can show observed.
     out.sort(
         key=lambda c: (
             c.verified,
@@ -112,8 +91,6 @@ def list_cycles() -> list[schemas.ReplayCycleSummary]:
     _cycles_memo = (state.run_id, out)
     return out
 
-
-# ------------------------------------------------------------------------- one replay
 
 def get_replay(
     init_date: Optional[str] = None, focus_region: Optional[str] = None
@@ -185,8 +162,6 @@ def get_replay(
     )
 
 
-# ---------------------------------------------------------------------- narration
-
 def _pretty(var) -> str:
     return str(var).replace("_", " ") if isinstance(var, str) and var else ""
 
@@ -207,7 +182,6 @@ def _narrate(lead: int, g: pd.DataFrame, prev: dict, cur: dict, hi: float, prev_
         verb = "opens with" if not prev else "still carries"
         bits.append(f"{tname} {verb} the highest bust risk at {float(top['bust_probability']):.2f}")
 
-    # only name the driver when it is new information (first step, or it changed)
     dom = _pretty(top.get("dominant_variable"))
     if dom and dom != prev_dom:
         bits.append(f"now driven by {dom} error" if prev_dom else f"driven by {dom} error")
@@ -248,15 +222,7 @@ def _summarise(sc: inference.ScoredCycle, steps: list[schemas.ReplayLeadStep]) -
     )
 
 
-# ------------------------------------------------------------------- focus trajectory
-# The chart follows the regions the rest of the screen is already pointing at: by default
-# the cycle's peak-bust-risk region, with its classifier-dominant variable. The worst-list
-# regions are all offered so the UI can swap the chart to any of them without a refetch.
-
 def _focus_variable_for(v_region: pd.DataFrame, dominant: Optional[str], state) -> Optional[str]:
-    """Chart the region's dominant (classifier-attributed) variable if it verified;
-    otherwise the verified variable whose error is largest relative to its own bust
-    threshold - so a 3 hPa pressure miss and a 30 %RH humidity miss compare fairly."""
     if v_region.empty:
         return None
     if dominant and dominant != "wind_direction_deg" and (v_region["variable"] == dominant).any():
@@ -280,8 +246,6 @@ def _focus_for_region(
         (pv["region_id"].astype(str) == region_id)
         & pv["observed_value"].notna()
         & pv["predicted_value"].notna()
-        # wind_direction_deg excluded: near 0/360 a 5 deg miss reads as 355, a wraparound
-        # artefact that makes a misleading chart.
         & (pv["variable"] != "wind_direction_deg")
     ].copy()
     var = _focus_variable_for(v, dominant, state)
@@ -294,8 +258,6 @@ def _focus_for_region(
             valid_date=pd.to_datetime(r.valid_date).date() if pd.notna(r.valid_date) else None,
             predicted_value=_f(r.predicted_value),
             observed_value=_f(r.observed_value),
-            # legacy rows (pre-Phase-6) carry no status but came from the ERA5 archive,
-            # so a verified value with no explicit status is final.
             observed_status=(getattr(r, "verification_status", None) or "final"),
             ensemble_spread=_f(getattr(r, "ensemble_spread", None)),
         )
@@ -314,21 +276,16 @@ def _focus_for_region(
 def _build_focus(
     sc: inference.ScoredCycle, state, want_region: Optional[str]
 ) -> "tuple[Optional[schemas.ReplayFocusSeries], list[schemas.ReplayFocusSeries]]":
-    """A focus trajectory for *every* region that verified, so the map and the worst-list
-    are both fully clickable. Each region is charted on its own riskiest-lead-day dominant
-    variable. `focus` (the default) is the cycle's peak-bust-risk region."""
     ev = sc.events
     if ev.empty:
         return None, []
     rid_col = ev["region_id"].astype(str)
     peak_rid = str(ev.loc[ev["bust_probability"].idxmax(), "region_id"])
 
-    # each region's dominant variable at its own worst lead day
     worst_row = ev.loc[ev.groupby(rid_col)["bust_probability"].idxmax()]
     dom_by_region = {
         str(r.region_id): getattr(r, "dominant_variable", None) for r in worst_row.itertuples()
     }
-    # peak region first so it is options[0]; the rest ordered by how bad they got
     rest = (
         worst_row.assign(_rid=worst_row["region_id"].astype(str))
         .sort_values("bust_probability", ascending=False)["_rid"]
@@ -348,6 +305,5 @@ def _build_focus(
 
 
 def invalidate() -> None:
-    """Drop the ranked-cycle memo (called on retrain / ingest)."""
     global _cycles_memo
     _cycles_memo = None

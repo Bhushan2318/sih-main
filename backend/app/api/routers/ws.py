@@ -1,9 +1,3 @@
-"""WebSocket endpoint.
-
-Clients receive typed events and react by invalidating their query caches - payloads are
-deliberately small and carry no measurement data.
-"""
-
 from __future__ import annotations
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -20,7 +14,6 @@ router = APIRouter()
 async def websocket_endpoint(ws: WebSocket) -> None:
     await manager.connect(ws)
     try:
-        # opening frame so a fresh client knows where things stand
         await ws.send_json(make_event(
             EventType.CONNECTED,
             model_trained=registry.current_run_id() is not None,
@@ -28,8 +21,6 @@ async def websocket_endpoint(ws: WebSocket) -> None:
             training_in_progress=upload_service.training_in_progress(),
         ).model_dump(mode="json"))
         while True:
-            # the protocol is server -> client; reads just keep the socket alive and
-            # surface disconnects promptly
             await ws.receive_text()
     except WebSocketDisconnect:
         pass

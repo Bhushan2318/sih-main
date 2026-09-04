@@ -59,8 +59,6 @@ export function RegionDetailPanel({
       {worst ? (
         <section className="panel__section">
           <h3>Peak bust risk</h3>
-          {/* The number, the band and the lead day are three separate facts - stacking
-              them stops the badge and the caption colliding with a 2rem figure. */}
           <div className="peak">
             <span className="peak__value">{(worst.bust_probability * 100).toFixed(1)}%</span>
             <div className="peak__meta">

@@ -1,20 +1,3 @@
-"""Canonical India state/UT identity table.
-
-Maps free-text state/UT names (as they might appear in an uploaded dataset) to a
-canonical `region_id`, and separately carries the identifiers used by the vendored
-choropleth map (frontend/src/assets/geo/india_states.topojson, sourced from
-udit-001/india-maps-data) so the frontend can join API data onto map features.
-
-`region_id` uses ISO 3166-2:IN codes — the API- and dataset-facing identifier.
-`st_code` / `st_nm` are the vendored topojson's own properties (2011 census state
-codes and names) — the frontend's join key onto map geometry. Both are carried here
-so the translation lives in exactly one place.
-
-This table covers the 36 current states/UTs (post the 2019 Jammu & Kashmir/Ladakh
-split and the 2020 Dadra and Nagar Haveli + Daman and Diu merger), matching the
-vendored topojson exactly.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -22,9 +5,9 @@ from dataclasses import dataclass, field
 
 @dataclass(frozen=True)
 class StateRecord:
-    region_id: str  # ISO 3166-2:IN, e.g. "IN-MH"
-    region_name: str  # canonical display name, matches the topojson's st_nm
-    st_code: str  # 2011 census state code, matches the topojson's st_code
+    region_id: str
+    region_name: str
+    st_code: str
     aliases: tuple[str, ...] = field(default_factory=tuple)
 
 
@@ -83,10 +66,6 @@ _LOOKUP_BY_ST_CODE: dict[str, StateRecord] = {r.st_code: r for r in STATES}
 
 
 def resolve_by_name(raw_name: str) -> StateRecord | None:
-    """Look up a state record from a free-text name/alias as it might appear in an
-    uploaded dataset. Returns None if no exact/alias match is found (callers should
-    fall back to lat/lon point-in-polygon resolution or route to manual confirmation,
-    never guess)."""
     return _LOOKUP_BY_NAME.get(_normalize(raw_name))
 
 

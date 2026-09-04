@@ -7,7 +7,6 @@ import { fetchAllRegions, fetchRegionDetail, fetchRegions } from "../api/regions
 import { fetchReplay, fetchReplayCycles } from "../api/replay";
 import type { RiskBand } from "../api/types";
 
-// A retrain lands via the WebSocket, so polling is only a safety net for a missed frame.
 const SAFETY_REFETCH_MS = 60_000;
 
 export const useRegions = (leadTimeDays: number) =>
@@ -17,9 +16,6 @@ export const useRegions = (leadTimeDays: number) =>
     refetchInterval: SAFETY_REFETCH_MS,
   });
 
-// All 10 lead days in one payload so the lead-day selector switches with zero requests.
-// A scored cycle only changes on retrain / ingest, and the WebSocket invalidates
-// ["regions"] then - so there is nothing to poll for and staleTime can be generous.
 export const useAllRegions = () =>
   useQuery({
     queryKey: ["regions", "all"],
@@ -28,11 +24,6 @@ export const useAllRegions = () =>
     refetchInterval: 5 * 60_000,
   });
 
-// The hero divergence view. Like the scored cycle it only changes on retrain/ingest, and
-// the WebSocket invalidates it - so there is nothing to poll for. Passing a region pins
-// the hero to it; without one the backend picks the widest divergence in the cycle.
-// `placeholderData` keeps the previous chart on screen while a newly picked region loads,
-// so clicking around the map never blanks the hero.
 export const useEnsembleDivergence = (regionId?: string | null) =>
   useQuery({
     queryKey: ["ensemble", "divergence", regionId ?? "auto"],
@@ -62,8 +53,6 @@ export const useModelStatus = () =>
     refetchInterval: SAFETY_REFETCH_MS,
   });
 
-// Guided replay. A cycle's scored numbers never change unless the model is retrained, so
-// there is nothing to poll - the WebSocket retrain event invalidates the cache instead.
 export const useReplayCycles = (enabled: boolean) =>
   useQuery({
     queryKey: ["replay", "cycles"],
@@ -80,20 +69,15 @@ export const useReplay = (initDate: string | undefined, enabled: boolean) =>
     staleTime: Infinity,
   });
 
-// Feed freshness. Polled a little faster than the rest: a cycle landing is the one change
-// the WebSocket cannot always attribute to a query key.
 export const useIngestStatus = () =>
   useQuery({
     queryKey: ["ingestStatus"],
     queryFn: fetchIngestStatus,
     refetchInterval: 30_000,
-    // The feed is optional: a deployment with live ingestion switched off should render
-    // the dashboard normally rather than surfacing an error banner.
+
     retry: false,
   });
 
-/** Pipeline activity, newest first. Optional like the status strip: a deployment without
- *  the table renders the rest of the page normally rather than showing an error. */
 export const useIngestRuns = (limit = 25) =>
   useQuery({
     queryKey: ["ingestRuns", limit],

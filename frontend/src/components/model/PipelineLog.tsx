@@ -2,18 +2,6 @@ import type { IngestRunRow } from "../../api/types";
 import { stampShort } from "../../format";
 import { useIngestRuns } from "../../hooks/useDashboardData";
 
-/**
- * What the pipeline actually did, newest first.
- *
- * Every attempt is listed, including the ones that were skipped or refused. A cycle NOAA
- * served too incompletely to trust is rejected rather than published — a short rainfall
- * *sum* is roughly half the real accumulation, and rainfall drives most busts — so a
- * refusal is the system working, not failing. Showing only the successes would be the
- * same convenient fiction this project exists to avoid.
- *
- * Every row is a database record written when the run happened. Nothing here is
- * generated for display.
- */
 const LABEL: Record<string, string> = {
   forecast: "GEFS cycle",
   observations_provisional: "observations (provisional)",
@@ -21,14 +9,12 @@ const LABEL: Record<string, string> = {
 };
 
 const BAND: Record<string, string> = {
-  complete: "low",       // green — it worked
-  skipped: "medium",     // amber — nothing to do, or already present
-  failed: "high",        // red — refused or errored, and shown as such
+  complete: "low",
+  skipped: "medium",
+  failed: "high",
   running: "medium",
 };
 
-/** Shared with the rest of the app so the pipeline log cannot drift into a second
- *  timezone convention. Column header says IST, so the rows omit the suffix. */
 function when(iso: string | null): string {
   return stampShort(iso);
 }
@@ -36,7 +22,7 @@ function when(iso: string | null): string {
 export function PipelineLog() {
   const { data, error, isLoading } = useIngestRuns(25);
   if (isLoading) return null;
-  // Optional by design: a deployment without this endpoint shows the rest of the page.
+
   if (error || !data?.runs?.length) return null;
 
   const runs: IngestRunRow[] = data.runs;
@@ -81,8 +67,6 @@ export function PipelineLog() {
           </tbody>
         </table>
       </div>
-      {/* The detail line carries the evidence: transport used, steps retrieved of steps
-          expected, bytes, duration. It is what distinguishes a real pull from a claim. */}
       {runs[0]?.detail ? (
         <p className="muted small mono" style={{ wordBreak: "break-word" }}>
           latest: {runs[0].detail}

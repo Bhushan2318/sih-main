@@ -8,17 +8,6 @@ import { CHART } from "../../theme";
 
 type Tab = "national" | "skill";
 
-/**
- * The hero: the national picture, and only ever the national picture.
- *
- * It deliberately does not follow the map selection. The hero frames the whole cycle - how
- * far out the forecast stops being trustworthy anywhere in India, and how accurate the
- * model's past guesses actually were - and a header that reshuffled on every click would
- * stop being a frame and start being a second detail panel. Region detail has its own.
- *
- * Every number comes from the scored cycle or the held-out split. Where something cannot
- * be computed the panel says why instead of drawing a plausible-looking placeholder.
- */
 export function HeroDivergence({ data }: { data?: EnsembleDivergenceResponse }) {
   const [tab, setTab] = useState<Tab>("national");
 
@@ -120,22 +109,17 @@ export function HeroDivergence({ data }: { data?: EnsembleDivergenceResponse }) 
   );
 }
 
-/* ─────────────────────────────────────────────────────────────────── national */
-
 function NationalChart({ data }: { data: EnsembleDivergenceResponse }) {
   const rows = data.national.map((n) => ({
     lead: n.lead_time_days,
     mean: Number((n.mean_bust_probability * 100).toFixed(1)),
-    // a real min-max across regions, not a confidence interval - regions are not samples
-    // from a distribution, and dressing them up as one would overstate what this shows
+
     band: [n.min_bust_probability * 100, n.max_bust_probability * 100] as [number, number],
     high: n.n_high_regions,
     n: n.n_regions,
   }));
   if (!rows.length) return <Empty>No scored regions in this cycle.</Empty>;
 
-  // height="100%" rather than a fixed height: the panel is a flex column that grows to fill
-  // the opening screen, and the chart has to grow with it.
   return (
     <ResponsiveContainer width="100%" height="100%">
       <ComposedChart data={rows} margin={{ top: 10, right: 14, bottom: 6, left: -10 }}>
@@ -169,8 +153,6 @@ function NationalChart({ data }: { data: EnsembleDivergenceResponse }) {
     </ResponsiveContainer>
   );
 }
-
-/* ────────────────────────────────────────────────────────────────────── skill */
 
 function SkillChart({ data }: { data: EnsembleDivergenceResponse }) {
   const skill = data.skill;
@@ -207,7 +189,6 @@ function SkillChart({ data }: { data: EnsembleDivergenceResponse }) {
           />
           <ZAxis type="number" dataKey="n" range={[60, 400]} />
           <Tooltip cursor={{ strokeDasharray: "3 3" }} content={<CalibrationTip />} />
-          {/* perfect calibration: what the model said is exactly what happened */}
           <ReferenceLine
             segment={[{ x: 0, y: 0 }, { x: 100, y: 100 }]}
             stroke={CHART.axis} strokeDasharray="5 5" strokeWidth={1.5}
@@ -244,8 +225,6 @@ function CalibrationTip({ active, payload }: {
     </div>
   );
 }
-
-/* ────────────────────────────────────────────────────────────────────── shared */
 
 function Ring({ value }: { value: number }) {
   const r = 52;
@@ -285,5 +264,4 @@ function deltaClass(delta: number): string {
 function num(v: number | null | undefined, digits: number): string {
   return v == null || Number.isNaN(v) ? "—" : v.toFixed(digits);
 }
-
 

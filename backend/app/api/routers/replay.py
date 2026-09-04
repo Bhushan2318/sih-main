@@ -1,10 +1,3 @@
-"""Guided replay endpoints.
-
-Step through one real historical forecast cycle lead day by lead day and see how a bust
-developed. Everything served here is a scored number from a cycle that is actually in
-the canonical store, or a sentence generated from those numbers.
-"""
-
 from __future__ import annotations
 
 from typing import Optional
@@ -19,7 +12,6 @@ router = APIRouter(prefix="/api/replay", tags=["replay"])
 
 @router.get("/cycles", response_model=list[schemas.ReplayCycleSummary])
 def replay_cycles() -> list[schemas.ReplayCycleSummary]:
-    """Every scoreable forecast cycle, most demo-worthy (real verified bust) first."""
     return replay_service.list_cycles()
 
 

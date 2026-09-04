@@ -1,10 +1,3 @@
-"""One XGBRegressor per canonical variable: predict the absolute forecast error.
-
-Trained on the per-member paired frame (features/engineering.py). `region_id` and
-`season` are native categoricals (enable_categorical=True); missing numeric features are
-left as NaN for XGBoost to route.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -15,7 +8,7 @@ import xgboost as xgb
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.model_selection import GroupKFold
 
-MIN_ROWS = 30  # per the plan: fewer paired rows than this -> skip and surface, don't model
+MIN_ROWS = 30
 
 NUMERIC_FEATURES = [
     "lead_time_days", "forecast_value", "month",
@@ -101,9 +94,7 @@ def train_variable_regressor(
 
 
 def oof_predict(train_df: pd.DataFrame, variable: str, n_splits: int = 3) -> pd.Series:
-    """Out-of-fold predicted abs_error for the training rows of one variable, GroupKFold
-    on init_date so whole forecast cycles stay together. Feeds the classifier without
-    leaking actual error."""
+    """Out-of-fold predictions, grouped by init_date so no forecast cycle spans a fold."""
     tr = train_df[train_df["variable"] == variable].copy()
     if len(tr) < MIN_ROWS:
         return pd.Series(np.nan, index=tr.index)

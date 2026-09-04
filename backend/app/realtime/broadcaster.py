@@ -1,10 +1,3 @@
-"""WebSocket connection manager + a broadcast helper safe to call from anywhere.
-
-Retraining runs in a FastAPI BackgroundTask (a worker thread, no running event loop), so
-`broadcast_threadsafe()` hands the coroutine to the main loop captured at startup. Handler
-code inside a request can await `broadcast()` directly.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -25,7 +18,6 @@ class ConnectionManager:
         self._lock = asyncio.Lock()
 
     def bind_loop(self, loop: asyncio.AbstractEventLoop) -> None:
-        """Called once on startup so background threads know where to schedule sends."""
         self._loop = loop
 
     async def connect(self, ws: WebSocket) -> None:
@@ -57,12 +49,11 @@ class ConnectionManager:
                     self._active.discard(ws)
 
     def broadcast_threadsafe(self, event: Event) -> None:
-        """Fire-and-forget from a non-async context (BackgroundTask worker thread)."""
         if self._loop is None or not self._active:
             return
         try:
             asyncio.run_coroutine_threadsafe(self.broadcast(event), self._loop)
-        except RuntimeError:  # loop already closed (shutdown race)
+        except RuntimeError:
             log.debug("broadcast skipped: event loop unavailable")
 
 
@@ -70,5 +61,4 @@ manager = ConnectionManager()
 
 
 def emit(event_type: EventType, **payload) -> None:
-    """Thread-safe convenience used by services."""
     manager.broadcast_threadsafe(make_event(event_type, **payload))

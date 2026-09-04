@@ -1,10 +1,5 @@
 const DAYS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 
-/**
- * Lead-day picker. Days the current cycle does not cover are disabled rather than hidden,
- * so the horizon stays legible: a 06/12/18 UTC run cannot produce a whole-calendar-day
- * forecast for its own init day, so it has no day 1.
- */
 export function LeadDaySelector({ value, onChange, disabled, available }: {
   value: number;
   onChange: (d: number) => void;

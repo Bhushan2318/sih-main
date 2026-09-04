@@ -4,11 +4,6 @@ import {
 import type { VariableSeries } from "../../api/types";
 import { CHART } from "../../theme";
 
-/**
- * Forecast vs observed across lead days for one variable. `observed` is only drawn where
- * the forecast has actually verified - unverified leads leave a gap rather than a
- * guessed value.
- */
 export function VariableTrajectoryChart({ series }: { series: VariableSeries }) {
   if (!series.available || !series.points.length) {
     return (
@@ -25,9 +20,7 @@ export function VariableTrajectoryChart({ series }: { series: VariableSeries }) 
     confidence: p.confidence,
   }));
   const anyObserved = data.some((d) => d.observed != null);
-  // Near-real-time observations are shown as soon as they exist so the chart is not blank
-  // for days, but they are ERA5's provisional stand-in and will be revised - so they are
-  // labelled, and the models are never trained on them.
+
   const provisional = series.points.filter((p) => p.observed_status === "provisional");
 
   return (
@@ -36,10 +29,6 @@ export function VariableTrajectoryChart({ series }: { series: VariableSeries }) 
         <LineChart data={data} margin={{ top: 8, right: 12, bottom: 4, left: -4 }}>
           <CartesianGrid strokeDasharray="3 3" />
           <XAxis dataKey="lead" tickFormatter={(d) => `D${d}`} />
-          {/* the unit belongs on the axis once, not appended to every tick */}
-          {/* Auto domain for the same reason as the replay focus chart: a zero-based axis
-              flattens pressure, humidity and atmospheric moisture into a straight line and
-              hides the very divergence this chart exists to show. */}
           <YAxis width={58} domain={["auto", "auto"]} tickFormatter={(v: number) => formatTick(v)} />
           <Tooltip
             labelFormatter={(l) => `Lead day ${l}`}
@@ -74,7 +63,6 @@ export function VariableTrajectoryChart({ series }: { series: VariableSeries }) 
   );
 }
 
-/** Compact tick labels: pressures need no decimals, small values need a couple. */
 function formatTick(v: number): string {
   if (v == null || Number.isNaN(v)) return "—";
   const a = Math.abs(v);

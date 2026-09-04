@@ -1,6 +1,3 @@
-// Mirrors backend/app/api/schemas.py. Optionals are optional here too: the API returns
-// null rather than a placeholder whenever a real value does not exist.
-
 export interface MappingProposal {
   source_column: string;
   normalized: string;
@@ -61,8 +58,7 @@ export interface RegionsResponse {
   risk_band_definitions: Record<string, string>;
   regions: RegionSummary[];
   message: string | null;
-  // Lead days this cycle actually covers. A 00Z run covers 1-10; a 06/12/18Z run cannot
-  // produce a whole-calendar-day forecast for its own init day, so it starts at day 2.
+
   available_lead_days: number[];
 }
 
@@ -73,7 +69,7 @@ export interface AllRegionsResponse {
   init_date: string | null;
   risk_band_definitions: Record<string, string>;
   available_lead_days: number[];
-  days: RegionsResponse[]; // one per lead day 1..10
+  days: RegionsResponse[];
   message: string | null;
 }
 
@@ -82,8 +78,7 @@ export interface VariablePoint {
   valid_date: string | null;
   predicted_value: number | null;
   observed_value: number | null;
-  // "final" = ERA5 (what the models were trained against); "provisional" = near-real-time
-  // and subject to revision; null when this lead has not verified yet.
+
   observed_status: "final" | "provisional" | null;
   predicted_error: number | null;
   confidence: number | null;
@@ -169,12 +164,10 @@ export interface ModelStatusResponse {
     init_date_max?: string | null;
     by_variable?: Record<string, Record<string, number>>;
     grain_counts?: Record<string, number>;
-    // Set when the shipped summary sidecar is missing or stale and recomputing it
-    // here would exceed the serving instance's memory. An explained gap, not blanks.
+
     unavailable_reason?: string | null;
   };
-  // What the MODEL trained on, from the run's manifest. Deliberately separate from
-  // data_volume above, which describes only this server's copy of the store.
+
   training_data?: {
     cycles?: number | null;
     train_cycles?: number | null;
@@ -184,8 +177,7 @@ export interface ModelStatusResponse {
     paired_rows?: number | null;
     first_train_date?: string | null;
   };
-  // The baseline ladder the deployed run was scored against, on the same rows. Absent
-  // when the run published none - never populated from a different run.
+
   baselines?: {
     run_id?: string;
     test_events?: number;
@@ -232,9 +224,6 @@ export interface LiveEvent {
   payload: Record<string, unknown>;
 }
 
-
-// --------------------------------------------------------------------------- live feed
-
 export interface IngestRunInfo {
   target: string | null;
   status: "running" | "complete" | "skipped" | "failed";
@@ -264,12 +253,6 @@ export interface IngestStatus {
     next_tick: string | null;
   };
 }
-
-
-// --------------------------------------------------------------------------- replay
-// Mirrors backend/app/api/schemas.py replay models. Guided replay steps through one real
-// historical forecast cycle; every value is scored from that cycle, every narration
-// string is generated from those values.
 
 export interface ReplayCycleSummary {
   init_date: string;
@@ -336,10 +319,6 @@ export interface ReplayResponse {
   message: string | null;
 }
 
-// ------------------------------------------------------------------- ensemble
-// Mirrors EnsembleDivergenceResponse. The five GEFS members are real traces from the
-// canonical store, not a band inferred from a standard deviation.
-
 export interface EnsemblePoint {
   lead_time_days: number;
   valid_date: string | null;
@@ -400,18 +379,18 @@ export interface EnsembleDivergenceResponse {
   mean_bust_probability: number | null;
   prior_mean_bust_probability: number | null;
   prior_init_date: string | null;
-  /** why there is no prior-cycle comparison, when there isn't one */
+
   prior_note: string | null;
   n_high_regions: number;
   n_scored_regions: number;
   high_by_lead: number | null;
-  /** spread growth for the charted series, in units of "one bust threshold" */
+
   spread_growth: number | null;
-  /** plain-language reason this region+variable is the one charted */
+
   subject_reason: string | null;
   source: string | null;
   member_count: number;
-  /** national view, shown when no region is pinned */
+
   national: NationalRiskPoint[];
   skill: ModelSkill | null;
   national_note: string | null;
@@ -420,7 +399,6 @@ export interface EnsembleDivergenceResponse {
   message: string | null;
 }
 
-/** One pipeline attempt, as recorded when it ran. Includes skipped and failed runs. */
 export interface IngestRunRow {
   id: number;
   kind: string;

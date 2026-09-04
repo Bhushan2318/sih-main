@@ -2,7 +2,6 @@ import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis
 import type { RegionSummary } from "../../api/types";
 import { CHART, bandLabel } from "../../theme";
 
-/** Top-N regions by bust probability for the selected lead day. */
 export function BustSummaryChart({ regions, onSelect }: {
   regions: RegionSummary[];
   onSelect: (regionId: string) => void;

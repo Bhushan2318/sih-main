@@ -1,20 +1,3 @@
-"""ORM models for the metadata DB.
-
-Six tables:
-  * UploadBatch    - one row per uploaded file, its parse result and ingest status
-  * ColumnMapping  - one row per source column per batch: how it was interpreted
-  * SourceProfile  - a reusable confirmed mapping, keyed by a header fingerprint
-  * TrainingRun    - one row per retrain (populated in Phase 3)
-  * Alert          - one row per generated bust alert (populated in Phase 4)
-  * IngestRun      - one row per automated live-ingestion attempt (Phase 6)
-
-TrainingRun and Alert are defined now, with minimal columns, so later phases never have
-to alter the schema - `init_db()` creates everything up front.
-
-Annotations use ``typing.Optional`` (not ``X | None``): SQLAlchemy evaluates mapped
-annotation strings, and the local Python is 3.9 where ``str | None`` is not runtime-valid.
-"""
-
 from datetime import datetime, timezone
 from typing import Optional
 import uuid
@@ -52,9 +35,8 @@ class UploadBatch(Base):
     content_sha256: Mapped[Optional[str]] = mapped_column(String(64), default=None, index=True)
 
     row_count_raw: Mapped[Optional[int]] = mapped_column(Integer, default=None)
-    # received | pending_confirmation | canonicalizing | ingested | failed
     status: Mapped[str] = mapped_column(String(32), default="received", index=True)
-    layout: Mapped[Optional[str]] = mapped_column(String(8), default=None)  # wide | long
+    layout: Mapped[Optional[str]] = mapped_column(String(8), default=None)
     grain: Mapped[str] = mapped_column(String(16), default="native")
 
     canonical_row_count: Mapped[Optional[int]] = mapped_column(Integer, default=None)
@@ -85,12 +67,10 @@ class ColumnMapping(Base):
 
     source_column: Mapped[str] = mapped_column(String(512))
     source_header_normalized: Mapped[str] = mapped_column(String(512))
-    # measurement | dimension | value_type | unmapped
     role: Mapped[str] = mapped_column(String(16), default="unmapped")
 
     mapped_variable: Mapped[Optional[str]] = mapped_column(String(48), default=None)
     mapped_value_type: Mapped[Optional[str]] = mapped_column(String(16), default=None)
-    # auto_accept | needs_confirmation | confirmed | unmapped
     decision: Mapped[str] = mapped_column(String(24), default="unmapped")
     method: Mapped[Optional[str]] = mapped_column(String(24), default=None)
 
@@ -111,7 +91,6 @@ class SourceProfile(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     fingerprint: Mapped[str] = mapped_column(String(64), index=True)
     header_list_json: Mapped[list] = mapped_column(JSON)
-    # {source_column: {"variable": ..., "value_type": ..., "role": ..., "unit_conversion": ...}}
     confirmed_mapping_json: Mapped[dict] = mapped_column(JSON)
 
     file_format: Mapped[Optional[str]] = mapped_column(String(32), default=None)
@@ -129,7 +108,7 @@ class TrainingRun(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     run_id: Mapped[str] = mapped_column(String(64), unique=True, default=_uuid, index=True)
-    status: Mapped[str] = mapped_column(String(16), default="running")  # running|complete|failed
+    status: Mapped[str] = mapped_column(String(16), default="running")
     triggered_by_batch_id: Mapped[Optional[str]] = mapped_column(
         ForeignKey("upload_batch.id"), default=None
     )
@@ -154,22 +133,14 @@ class Alert(Base):
 
 
 class IngestRun(Base):
-    """One row per automated live-ingestion attempt (Phase 6).
-
-    Kept separate from UploadBatch: a single run may produce several batches (a forecast
-    cycle plus an observation refresh), skip entirely because the cycle was already
-    present, or fail before any file exists. This is also what /api/ingest/status reads,
-    so the dashboard can show real feed freshness instead of implying the data is current.
-    """
 
     __tablename__ = "ingest_run"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    kind: Mapped[str] = mapped_column(String(24), index=True)  # forecast|observations_provisional|observations_final
-    # For forecast runs: the cycle, as "YYYY-MM-DD HH" UTC. For observation runs: the window end.
+    kind: Mapped[str] = mapped_column(String(24), index=True)
     target: Mapped[Optional[str]] = mapped_column(String(32), default=None, index=True)
-    status: Mapped[str] = mapped_column(String(16), default="running")  # running|complete|skipped|failed
-    trigger: Mapped[str] = mapped_column(String(16), default="schedule")  # schedule|manual|backfill
+    status: Mapped[str] = mapped_column(String(16), default="running")
+    trigger: Mapped[str] = mapped_column(String(16), default="schedule")
 
     upload_batch_id: Mapped[Optional[str]] = mapped_column(
         ForeignKey("upload_batch.id"), default=None

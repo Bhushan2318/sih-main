@@ -3,23 +3,6 @@ import {
 } from "recharts";
 import { CHART } from "../../theme";
 
-/**
- * What the model *said*, on the same lead-day axis as what actually happened.
- *
- * The chart above shows the forecast diverging from the observation - which proves only
- * that the forecast was wrong. The claim this project makes is the prediction, so the
- * predicted probability has to be visible beside the outcome; otherwise a reader has to
- * correlate a chart on one side with a number on the other and take the link on trust.
- *
- * Deliberately a second chart rather than a second y-axis on the first. Probability is
- * 0-1 and the forecast is in degrees or millimetres; putting them on one plot with two
- * scales lets the author choose where the lines appear to cross, which is the single
- * most common way a chart like this misleads.
- *
- * The band cuts are drawn with visible text labels, not colour alone: the "watch" amber
- * sits at 2.5:1 against the surface, which is below the 3:1 floor, so the label carries
- * the meaning and the colour only reinforces it.
- */
 export function ReplayProbabilityChart({
   points,
   currentLead,
@@ -60,11 +43,6 @@ export function ReplayProbabilityChart({
               label={{ value: "bust", position: "right", fontSize: 9, fill: CHART.axis, dy: -4, dx: -30 }} />
           ) : null}
           <ReferenceLine x={currentLead} stroke={CHART.marker} strokeWidth={2} />
-          {/* The prediction is the line; the OUTCOME is the fill of each marker. Encoding
-              both on one mark keeps a single y-axis - the alternative, a second series at
-              0/1, would put a binary on a probability scale and read as a second
-              forecast. A filled marker is a lead day where the observed error really did
-              exceed this variable's bust threshold. */}
           <Line type="monotone" dataKey="p" name="Bust risk" stroke={CHART.forecast}
             strokeWidth={2} activeDot={{ r: 5 }} connectNulls={false}
             dot={(props: any) => {
@@ -79,7 +57,6 @@ export function ReplayProbabilityChart({
             }} />
         </LineChart>
       </ResponsiveContainer>
-      {/* Identity is never colour alone: the marker shape and this line both carry it. */}
       <p className="muted small">
         <span style={{ color: CHART.high }}>●</span> observed bust
         {variable ? <> — {variable.replace(/_/g, " ")} error exceeded its threshold</> : null}

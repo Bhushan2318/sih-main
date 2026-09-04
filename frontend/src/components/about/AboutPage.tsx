@@ -1,18 +1,6 @@
 import { useModelStatus } from "../../hooks/useDashboardData";
 import { ErrorState, LoadingState } from "../common/States";
 
-/**
- * What this is, for someone who arrived with no introduction.
- *
- * There is a live presentation, but the link is also submitted and opened unattended,
- * whenever a judge likes, with nobody narrating. So the case for the project has to stand
- * on the site by itself, and it has to answer, in order, the three questions a stranger
- * actually has - what am I looking at, is it any good, and can I believe the numbers.
- *
- * Every figure here is read from /api/model/status at render time. None is written into
- * this file. A hardcoded metric would be correct until the next retrain and quietly wrong
- * afterwards, which is precisely the failure this project claims not to have.
- */
 export function AboutPage({ onReplay }: { onReplay: () => void }) {
   const { data, isLoading, error } = useModelStatus();
 
@@ -39,16 +27,12 @@ export function AboutPage({ onReplay }: { onReplay: () => void }) {
         </div>
       </header>
 
-      {/* The single most useful thing a first-time visitor can do, said before anything
-          else. Replay is the most convincing view here and it is the last tab. */}
       <div className="notice">
         <p style={{ margin: 0 }}>
           <b>Start here:</b> Replay takes a real forecast cycle from the archive, scores it
           with the deployed model, and shows what this system would have told a forecaster
           that day — before anyone knew the outcome.
         </p>
-        {/* Its own line: inline, it broke mid-sentence after "outcome." and read as a
-            stray control rather than the one thing worth clicking. */}
         <p style={{ margin: "0.6rem 0 0" }}>
           <button type="button" className="chip" onClick={onReplay}>
             Open Replay →
@@ -56,19 +40,6 @@ export function AboutPage({ onReplay }: { onReplay: () => void }) {
         </p>
       </div>
 
-      {/* Two stacking columns, not two side-by-side rows.
-
-          As rows, each pair was forced onto a shared baseline and the shorter card left a
-          tall band of dead space beneath it — worst on a wide screen, where the prose wraps
-          into fewer lines and the gap opens to ~500px. Columns let the next card move up
-          into that space instead. The pairing still reads: what it is and why to trust it on
-          the left, what it scores and what it cannot do on the right. */}
-      {/* Column contents chosen from MEASURED card heights against production data, not
-          guessed: question 317 + how-well 617 = 948 against trust 296 + not-do 374 +
-          how-it-runs 120 = 818. Pairing the tall results card with the short question card
-          is what keeps the two columns within ~130px of each other; the obvious grouping
-          (question+trust | how-well+not-do) measured 377px apart and left the same band of
-          empty page this replaced. */}
       <div className="page--cols">
         <div className="page__col">
           <section className="card">
@@ -126,9 +97,6 @@ export function AboutPage({ onReplay }: { onReplay: () => void }) {
               so this skill is not a rediscovery of “day 10 is worse than day 1”.
             </p>
 
-            {/* "Compared to what?" answered with the run's own numbers. This table is
-                written by the training run and shipped inside it, so it can never describe
-                a different model than the one answering this request. */}
             {bl.models?.length ? (
               <>
                 <header className="card__head"><h4>Compared to what?</h4></header>

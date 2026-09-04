@@ -1,20 +1,3 @@
-"""Model persistence and the 'current' pointer.
-
-Layout:
-    data/models/{run_id}/
-        {variable}_regressor.json     XGBoost native
-        classifier.json               XGBoost native
-        thresholds.json
-        shap_summary.parquet
-        feature_columns.json          frozen column order per model
-        metrics.json
-        manifest.json
-    data/models/current.json          {"run_id": ...}  - written atomically, only after a
-                                      fully successful retrain
-
-A half-written run never becomes 'current': the pipeline calls set_current() last.
-"""
-
 from __future__ import annotations
 
 import json
@@ -53,8 +36,6 @@ def _atomic_write(path: Path, text: str) -> None:
         Path(tmp).unlink(missing_ok=True)
 
 
-# --------------------------------------------------------------------------- save
-
 def save_regressor(run_id: str, variable: str, model: xgb.XGBRegressor, feature_columns: list) -> None:
     d = run_dir(run_id)
     d.mkdir(parents=True, exist_ok=True)
@@ -81,9 +62,6 @@ def save_thresholds(run_id: str, thr: Thresholds) -> None:
 
 
 def save_historical_bust_freq(run_id: str, hbf: dict) -> None:
-    """The train-split (region_id, season) -> large-error-rate map. Persisted so inference
-    reuses the exact values the models were trained against instead of recomputing (which
-    would leak the newest data into a feature the model saw as a train-only statistic)."""
     payload = {f"{r}||{s}": v for (r, s), v in hbf.items()}
     _atomic_write(run_dir(run_id) / "historical_bust_freq.json", json.dumps(payload, indent=2))
 
@@ -105,12 +83,9 @@ def save_manifest(run_id: str, manifest: dict) -> None:
 
 
 def set_current(run_id: str) -> None:
-    """Flip the active run. Call this LAST, only on a fully successful retrain."""
     _atomic_write(CURRENT_JSON, json.dumps({"run_id": run_id,
                                             "set_at": datetime.now(timezone.utc).isoformat()}))
 
-
-# --------------------------------------------------------------------------- load
 
 def current_run_id() -> Optional[str]:
     if not CURRENT_JSON.exists():
@@ -127,7 +102,6 @@ def load_feature_columns(run_id: str) -> dict:
 
 
 def load_regressors(run_id: str) -> dict:
-    """{variable: (XGBRegressor, feature_columns)} for every *_regressor.json in the run."""
     d = run_dir(run_id)
     cols = load_feature_columns(run_id)
     out = {}
@@ -149,12 +123,6 @@ def load_classifier(run_id: str):
 
 
 def load_baselines(run_id: str) -> Optional[dict]:
-    """The baseline comparison this run published, if it ran one.
-
-    Optional by design: a run trained before baselines existed, or one where the split was
-    too small to fit them, simply has no file and the API reports nothing rather than a
-    stale or invented table.
-    """
     path = run_dir(run_id) / "baselines.json"
     if not path.is_file():
         return None
