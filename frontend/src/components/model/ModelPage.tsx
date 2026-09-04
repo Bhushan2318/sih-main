@@ -6,26 +6,8 @@ import { ErrorState, LoadingState } from "../common/States";
 import { UploadPanel } from "../upload/UploadPanel";
 import { PipelineLog } from "./PipelineLog";
 
-/**
- * Upload drives a retrain, which needs ~2 GB. On a 512 MB serving host that would OOM
- * the container mid-demo, so the host sets VITE_ENABLE_UPLOAD=false and the panel is not
- * built at all. Unset (local dev) means on, where the laptop can actually do the work.
- */
 const UPLOAD_ENABLED = import.meta.env.VITE_ENABLE_UPLOAD !== "false";
 
-/**
- * The model, in full: what it was trained on, how well it scores, and what it treats as a
- * bust for each variable.
- *
- * The side-card version showed four classifier numbers. The registry actually records a
- * per-variable regressor split with a persistence baseline beside it, and the thresholds
- * every bust label was derived from - the numbers that answer "is this thing any good?"
- * and "what does bust even mean here?". Those are the case for the project, so they get
- * the page rather than being computed and thrown away.
- *
- * Skill is the one derived figure and it is labelled as such: 1 - MAE/baseline MAE, the
- * fraction of the naive forecast's error the model removes. Everything else is served.
- */
 export function ModelPage() {
   const { data, isLoading, error } = useModelStatus();
   const connection = useLiveStore((s) => s.connectionStatus);
@@ -71,7 +53,6 @@ export function ModelPage() {
         )
       ) : (
         <>
-          {/* ── the headline question: does the bust classifier actually work? */}
           <div className="kpis kpis--flush">
             <Stat cap="blue" label="ROC-AUC" value={num(clf.roc_auc, 3)}
               note={<>ranking skill · 0.5 is a coin flip</>} />
@@ -90,14 +71,8 @@ export function ModelPage() {
           </p>
 
           <div className="page--split">
-            {/* ── what it learned from */}
             <section className="card">
               <header className="card__head"><h3>Training data</h3></header>
-              {/* What the model learned from, read from the run's own manifest - not from
-                  this box's copy of the store. Training runs on a 16 GB CI runner against
-                  the full reforecast archive; the 512 MB serving box carries only the
-                  cycles it needs to answer a request, and never trains. Counting rows
-                  here would report a smaller evidence base than the model actually has. */}
               <dl className="metrics metrics--compact">
                 <div>
                   <dt>Forecast cycles</dt>
@@ -130,10 +105,6 @@ export function ModelPage() {
                   written on the next retrain.
                 </p>
               )}
-              {/* Everything below describes THIS box's copy of the store, which is
-                  deliberately smaller than what the model trained on: it is a 512 MB
-                  instance that never trains and only needs the cycles it serves. Labelled
-                  so the two counts above and below cannot be read as the same number. */}
               <div className="panel__section">
                 <header className="card__head"><h4>On this server</h4></header>
                 <dl className="metrics metrics--compact">
@@ -144,9 +115,6 @@ export function ModelPage() {
                 </dl>
                 <dl className="metrics">
                   <div className="metrics__wide">
-                    {/* Labelled with its scope. Read bare, this range says the model only
-                        knows 2016 onward - understating the evidence base by two decades,
-                        since training reaches back to first_train_date. */}
                     <dt>Valid-date range on this server</dt>
                     <dd className="mono small">
                       {vol.valid_date_min ?? "—"} → {vol.valid_date_max ?? "—"}
@@ -180,7 +148,6 @@ export function ModelPage() {
               )}
             </section>
 
-            {/* ── what "bust" means, per variable, and where the bands cut */}
             <section className="card">
               <header className="card__head"><h3>What counts as a bust</h3></header>
               <p className="muted small">
@@ -220,7 +187,6 @@ export function ModelPage() {
             </section>
           </div>
 
-          {/* ── the per-variable case: beating persistence, variable by variable */}
           {Object.keys(regressors).length ? (
             <section className="card card--table">
               <header className="card__head">
@@ -294,13 +260,11 @@ function Stat({ cap, label, value, note }: {
   );
 }
 
-/** Fraction of the baseline's error removed. Null unless both figures are real. */
 function skillScore(mae: number | null, baseline: number | null): number | null {
   if (mae == null || baseline == null || !Number.isFinite(mae) || !baseline) return null;
   return 1 - mae / baseline;
 }
 
-/** The bust base rate reads as "46%" far more easily than as 0.464. */
 function pctOf(v: unknown): string {
   return typeof v === "number" && Number.isFinite(v) ? `${(v * 100).toFixed(0)}%` : "—";
 }

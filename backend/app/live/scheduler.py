@@ -1,16 +1,3 @@
-"""Background scheduler for live ingestion.
-
-A plain daemon thread on a fixed interval rather than APScheduler: the job is a single
-periodic call, the process already runs threads for retraining, and this keeps the
-dependency list unchanged.
-
-Off unless ``live_ingest_enabled`` is set. A fresh clone, a test run and CI must never
-start reaching out to NOAA on import - live ingestion is switched on deliberately.
-
-The work itself runs off the event loop (this is a thread, not a coroutine), so a GRIB
-pull that takes minutes cannot block the API.
-"""
-
 from __future__ import annotations
 
 import logging
@@ -22,10 +9,7 @@ from app.config import settings
 
 log = logging.getLogger("forecastguard.live.scheduler")
 
-# How often to wake and ask "is anything due?". Cheap when nothing is: the orchestrator's
-# own idempotency check returns immediately for an already-ingested cycle.
 TICK_SECONDS = 15 * 60
-# Delay before the first tick, so application startup is never held up by a download.
 FIRST_TICK_SECONDS = 60
 
 
@@ -76,7 +60,6 @@ class LiveScheduler:
             wait = TICK_SECONDS
             self._next_tick = datetime.now(timezone.utc) + timedelta(seconds=TICK_SECONDS)
             try:
-                # Imported here so the module graph stays light when the scheduler is off.
                 from app.live.orchestrator import run_due_work
                 self._last_result = run_due_work(trigger="schedule")
                 self._ticks += 1

@@ -1,11 +1,3 @@
-"""Upload orchestration: save the file, run the ingestion pipeline, and kick off a
-background retrain when new canonical rows landed.
-
-The retrain runs full (never warm-start) against the whole accumulated dataset and only
-flips `current.json` on success, so a failed run never leaves the API serving a
-half-written model. Progress is broadcast over the WebSocket.
-"""
-
 from __future__ import annotations
 
 import logging
@@ -28,7 +20,6 @@ from app.services import alert_service
 
 log = logging.getLogger(__name__)
 
-# Guards against two retrains running at once (a second upload mid-training).
 _training_lock = threading.Lock()
 _training_state = {"in_progress": False, "last_error": None}
 
@@ -81,8 +72,6 @@ def handle_confirm(session: Session, batch_id: str, mappings: list) -> IngestRes
 
 
 def run_retrain(batch_id: Optional[str] = None) -> None:
-    """BackgroundTask entry point. Never raises into the request; failures are recorded
-    on the TrainingRun row, broadcast, and surfaced by /api/model/status."""
     if not _training_lock.acquire(blocking=False):
         log.info("retrain already running; skipping duplicate trigger")
         return
@@ -90,7 +79,7 @@ def run_retrain(batch_id: Optional[str] = None) -> None:
     _training_state["last_error"] = None
     emit(EventType.TRAINING_STARTED, triggered_by_batch_id=batch_id)
 
-    from app.ml.train_pipeline import full_retrain  # local import: heavy deps
+    from app.ml.train_pipeline import full_retrain
 
     try:
         report = full_retrain(triggered_by_batch_id=batch_id, make_current=True)
@@ -110,9 +99,6 @@ def run_retrain(batch_id: Optional[str] = None) -> None:
 
         if report.status == "success":
             inference.invalidate_caches()
-            # invalidate_caches() drops the guided-replay ranking too; rebuild it here,
-            # on this background thread, so the first /api/replay/cycles call after a
-            # retrain is instant instead of paying the full re-rank (~2 min) inline.
             try:
                 from app.services import replay_service
                 replay_service.list_cycles()

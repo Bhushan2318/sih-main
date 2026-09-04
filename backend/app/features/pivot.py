@@ -1,21 +1,3 @@
-"""Long -> wide pivot to the classifier's grain: one row per forecast *event*
-(region_id, valid_date, lead_time_days, init_date).
-
-For each event and each modelled variable:
-  pred_err_<var>   mean over members of the regressor's error prediction (OOF at train
-                   time, plain predict at inference)
-  conf_<var>       mean over members of clip(1 - pred_err / p90_error[var], 0, 1)
-  spread_<var>     mean ensemble_spread for that variable at the event
-
-Event-level:
-  region_id (cat), lead_time_days, month, season (cat),
-  historical_bust_frequency_region_season,
-  spread_mean / spread_max across variables
-
-Label (train only):  y = 1 if  max_var (actual_err_<var> / bust_threshold[var]) >= 1
-where actual_err is the ensemble-MEAN forecast error for that event+variable.
-"""
-
 from __future__ import annotations
 
 import numpy as np
@@ -33,15 +15,11 @@ def build_event_frame(
     bust_threshold: dict | None,
     historical_bust_freq: dict | None = None,
 ) -> pd.DataFrame:
-    """`paired` is the per-member frame from engineering.build_training_frame, restricted
-    to one split. `pred_err` is a Series aligned to paired.index with each row's predicted
-    absolute error. `bust_threshold` None -> no label column (inference)."""
     df = paired.copy()
     df["pred_err"] = pred_err.reindex(df.index).to_numpy()
     df["p90"] = df["variable"].map(p90_error)
     df["conf"] = (1.0 - df["pred_err"] / df["p90"]).clip(CONF_FLOOR, 1.0)
 
-    # ensemble-mean forecast per (event, variable) -> actual error for the label
     em = (df.groupby(EVENT_KEYS + ["variable"], observed=True)
             .agg(fc_mean=("forecast_value", "mean"),
                  obs=("observed_value", "mean"),
@@ -56,7 +34,6 @@ def build_event_frame(
     pe.columns = [f"{a}_{b}" for a, b in pe.columns]
     pe = pe.reset_index()
 
-    # event-level context
     pe["valid_date"] = pd.to_datetime(pe["valid_date"])
     pe["month"] = pe["valid_date"].dt.month
     pe["season"] = _season(pe["month"])
@@ -88,8 +65,6 @@ def build_event_frame(
 
 
 def classifier_feature_columns(event_df: pd.DataFrame) -> list:
-    """Feature columns for the bust classifier - the OOF-predicted signals plus event
-    context. Deliberately excludes every actual_err_* / bust_ratio / y_bust column."""
     per_var = [c for c in event_df.columns
                if c.startswith(("pred_err_", "conf_"))
                or (c.startswith("spread_") and c not in ("spread_mean", "spread_max"))]

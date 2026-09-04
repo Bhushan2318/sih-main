@@ -10,16 +10,11 @@ import { ReplayProbabilityChart } from "./ReplayProbabilityChart";
 
 const STEP_MS = 2200;
 
-/**
- * Guided replay: pick a real historical forecast cycle and step through its lead days,
- * watching the map recolour while the narration - generated from the cycle's own scored
- * numbers - explains how the bust developed. Nothing here is scripted or synthetic.
- */
 export function ReplayView({ topology }: { topology: Topology | null }) {
   const [selectedInit, setSelectedInit] = useState<string | undefined>(undefined);
   const [stepIdx, setStepIdx] = useState(0);
   const [playing, setPlaying] = useState(false);
-  // which region the focus chart shows; null = the cycle's peak region (server default)
+
   const [focusRegionId, setFocusRegionId] = useState<string | null>(null);
 
   const cyclesQuery = useReplayCycles(true);
@@ -28,14 +23,12 @@ export function ReplayView({ topology }: { topology: Topology | null }) {
   const replay = replayQuery.data;
   const steps = replay?.steps ?? [];
 
-  // Reset to the first lead day (and the default focus region) whenever the cycle changes.
   useEffect(() => {
     setStepIdx(0);
     setPlaying(false);
     setFocusRegionId(null);
   }, [replay?.init_date]);
 
-  // Autoplay.
   const timer = useRef<number | null>(null);
   useEffect(() => {
     if (!playing || steps.length === 0) return;
@@ -199,24 +192,12 @@ export function ReplayView({ topology }: { topology: Topology | null }) {
           {shownFocus ? (
             <>
               <ReplayFocusChart focus={shownFocus} currentLead={step.lead_time_days} />
-              {/* The same region's predicted probability across the same lead days, taken
-                  from the steps already in this payload - so the outcome and the call
-                  that preceded it are read on one axis instead of being correlated by
-                  eye between a chart and a number. */}
               <ReplayProbabilityChart
                 currentLead={step.lead_time_days}
                 cuts={statusQuery.data?.thresholds?.risk_band_cuts}
                 variable={shownFocus.variable}
                 points={(replayQuery.data?.steps ?? []).map((st) => {
-                  // Whether this lead day actually busted, from the focus series the
-                  // chart above is already drawing. |forecast - observed| against this
-                  // variable's own threshold is exactly how the training label is
-                  // defined, so nothing is being re-derived by a different rule.
-                  //
-                  // Deliberately one-directional: the event label is the MAX ratio over
-                  // every variable, so exceeding here proves a bust, while not exceeding
-                  // proves nothing about the other variables. Hence "threshold not
-                  // exceeded for this variable" rather than "no bust".
+
                   const fp = shownFocus.points.find(
                     (x) => x.lead_time_days === st.lead_time_days);
                   const thr = shownFocus.bust_threshold;
@@ -234,15 +215,7 @@ export function ReplayView({ topology }: { topology: Topology | null }) {
               />
             </>
           ) : (
-            /* No focus series: _focus_for_region filters on observed_value.notna(), so a
-               cycle that has not verified yet yields none and BOTH charts rendered as
-               null - blank space with no explanation, which reads as a broken page.
-               Say why instead.
 
-               Deliberately not falling back to drawing the probability chart alone: its
-               markers encode "observed bust" vs "threshold not exceeded", and on an
-               unverified cycle that would assert a negative outcome where the truth is
-               simply not known yet. */
             <div className="replay-focus">
               <div className="replay-focus__head">
                 <strong>No forecast-vs-observed chart for this run</strong>

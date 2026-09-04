@@ -1,16 +1,3 @@
-"""Turn an uploaded file of unknown shape into a tidy DataFrame plus notes about what
-was done to it. No column *meaning* is decided here (that is schema_mapper's job) - this
-module only handles container formats, delimiters, header junk, wide-to-long reshapes,
-and missing-value sentinels.
-
-Supported inputs: .csv / .tsv / .txt, .xlsx / .xls, .json (records), .parquet.
-Recognised quirks:
-  * NASA POWER "-BEGIN HEADER- ... -END HEADER-" preamble before the real header row
-  * NASA POWER monthly wide layout  PARAMETER,YEAR,LAT,LON,JAN..DEC,ANN  -> melt to long
-  * NASA POWER daily layout         LAT,LON,YEAR,DOY,<PARAM>             -> YEAR+DOY -> date
-  * -999 / -999.0 missing sentinel  -> NaN
-"""
-
 from __future__ import annotations
 
 import csv
@@ -31,10 +18,10 @@ _MONTHS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT",
 @dataclass
 class ParsedTable:
     df: pd.DataFrame
-    detected_format: str                     # csv | tsv | xlsx | json | parquet
-    layout_hint: Optional[str] = None        # wide | long
-    grain: str = "native"                    # native | monthly
-    reshape: Optional[str] = None            # power_monthly_melt | power_daily_doy | None
+    detected_format: str
+    layout_hint: Optional[str] = None
+    grain: str = "native"
+    reshape: Optional[str] = None
     sheet_names: Optional[list] = None
     parse_notes: list = field(default_factory=list)
 
@@ -44,12 +31,8 @@ class ParsedTable:
 
 
 class ParseError(ValueError):
-    """Raised when a file cannot be parsed into a flat table (e.g. nested JSON/GeoJSON)."""
+    pass
 
-
-# --------------------------------------------------------------------------------------
-# entry point
-# --------------------------------------------------------------------------------------
 
 def parse_upload(path: Path | str, original_filename: Optional[str] = None) -> ParsedTable:
     path = Path(path)
@@ -62,13 +45,8 @@ def parse_upload(path: Path | str, original_filename: Optional[str] = None) -> P
         return _finalise(pd.read_parquet(path), "parquet", [])
     if ext == ".json":
         return _parse_json(path)
-    # default: delimited text (.csv, .tsv, .txt, or no/unknown extension)
     return _parse_delimited(path, ext)
 
-
-# --------------------------------------------------------------------------------------
-# delimited text
-# --------------------------------------------------------------------------------------
 
 def _parse_delimited(path: Path, ext: str) -> ParsedTable:
     raw = path.read_text(encoding="utf-8", errors="replace")
@@ -85,7 +63,7 @@ def _parse_delimited(path: Path, ext: str) -> ParsedTable:
     df = pd.read_csv(
         io.StringIO(body),
         sep=sep,
-        dtype=str,               # read everything as text; numeric coercion happens after
+        dtype=str,
         keep_default_na=False,
         skip_blank_lines=True,
         engine="python",
@@ -116,7 +94,6 @@ def _sniff_delimiter(body: str, ext: str) -> str:
 
 
 def _nasa_power_header_offset(raw: str) -> tuple[int, str]:
-    """Number of leading lines to skip for a NASA POWER '-BEGIN HEADER-' preamble."""
     lines = raw.splitlines()
     for i, line in enumerate(lines[:60]):
         if line.strip().upper() == "-END HEADER-":
@@ -135,10 +112,6 @@ def _apply_missing_sentinels(df: pd.DataFrame, notes: list) -> pd.DataFrame:
         notes.append(f"replaced {hits} missing-value sentinels ({sorted(MISSING_SENTINELS)}) with NaN")
     return df
 
-
-# --------------------------------------------------------------------------------------
-# NASA POWER reshapes
-# --------------------------------------------------------------------------------------
 
 def _looks_like_power_monthly(cols) -> bool:
     upper = {str(c).upper() for c in cols}
@@ -188,10 +161,6 @@ def _power_daily_doy_to_date(df: pd.DataFrame, notes: list) -> tuple[pd.DataFram
     notes.append("converted NASA POWER YEAR + DOY to valid_date")
     return df, notes
 
-
-# --------------------------------------------------------------------------------------
-# excel / json / parquet
-# --------------------------------------------------------------------------------------
 
 def _parse_excel(path: Path) -> ParsedTable:
     xl = pd.ExcelFile(path)

@@ -5,19 +5,8 @@ import { useAlerts } from "../../hooks/useDashboardData";
 import { EmptyState, ErrorState, LoadingState, RiskBadge } from "../common/States";
 import { bandLabel } from "../../theme";
 
-/** What the list is capped at. The cycle currently produces ~190, so this shows all of it. */
 const LIMIT = 200;
 
-/**
- * Every watch and bust in the cycle, on its own page.
- *
- * The side-panel version could only ever show the worst five. Given a whole page the list
- * becomes the thing itself: the full ranking, the day each one lands, and the variable
- * driving it - which is what turns "Ladakh 90%" into something a forecaster can act on.
- *
- * Every figure here is counted from the alerts actually returned. Nothing is extrapolated
- * to "the cycle" beyond what came back, and if the list hits the cap the header says so.
- */
 export function AlertsPage({ onSelect, filter, onFilter }: {
   onSelect: (regionId: string, lead: number) => void;
   filter: RiskBand | undefined;
@@ -142,7 +131,6 @@ function Stat({ cap, label, value, note }: {
   );
 }
 
-/** Counts over the alerts actually returned - never an estimate of the wider cycle. */
 function summarise(alerts: Alert[] | undefined) {
   if (!alerts?.length) return null;
 

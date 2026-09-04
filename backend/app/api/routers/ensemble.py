@@ -1,5 +1,3 @@
-"""Ensemble divergence endpoint - the hero view of a cycle coming apart."""
-
 from __future__ import annotations
 
 from datetime import date

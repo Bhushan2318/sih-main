@@ -11,18 +11,6 @@ const BAND_COLOR: Record<RiskBand, string> = {
   high: CHART.high,
 };
 
-/**
- * P(bust) across the forecast horizon for one region.
- *
- * The risk bands are drawn as faint shaded zones rather than labelled lines cutting across
- * the plot: the cuts are the classifier's own percentile thresholds, so they belong to the
- * background the curve is read against, not to the foreground competing with it. They are
- * named once, with their actual values, in the caption underneath - which is also what
- * stops them looking like decoration.
- *
- * Each point is drawn in its own band colour, so where the curve crosses is visible
- * without reading the axis at all.
- */
 export function BustProbabilityCurve({ points, cuts }: {
   points: BustProbabilityPoint[];
   cuts?: { medium: number; high: number };
@@ -49,7 +37,6 @@ export function BustProbabilityCurve({ points, cuts }: {
             </linearGradient>
           </defs>
 
-          {/* The bands themselves, as ground rather than foreground. */}
           {watch != null && bust != null ? (
             <>
               <ReferenceArea y1={0} y2={watch} fill={CHART.low} fillOpacity={0.05} strokeOpacity={0} />
@@ -72,13 +59,9 @@ export function BustProbabilityCurve({ points, cuts }: {
             }
             labelFormatter={(l) => `Lead day ${l}`}
           />
-          {/* `tooltipType="none"` is load-bearing. This Area and the Line below share the
-              dataKey, and Recharts emits one tooltip row per series - so the fill silently
-              printed "mostly driven by: rainfall_mm : 25.88% (low)" a second time, identical
-              to the line's own row. The Area is ground, not a series anyone reads a value
-              off, so it opts out of the tooltip entirely. */}
           <Area
             type="monotone" dataKey="probability" stroke="none" fill="url(#bustFill)"
+            // tooltipType="none": Area and Line share a dataKey, so the tooltip doubles without it.
             isAnimationActive={false} legendType="none" tooltipType="none"
           />
           <Line
@@ -100,7 +83,6 @@ export function BustProbabilityCurve({ points, cuts }: {
   );
 }
 
-/** A marker per lead day, filled with that day's risk band. */
 function BandDot(props: { cx?: number; cy?: number; payload?: { band: RiskBand } }) {
   const { cx, cy, payload } = props;
   if (cx == null || cy == null || !payload) return null;

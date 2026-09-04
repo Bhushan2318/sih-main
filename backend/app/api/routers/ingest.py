@@ -1,10 +1,3 @@
-"""Live-ingestion status and manual triggers.
-
-The status endpoint is what lets the dashboard state feed freshness honestly: it reports
-the last cycle actually ingested and when, so a stale feed reads as a stale feed rather
-than as data that happens to be current.
-"""
-
 from __future__ import annotations
 
 import threading
@@ -22,29 +15,15 @@ router = APIRouter(prefix="/api/ingest", tags=["ingest"])
 
 @router.get("/status")
 def ingest_status() -> dict:
-    """Feed health: last cycle, last observation refresh, scheduler state."""
     return {**orchestrator.feed_status(), "scheduler": scheduler.status()}
 
 
 @router.get("/runs")
 def ingest_runs(limit: int = Query(25, ge=1, le=200)) -> dict:
-    """Recent pipeline attempts, newest first - including the ones that were skipped or
-    refused. The dashboard renders this as an activity log."""
     return {"runs": orchestrator.recent_runs(limit)}
 
 
 def _require_live_ingest() -> None:
-    """Refuse when this deployment does not do its own ingestion.
-
-    The setting was previously only *reported*. The scheduler declined to start
-    (live/scheduler.py:57), but a manual POST reached the same orchestrator jobs anyway -
-    so "live ingestion is off" described the background timer, not the API. These routes
-    write to the canonical store, which changes store_signature() and puts the shipped
-    summary.json out of step with the store beside it.
-
-    Checked at the top of each handler, before either branch: `wait=true` runs the job
-    inline, so a guard placed after that check would let the synchronous path through.
-    """
     if not settings.live_ingest_enabled:
         raise HTTPException(
             409,
@@ -62,7 +41,6 @@ def run_cycle(
     force: bool = Query(False, description="re-ingest even if this cycle is already stored"),
     wait: bool = Query(False, description="run inline and return the result instead of scheduling it"),
 ) -> dict:
-    """Pull one operational GEFS cycle now ("Refresh now")."""
     _require_live_ingest()
     if cycle_hour is not None and init_date is None:
         raise HTTPException(400, "cycle_hour requires init_date")
@@ -85,7 +63,6 @@ def refresh_observations(
     days_back: Optional[int] = Query(None, ge=1, le=92),
     wait: bool = Query(False),
 ) -> dict:
-    """Pull observations for one verification tier now."""
     _require_live_ingest()
     if wait:
         return orchestrator.run_observation_refresh(tier, days_back, trigger="manual")
@@ -99,11 +76,6 @@ def backfill(
     cycles: int = Query(..., ge=1, le=120, description="how many past cycles to pull"),
     stride_hours: int = Query(24, ge=6, le=168),
 ) -> dict:
-    """Pull past cycles, oldest first. Resumable: already-ingested cycles are skipped.
-
-    Deliberately long-running - each cycle is a few minutes - so it always runs in the
-    background and reports through /api/ingest/status.
-    """
     _require_live_ingest()
     threading.Thread(
         target=orchestrator.backfill_cycles, args=(cycles, stride_hours),

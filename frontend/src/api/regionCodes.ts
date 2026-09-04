@@ -1,10 +1,3 @@
-// GENERATED FILE - do not edit by hand.
-// Source: backend/app/utils/india_state_codes.py
-// Regenerate: python backend/scripts/gen_frontend_region_codes.py
-//
-// The API keys regions by ISO 3166-2:IN `region_id`; the vendored topojson keys features
-// by the 2011 census `st_code`. This table is the only place those two schemes meet.
-
 export interface RegionCode {
   regionId: string;
   regionName: string;

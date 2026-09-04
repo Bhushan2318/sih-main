@@ -1,32 +1,19 @@
-/* ══════════════════════════════════════════════════════════════════════════════════
-   SANKET — "DIVERGENCE"
-   संकेत · signal. One committed world: synoptic chart paper, ink-navy line work, and a
-   three-stop risk ramp (calm → watch → bust). Light only, painted explicitly, so the
-   page never borrows a host theme.
-
-   Colour carries meaning here and nothing else does: cobalt is the product accent and
-   the forecast line; the risk ramp is a separate scale and is never used decoratively.
-   ══════════════════════════════════════════════════════════════════════════════════ */
-
 :root {
-  /* ground + structure */
+
   --paper: #eceff5;
   --card: #ffffff;
   --card-2: #f5f7fb;
   --rule: #d5dbe6;
   --rule-2: #e5e9f0;
 
-  /* ink */
   --ink: #0b1220;
   --ink-2: #3d4a5c;
   --ink-3: #7b8798;
 
-  /* accent — the product, and the forecast trace */
   --blue: #2b4eff;
   --blue-2: #5c78ff;
   --blue-wash: #e5eaff;
 
-  /* risk ramp — a scale, never decoration */
   --calm: #00a882;
   --calm-wash: #d9f6ef;
   --watch: #f08700;
@@ -38,14 +25,12 @@
   --f-b: "Public Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --f-m: "DM Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 
-  /* the sticky top bar's own height, so the opening screen can claim exactly the rest */
   --topbar-h: 59px;
 
   --shadow: 0 16px 34px -24px rgba(11, 18, 32, 0.42);
   --shadow-lift: 0 20px 40px -22px rgba(11, 18, 32, 0.45);
   --r: 11px;
 
-  /* aliases kept so older rules and inline chart colours resolve to the new palette */
   --bg: var(--paper);
   --panel: var(--card);
   --line: var(--rule);
@@ -100,7 +85,6 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
   }
 }
 
-/* ─────────────────────────────────────────────────────────── shell + top bar */
 .app { min-height: 100vh; }
 
 .topbar {
@@ -113,24 +97,16 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
   display: flex; align-items: center; gap: 20px;
   min-height: 58px; padding: 0.5rem 1.3rem; flex-wrap: wrap;
 }
-/* Now a <button> (it navigates home), so the UA button styling has to be undone -
-   background, border, padding and font all reset - or the brand grows a chrome box and
-   the topbar's real height stops matching --topbar-h. */
+
 .brand {
   display: flex; align-items: center; gap: 10px; flex: none;
   background: none; border: 0; padding: 0; margin: 0;
   font: inherit; color: inherit; cursor: pointer; text-align: left;
 }
 .brand:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; border-radius: 4px; }
-/* object-fit keeps the box exactly 26x26 while the asset is 1.25:1, so the logo is
-   letterboxed inside its old footprint rather than squashed - and the brand row's
-   geometry is unchanged from the inline SVG it replaces. */
-/* Sized by height, width auto: the asset is 1.25:1, so a square box left it rendering
-   26x21 and visually much smaller than the 125px-wide wordmark beside it. The vertical
-   budget is .topbar__inner's 58px min-height less its 2x8px padding = 42px, so 32px
-   sits inside it and the topbar's real height still matches --topbar-h. */
+
 .brand__glyph { height: 32px; width: auto; flex: none; display: block; }
-/* The wordmark is an image now, sized by height so its 9.6:1 aspect sets the width. */
+
 .brand__wordmark { height: 13px; width: auto; flex: none; display: block; }
 .brand__div { width: 1px; height: 16px; background: var(--rule); }
 .brand__sub { font-size: 11.5px; color: var(--ink-3); font-weight: 500; }
@@ -160,24 +136,17 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 .pill--watch { background: var(--watch-wash); color: #8a4b08; border: 1px solid #f0c48a; }
 .pill--watch i { background: var(--watch); }
 
-/* ──────────────────────────────────────────────────────── opening screen (screen 1)
-   The hero holds one whole viewport before anything operational appears: the national
-   argument first, the map on scroll. `min-height` rather than `height` so a short window
-   still gets a page that grows instead of a hero that clips. */
 .screen1 {
   display: flex; flex-direction: column;
   min-height: calc(100vh - var(--topbar-h));
   min-height: calc(100dvh - var(--topbar-h));
 }
-/* The hero absorbs whatever the ticker, cue and (optionally) the KPI strip leave over,
-   and centres itself in it, so the headline sits optically mid-screen at any height. */
+
 .screen1 > .hero { flex: 1 1 auto; display: flex; flex-direction: column; }
-/* The grid takes the whole hero rather than sitting centred in it, so both columns - the
-   headline and the chart panel - are stretched by `align-items: stretch` to fill it. */
+
 .screen1 > .hero .hero__grid { flex: 1 1 auto; padding-block: clamp(16px, 2.2vh, 34px); }
 .screen1 > .kpis { padding-top: 0; }
 
-/* The map is the scroll target, and must clear the sticky bar when jumped to. */
 #operations { scroll-margin-top: var(--topbar-h); }
 @media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
 
@@ -190,12 +159,6 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 }
 .scrollcue:hover { color: var(--ink); }
 
-/* Two affordances on one line, not two stacked blocks. The opening screen is held to a
-   single viewport and its height is composed, so the Replay cue had to be added without
-   spending any of it - a row keeps the 41px the scroll cue already occupied. Replay is
-   the most convincing view in the product and it is the last tab; until this existed the
-   only cue on the opening screen pointed DOWN, so an unattended visitor never learned it
-   was there. */
 .cuerow { display: flex; align-items: center; justify-content: center; gap: 20px; flex-wrap: wrap; }
 .cuerow__primary {
   display: inline-flex; align-items: center; gap: 7px;
@@ -206,10 +169,7 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
   transition: opacity 0.18s;
 }
 .cuerow__primary:hover { opacity: 0.86; }
-/* Measured: at 0.16em tracking this pill has a 367px minimum, which scrolled a 360px and
-   a 320px viewport sideways - the exact bug class the mobile pass already fixed once.
-   Allowing it to wrap removes the floor entirely, so no width can overflow; tightening
-   the tracking below 400px keeps it on one line on all but the narrowest phones. */
+
 .cuerow__primary { max-width: 100%; white-space: normal; text-align: center; }
 @media (max-width: 400px) {
   .cuerow__primary { letter-spacing: 0.1em; padding: 7px 11px; }
@@ -218,9 +178,6 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 .scrollcue svg { animation: sk-bob 2.6s ease-in-out infinite; }
 @keyframes sk-bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(4px); } }
 
-/* ────────────────────────────────────────────────────────────────────── hero
-   The signature moment: a cycle's ensemble and reality coming apart. Given real
-   estate because it is the argument, but capped so the map stays reachable. */
 .hero {
   position: relative; overflow: hidden;
   border-bottom: 1px solid var(--rule);
@@ -232,18 +189,10 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
   display: grid; grid-template-columns: minmax(0, 1.14fr) minmax(0, 0.86fr);
   gap: clamp(26px, 3vw, 52px); align-items: stretch; padding: 34px 1.3rem 32px;
 }
-/* minmax(0, 1fr), never a bare 1fr, in these single-column mobile overrides. `1fr` is
-   minmax(AUTO, 1fr) and that auto floor is the item's min-content width, so the track
-   cannot shrink and the whole page scrolls sideways - measured at 412.8px inside a 360px
-   viewport on the Model tab. The desktop rules above already do this correctly. */
+
+/* Always minmax(0, 1fr), never a bare 1fr: the auto floor is min-content and the page scrolls sideways. */
 @media (max-width: 1080px) { .hero__grid { grid-template-columns: minmax(0, 1fr); gap: 26px; padding: 26px 1.3rem; } }
 
-/* Every hero size is capped against BOTH vw and vh: on a wide-but-short laptop the
-   headline has to give way vertically or it pushes the chart off the opening screen. */
-/* Top-aligned, not centred. The panel beside this starts at the top of the grid row, so
-   centring the text left the eyebrow sitting 63px below the chart's tab row — measured —
-   and the two columns read as unrelated blocks rather than one composition. The padding
-   drops the eyebrow onto the tab row's optical line rather than the panel's border. */
 .hero__lead {
   min-width: 0; display: flex; flex-direction: column; justify-content: space-between;
   padding-top: clamp(10px, 2.4vh, 26px); padding-bottom: clamp(4px, 1vh, 12px);
@@ -282,10 +231,6 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
   text-transform: uppercase; color: var(--ink-3);
 }
 
-/* `margin-top: auto` sinks the gauge to the foot of the column, so the left side now
-   aligns with the panel at BOTH ends: eyebrow against the tab row, gauge against the
-   chart's key and provenance line. Without it the column is top-heavy and leaves ~180px
-   of dead white beneath the ring. */
 .hero__gauge {
   display: flex; align-items: center; gap: clamp(22px, 2vw, 34px); flex-wrap: wrap;
 }
@@ -317,8 +262,6 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 .hero__delta--down { color: #00795f; background: var(--calm-wash); }
 .hero__delta--none { color: var(--ink-3); background: var(--card-2); border: 1px solid var(--rule); }
 
-/* The panel is a full-height flex column so the chart grows into whatever the headline
-   column leaves over, rather than floating at a fixed 236px in a tall empty card. */
 .hero__panel {
   margin: 0; background: var(--card); border: 1px solid var(--rule);
   border-radius: 13px; overflow: hidden; box-shadow: 0 22px 46px -28px rgba(11, 18, 32, 0.45);
@@ -338,12 +281,7 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
   font-family: var(--f-m); font-size: 10px; font-weight: 500;
   letter-spacing: 0.11em; text-transform: uppercase; color: var(--bust); flex: none;
 }
-/* `flex: 1 1 0` - basis ZERO, not auto - on both the chart box and Recharts' own container
-   is load-bearing. A ResponsiveContainer at height="100%" sizes itself from its parent, so
-   with an `auto` basis the parent's height depends on the chart and the chart's height
-   depends on the parent: the loop settles at a 600px+ chart that stretches the whole hero
-   past the fold. Basis 0 makes the chart take a share of leftover space and contribute
-   nothing back, so the panel's height is set by the row, never by its contents. */
+
 .hero__chart {
   padding: 8px 14px 0; flex: 1 1 0; min-height: 160px;
   display: flex; flex-direction: column;
@@ -351,7 +289,6 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 .hero__chart .recharts-responsive-container { flex: 1 1 0; min-height: 0; }
 .hero__empty { padding: 34px 4px; text-align: center; margin: auto; }
 
-/* Panel tabs: the national view answers two questions, one click apart. */
 .hero__tabs { display: flex; gap: 3px; }
 .hero__tab {
   font-family: var(--f-b); font-size: clamp(11.5px, 0.95vw, 15px); font-weight: 600; color: var(--ink-3);
@@ -361,7 +298,6 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 .hero__tab:hover { background: var(--card-2); color: var(--ink-2); }
 .hero__tab.is-active { background: var(--ink); color: #fff; }
 
-/* Held-out skill numbers, above the reliability plot. */
 .hero__skill {
   display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 0 10px; margin: 2px 2px 10px; flex: none;
@@ -397,25 +333,19 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 }
 .hero__key i { width: 20px; height: 3px; border-radius: 2px; flex: none; }
 
-/* ──────────────────────────────────────────────────────────────────── ticker */
 .ticker { background: var(--ink); overflow: clip; }
 .ticker__track {
   display: flex; width: max-content; will-change: transform;
   backface-visibility: hidden; transform: translate3d(0, 0, 0);
   animation: sk-slide 60s linear infinite;
 }
-.ticker:hover .ticker__track { /* JS also pauses; this covers the first frame */ }
+.ticker:hover .ticker__track {  }
 @keyframes sk-slide {
   from { transform: translate3d(0, 0, 0); }
   to   { transform: translate3d(-50%, 0, 0); }
 }
 .ticker__half { display: flex; flex: 0 0 auto; }
-/* Also every touch device, not just reduced motion. The rail moving on its own assumes a
-   pointer that can hover to stop it; a phone has no hover, so the item being aimed at
-   never stops sliding away. Standing still and swipeable is the native idiom there, and
-   it reuses this block exactly - including hiding the duplicate half, which only exists
-   to make the animated loop seamless. NB: deliberately not the global reduce block above,
-   which kills every animation on the page. */
+
 @media (prefers-reduced-motion: reduce), (hover: none) and (pointer: coarse) {
   .ticker { overflow-x: auto; }
   .ticker__track { animation: none; }
@@ -436,7 +366,6 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 .ticker__value { color: #fff; font-variant-numeric: tabular-nums; }
 .ticker__unit { color: rgba(255, 255, 255, 0.4); }
 
-/* ─────────────────────────────────────────────────────────────────── KPI strip */
 .kpis {
   display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px; padding: 1rem 1.3rem 0;
@@ -469,7 +398,6 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 .kpi__note { font-size: clamp(11px, 0.72vw, 12.5px); color: var(--ink-3); margin: 4px 0 0; }
 .kpi__note b { color: var(--ink-2); font-weight: 600; }
 
-/* ────────────────────────────────────────────────────────────────────── layout */
 .app__body {
   display: grid; grid-template-columns: minmax(0, 1.65fr) 330px 380px;
   gap: 14px; padding: 14px 1.3rem 2rem; align-items: start;
@@ -477,53 +405,35 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 @media (max-width: 1280px) { .app__body { grid-template-columns: minmax(0, 1fr) 340px; } }
 @media (max-width: 960px) { .app__body { grid-template-columns: minmax(0, 1fr); } }
 
-/* ─────────────────────────────────────────── operations: one viewport, map + region
-   A fixed height (not min-height) is the point: the map is told how much room it has and
-   fits itself into it, instead of setting its own height from its width and running off
-   the bottom of the screen. Below 900px tall there is not enough room for a usable map
-   beside a detail panel, so it reverts to flowing and scrolling. */
 .app__body--ops {
   grid-template-columns: minmax(0, 1fr) clamp(440px, 36vw, 600px);
   padding: 14px 1.3rem; align-items: stretch;
   height: calc(100vh - var(--topbar-h));
   height: calc(100dvh - var(--topbar-h));
 }
-/* With the horizon rail in, the leftover width between the map and the detail panel
-   becomes a column instead of a gap. Both side columns are proportional so the rail grows
-   with the screen rather than leaving the void back on a wide monitor. */
+
 .app__body--rail {
   grid-template-columns:
     minmax(0, 1fr) clamp(190px, 16vw, 330px) clamp(440px, 34vw, 620px);
 }
 .app__body--ops .map-column { display: flex; flex-direction: column; min-height: 0; }
-/* basis 0 so the map takes the leftover height and never reports its own back up.
-   `align-self: start` stops the card stretching the full column width and pins it to the
-   left edge: with the height set by flex and the aspect locked to the projection, the card
-   hugs the country instead of framing it in empty white, and the map anchors the left of
-   the screen with the region data reading against it on the right. */
+
 .app__body--ops .map-wrap {
   flex: 1 1 0; min-height: 0;
   align-self: start; aspect-ratio: 620 / 680; max-width: 100%;
 }
-/* height:100% + the SVG's own viewBox means preserveAspectRatio scales India to fit the
-   box and centres it - the whole country, always, at whatever size the screen allows. */
+
 .app__body--ops .map { height: 100%; }
-/* The detail panel is the one thing that can exceed a screen, so it scrolls internally
-   rather than pushing the map's height around. */
+
 .app__body--ops > .panel {
   height: 100%; margin-bottom: 0; overflow-y: auto; overscroll-behavior: contain;
 }
-/* The fallback has to undo the aspect lock and the centring too: with no flex height left
-   to drive it, an aspect-ratio box that is not stretched collapses to nothing. */
+
 @media (max-width: 1100px), (max-height: 700px) {
   .app__body--ops { height: auto; grid-template-columns: minmax(0, 1fr) 380px; }
   .app__body--ops .map-wrap { flex: none; align-self: stretch; aspect-ratio: auto; }
   .app__body--ops .map { height: auto; }
-  /* max-height and position must be released together with overflow, or the panel
-     still LAYS OUT at calc(100vh - 88px) while its content renders past that: the
-     following section is placed against the capped box and the detail chart paints on
-     top of the summary chart. Reported from a phone, where the panel is tallest because
-     the layout is a single column. Releasing overflow alone is what caused it. */
+
   .app__body--ops > .panel {
     height: auto; overflow-y: visible; max-height: none; position: static;
   }
@@ -532,9 +442,6 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 
 .app__below { padding: 14px 1.3rem 2rem; }
 
-/* ────────────────────────────────────────────── horizon rail (beside the map)
-   Deliberately flat - no card, no border, no shadow. It sits between two heavy white
-   panels, and a third framed box there would read as clutter rather than structure. */
 .rail { display: flex; flex-direction: column; min-width: 0; padding-top: 2px; }
 .rail__title { margin-bottom: 10px; }
 .rail__rows { display: flex; flex-direction: column; gap: 2px; }
@@ -551,7 +458,7 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
   font-variant-numeric: tabular-nums;
 }
 .railrow--active .railrow__day { color: var(--ink); font-weight: 500; }
-/* one bar per lead day, split by how many regions sit in each band */
+
 .railrow__bar { display: flex; height: 9px; border-radius: 3px; overflow: hidden; gap: 1px; }
 .railrow__seg { display: block; min-width: 2px; }
 .railrow__seg--low { background: var(--calm); }
@@ -572,38 +479,26 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 }
 .rail__key i { width: 9px; height: 3px; border-radius: 2px; flex: none; }
 .rail__note { margin: 8px 0 0; padding: 0 7px; font-size: 11px; color: var(--ink-3); line-height: 1.45; }
-/* the one claim on the rail: which variable is breaking the forecast, and where it hands over */
+
 .rail__driver {
   margin: 12px 7px 0; padding: 9px 11px; border-left: 2px solid var(--blue);
   background: var(--card-2); border-radius: 0 7px 7px 0;
   font-size: 11.5px; line-height: 1.45; color: var(--ink-2);
 }
 
-/* ───────────────────────────────────────────── standalone pages (alerts, model)
-   Same vocabulary as Operations - the same gutters, cards, mono labels and risk ramp - so
-   a tab switch reads as moving through one product rather than into a settings screen. */
 .page { padding: 20px 1.3rem 2.5rem; max-width: 1100px; margin: 0 auto; }
 .page--wide { max-width: none; }
-/* stretch, not start: the two cards in a row rarely have equal content, and hugging
-   left a tall grey void under the shorter one (the About tab's "question it answers"
-   card against the metrics card beside it). Stretching makes the pair share a row
-   height, so the surface is continuous. Children lay out from the top regardless. */
-/* `start`, not `stretch`. Stretch forced both cards to the taller one's height, and on
-   a wide screen the shorter card carried ~500px of empty white inside its border. Cards
-   now end where their content ends. */
+
 .page--split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; align-items: start; }
 @media (max-width: 860px) { .page--split { grid-template-columns: minmax(0, 1fr); } }
-/* The About page's two columns. Each stacks its own cards, so a short card is followed by
-   the next one rather than by a band of empty page. `align-items: start` keeps the columns
-   independent — stretching them would reintroduce exactly the gap this replaced. */
+
 .page--cols {
   display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 14px; align-items: start;
 }
 .page__col { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 .page__col > .card { margin-bottom: 0; }
-/* minmax(0, 1fr), never a bare 1fr — the auto floor is min-content and the page scrolls
-   sideways. Same trap as the hero and the map grid. */
+
 @media (max-width: 860px) { .page--cols { grid-template-columns: minmax(0, 1fr); } }
 
 .page > .card, .page > .panel { margin-bottom: 14px; }
@@ -623,12 +518,11 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
   color: var(--ink-3); font-family: var(--f-m); font-size: 10px;
   letter-spacing: 0.08em; text-transform: uppercase; margin: 14px 2px 0;
 }
-/* the KPI grid again, but flush against a page rather than tucked under the hero */
+
 .kpis--flush { padding: 0; margin-bottom: 16px; }
 
-/* ─────────────────────────────────────────────────────────── data tables */
 .card--table { padding-bottom: 0.6rem; }
-/* A wide table scrolls inside its own card; the page itself never scrolls sideways. */
+
 .tablewrap { overflow-x: auto; margin: 0 -0.25rem; }
 .dtable { width: 100%; border-collapse: collapse; font-size: 13px; }
 .dtable th {
@@ -641,9 +535,7 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 .dtable tbody tr:last-child td { border-bottom: 0; }
 .dtable__num { text-align: right; font-variant-numeric: tabular-nums; }
 .dtable__strong { font-weight: 600; color: var(--ink); }
-/* The model's own row in the baseline ladder. The class was already emitted by
-   AboutPage; nothing matched it, so the row that carries the argument looked identical
-   to the baselines it beats. Tinted ground + a blue rule, not colour alone. */
+
 .dtable tr.is-active { background: var(--blue-wash); }
 .dtable tr.is-active td { color: var(--ink); font-weight: 600; border-top: 1px solid var(--blue); border-bottom: 1px solid var(--blue); }
 .dtable tr.is-active td:first-child { box-shadow: inset 3px 0 0 var(--blue); }
@@ -682,7 +574,7 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
   font-family: var(--f-d); font-variation-settings: "wdth" 86, "wght" 800;
   font-size: 2rem; line-height: 1; letter-spacing: -0.035em;
 }
-/* Peak bust risk: a big figure beside its band and lead day, never inline inside it. */
+
 .peak { display: flex; align-items: center; gap: 0.7rem; flex-wrap: wrap; margin: 0.35rem 0 0.2rem; }
 .peak__value {
   font-family: var(--f-d); font-variation-settings: "wdth" 86, "wght" 800;
@@ -690,7 +582,6 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 }
 .peak__meta { display: flex; flex-direction: column; gap: 0.2rem; align-items: flex-start; }
 
-/* ───────────────────────────────────────────────────────────────────────── map */
 .map-column { min-width: 0; }
 .side-column { min-width: 0; }
 .map-toolbar {
@@ -757,7 +648,6 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 .bar--medium { fill: var(--watch); }
 .bar--high { fill: var(--bust); }
 
-/* ──────────────────────────────────────────────────────────────────── badges */
 .badge {
   display: inline-block; padding: 0.1rem 0.5rem; border-radius: 99px;
   font-family: var(--f-m); font-size: 0.64rem; font-weight: 500;
@@ -776,7 +666,6 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 }
 .provisional-note { margin-top: 0.25rem; }
 
-/* ──────────────────────────────────────────────────────────────────── states */
 .state {
   padding: 1.4rem 1rem; border-radius: var(--r); background: var(--card);
   border: 1px dashed var(--rule); text-align: center; color: var(--ink-2);
@@ -796,7 +685,6 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 }
 .notice--error { background: var(--bust-wash); border-left-color: var(--bust); color: #8c1027; }
 
-/* ──────────────────────────────────────────────────────────────────── alerts */
 .alerts { list-style: none; margin: 0; padding: 0; max-height: 320px; overflow-y: auto; }
 .alerts li { border-bottom: 1px solid var(--rule-2); }
 .alerts li:last-child { border-bottom: 0; }
@@ -823,10 +711,8 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 .chip--high { border-color: var(--bust); color: var(--bust); }
 .chip--medium { border-color: var(--watch); color: #8a4b08; }
 
-/* ─────────────────────────────────────────────────────────── metrics + factors */
 .metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.35rem 0.9rem; margin: 0.5rem 0; }
-/* size to whatever fits the card rather than a fixed count, so a long value can never
-   push a column off the edge and under the next panel */
+
 .metrics--compact { grid-template-columns: repeat(auto-fit, minmax(3.5rem, 1fr)); }
 .metrics div { display: flex; flex-direction: column; min-width: 0; }
 .metrics__wide { grid-column: 1 / -1; }
@@ -838,9 +724,7 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
   margin: 0; font-family: var(--f-m); font-variant-numeric: tabular-nums;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-/* The About tab's four headline metrics ARE the proof the page exists to present, and
-   they were rendering at the same size as every incidental figure on the site. Display
-   weight here, borrowed from .kpi__value so the two surfaces read as one system. */
+
 .metrics--hero { gap: 0.5rem 1.1rem; margin: 0.35rem 0 0.9rem; }
 .metrics--hero dd {
   font-family: var(--f-d); font-variation-settings: "wdth" 92, "wght" 700;
@@ -863,8 +747,6 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 
 .axis-unit { text-align: right; margin: 0.1rem 0 0.3rem; }
 
-/* Risk-band key under the bust curve: names the cuts once, so the shaded zones read as
-   the model's thresholds rather than as decoration. */
 .bandkey {
   display: flex; flex-wrap: wrap; gap: 0.35rem 0.8rem; align-items: center;
   margin: 0.35rem 0 0; font-family: var(--f-m); font-size: 0.66rem;
@@ -883,7 +765,6 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 .tab--active { background: var(--ink); color: #fff; border-color: var(--ink); }
 .tab--active:hover { color: #fff; border-color: var(--ink); }
 
-/* ──────────────────────────────────────────────────────────────────── upload */
 .dropzone {
   border: 2px dashed var(--rule); border-radius: var(--r);
   padding: 1.5rem 0.8rem; text-align: center; color: var(--ink-3);
@@ -893,13 +774,11 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 .dropzone--over { border-color: var(--blue); background: var(--blue-wash); color: var(--blue); }
 .upload-result { margin-top: 0.6rem; }
 .notes { margin: 0.35rem 0; padding-left: 1.1rem; color: var(--ink-3); font-size: 0.76rem; }
-/* Separated items: these two lists carry the trust argument and the limitations, and run
-   3-5 lines each. Undifferentiated they read as one grey block and get skipped. */
+
 .notes li + li { margin-top: 0.6rem; padding-top: 0.6rem; border-top: 1px solid var(--rule); }
 .notes li b, .notes li strong { color: var(--ink); }
 .notes::marker, .notes li::marker { color: var(--ink-3); }
 
-/* ───────────────────────────────────────────────────────────────────── modal */
 .modal-backdrop {
   position: fixed; inset: 0; background: rgba(11, 18, 32, 0.55);
   display: grid; place-items: center; padding: 1rem; z-index: 50;
@@ -928,7 +807,6 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
   border-radius: 6px; background: var(--card); color: var(--ink); font: inherit;
 }
 
-/* ─────────────────────────────────────────────────────────────────── buttons */
 .btn {
   border: 1px solid var(--rule); background: var(--card); color: var(--ink);
   border-radius: 8px; padding: 0.38rem 0.85rem; cursor: pointer; font: inherit;
@@ -942,7 +820,6 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 .btn--ghost:hover:not(:disabled) { color: var(--blue); }
 .btn--sm { padding: 0.22rem 0.6rem; font-size: 0.78rem; }
 
-/* ───────────────────────────────────────────────────────── live feed strip */
 .feed-strip {
   display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem;
   justify-content: space-between;
@@ -959,7 +836,6 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 .feed-dot--idle { background: var(--ink-3); }
 .feed-dot--bad { background: var(--bust); box-shadow: 0 0 0 3px rgba(245, 37, 74, 0.16); }
 
-/* ───────────────────────────────────────────────────────── view tabs + replay */
 .viewtabs { display: inline-flex; gap: 3px; }
 .viewtab {
   border: 0; background: none; color: var(--ink-2);
@@ -969,28 +845,15 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 .viewtab:hover { background: var(--card); }
 .viewtab.is-active { background: var(--ink); color: #fff; }
 
-/* ─────────────────────────────────────────────── compact topbar, narrow screens only
-   Measured before: 209px of a 390px phone (246px at 360px) - a quarter of the viewport
-   spent on navigation, because the five tabs total 400px and wrap onto a second 44px
-   row. Desktop is untouched and still measures exactly 59px, which --topbar-h and both
-   calc(100vh - var(--topbar-h)) rules depend on.
-
-   The 44px touch-target floor is deliberately NOT lowered: it came from a real audit
-   (Apple 44pt, Android 48dp) and shrinking it would trade one usability problem for a
-   worse one. The height comes out of the wrap, the padding and the redundant subtitle
-   instead. */
 @media (max-width: 700px) {
-  /* the wordmark already says it; 129px of tagline is what a phone can least afford */
+
   .brand__sub, .brand__div { display: none; }
-  /* full label costs 130px and is the sole reason the row wraps */
+
   .viewtab__tail { display: none; }
   .topbar__inner { gap: 8px 10px; padding: 0.4rem 0.9rem; min-height: 0; }
   .viewtabs { gap: 2px; width: 100%; justify-content: space-between; }
   .viewtab { padding: 6px 8px; }
-  /* The status pills wrapped onto a SECOND row at 360px (65px tall instead of 28px),
-     which is why a 360 phone paid 246px against 390's 209px. Tightened so the pair
-     always fits one line. Nothing is hidden - the cycle and the bust count are exactly
-     what makes the header honest about which forecast is loaded. */
+
   .topbar__right { gap: 6px; }
   .pill { font-size: 9.5px; letter-spacing: 0.06em; gap: 5px; padding: 3px 7px; }
   .pill i { width: 6px; height: 6px; }
@@ -1068,23 +931,10 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 
 @media (max-width: 900px) {
   .replay__body { grid-template-columns: minmax(0, 1fr); }
-  /* The tick row is a single inline-flex line; below ~360px it cannot fold and pushes
-     the page 7px wider than the viewport. Wrapping costs nothing when it already fits. */
+
   .replay__pick, .replay__ticks { flex-wrap: wrap; }
 }
 
-
-/* ───────────────────────────────────────────────────────────── touch targets
-   Apple asks for 44pt, Android for 48dp. Measured on a 390px phone against the live
-   site, these controls came in at 19-32px, and .viewtab is the primary navigation - the
-   first thing a visitor touches, and the judges are sent a link rather than shown a demo.
-
-   Gated on `pointer: coarse` rather than a width on purpose: a mouse-driven laptop
-   reports `pointer: fine` and can never match this block however narrow the window gets,
-   and a touch-screen laptop with a trackpad still reports `fine`. Width queries do not
-   give that guarantee. Only vertical size grows for the text controls, so no element gets
-   horizontally wider than it is today and no new overflow is possible; the two controls
-   that do widen (.lead-btn, .replay__tick) sit in rows that wrap. */
 @media (hover: none) and (pointer: coarse) {
   .viewtab, .hero__tab, .tab, .chip, .btn--sm, .replay__play, .button,
   .lead-btn, .replay__tick {
@@ -1093,21 +943,17 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
     align-items: center;
     justify-content: center;
   }
-  /* These two are fixed 28-30px squares, so they need the width as well as the height. */
+
   .lead-btn, .replay__tick { width: 44px; height: auto; }
   .select, select { min-height: 44px; }
-  /* Any row that now holds taller or wider children has to be able to fold. */
+
   .viewtabs, .hero__tabs, .filters, .replay__pick, .replay__ticks, .lead-selector {
     flex-wrap: wrap;
   }
-  /* Five tabs no longer fit one row on a phone, so the last one wraps alone and reads
-     like a mistake. Centring the wrapped row makes it read as a deliberate two-line nav.
-     Deliberately NOT solved by shrinking the tabs: they were widened to clear the 44px
-     touch target, and taking that back would trade a cosmetic nit for a usability one. */
+
   .viewtabs { justify-content: center; row-gap: 4px; }
 }
 
-/* ─────────────────────────────────────────────────────────────── recharts trim */
 .recharts-cartesian-grid line { stroke: var(--rule-2); }
 .recharts-text { fill: var(--ink-3); font-family: var(--f-m); font-size: 10px; }
 .recharts-default-tooltip {

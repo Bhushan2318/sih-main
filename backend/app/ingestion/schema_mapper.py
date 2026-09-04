@@ -1,34 +1,3 @@
-"""SchemaMapper: decide what each column of an uploaded table means.
-
-For every column it produces one proposal with a confidence and a decision:
-
-  auto_accept        - map it now, no human needed
-  needs_confirmation - plausible but not certain; show the user, pre-filled
-  unmapped           - excluded (reported, never silently dropped)
-
-Scoring (per the approved plan):
-  synonym_score  header token match against a per-variable synonym set
-  range_score    fraction of sampled numeric values inside the variable's plausible range
-  confidence     clip(0.65*synonym_score + 0.35*range_score, 0, 1)
-  ambiguity_gap  confidence(top) - confidence(runner-up)
-
-Thresholds:
-  auto_accept        confidence >= 0.85 and ambiguity_gap >= 0.15 and value_type ok
-  needs_confirmation confidence in [0.4, 0.85), or gap < 0.15, or value_type undetermined,
-                     or a sanity check fails
-  unmapped           confidence < 0.4  (or the column is non-numeric / obvious noise)
-
-value_type (forecast/observed) is scored the same way; with no signal it is left
-undetermined and never defaulted. If the table has a dedicated value_type column
-(e.g. Data_Type in {forecast, observed}), per-column value_type inference is suppressed
-and the pipeline reads it per row from that column instead.
-
-Layouts:
-  wide - one measurement column per variable
-  long - a "variable name" column (forecast_variable / PARAMETER / ...) plus one or two
-         value columns (forecast_value + actual_value, or a single value column)
-"""
-
 from __future__ import annotations
 
 import hashlib
@@ -46,9 +15,6 @@ from app.ingestion.canonical_schema import (
     VARIABLE_PLAUSIBLE_RANGE,
 )
 
-# --------------------------------------------------------------------------------------
-# vocabulary
-# --------------------------------------------------------------------------------------
 
 V = CanonicalVariable
 
@@ -93,7 +59,6 @@ VARIABLE_SYNONYMS: dict[CanonicalVariable, set[str]] = {
     },
 }
 
-# u/v components -> derive speed + direction (handled in the pipeline, flagged here)
 U_WIND_TOKENS = {"u wind", "u10", "ugrd", "uwnd", "eastward wind", "u component wind"}
 V_WIND_TOKENS = {"v wind", "v10", "vgrd", "vwnd", "northward wind", "v component wind"}
 
@@ -109,8 +74,6 @@ VALUE_TYPE_SYNONYMS: dict[ValueType, set[str]] = {
     },
 }
 
-# recognised non-measurement columns: tagged as dimensions so they are neither scored as
-# variables nor reported as noise
 DIMENSION_SYNONYMS: dict[str, set[str]] = {
     "region": {"region", "state", "state ut", "province", "subdivision", "zone", "city",
                "location", "station name", "district", "station", "name"},
@@ -149,20 +112,14 @@ AUTO_CONF = 0.85
 AUTO_GAP = 0.15
 CONFIRM_FLOOR = 0.40
 VALUE_TYPE_OK = 0.70
-FUZZY_FLOOR = 82          # rapidfuzz score below this contributes nothing
-FUZZY_MIN_LEN = 4         # don't fuzzy-match against synonyms shorter than this
-NUMERIC_FRAC_MIN = 0.5    # a measurement column must be mostly numeric
+FUZZY_FLOOR = 82
+FUZZY_MIN_LEN = 4
+NUMERIC_FRAC_MIN = 0.5
 
 _UNIT_PAREN = re.compile(r"[\(\[\{].*?[\)\]\}]")
 _SPLIT = re.compile(r"[^a-z0-9]+")
-# split lowercase->UPPER only (windSpeed -> wind speed); NOT digit->UPPER, so tokens like
-# T2M / RH2M / WS10M survive intact and match their synonyms.
 _CAMEL = re.compile(r"(?<=[a-z])(?=[A-Z])")
 
-
-# --------------------------------------------------------------------------------------
-# header normalisation + fingerprints
-# --------------------------------------------------------------------------------------
 
 def normalize_header(raw: str) -> str:
     s = _CAMEL.sub(" ", str(raw))
@@ -186,15 +143,7 @@ def jaccard(a: Sequence[str], b: Sequence[str]) -> float:
     return len(sa & sb) / len(union) if union else 0.0
 
 
-# --------------------------------------------------------------------------------------
-# scoring primitives
-# --------------------------------------------------------------------------------------
-
 def _synonym_score(norm: str, synonyms: set[str]) -> float:
-    """0..1 header/synonym match. Exact token-set = 1.0; synonym is a subset of the
-    header tokens (header is more specific, e.g. 'temp avg c' ~ 'temp') = 0.9; header is
-    a subset of the synonym = 0.85; substring = 0.75; fuzzy (long synonyms only) <= 0.6.
-    """
     tokens = _tok(norm)
     best = 0.0
     for syn in synonyms:
@@ -254,25 +203,21 @@ def _sanity_ok(variable: CanonicalVariable, sample: np.ndarray) -> bool:
     lo, hi = VARIABLE_PLAUSIBLE_RANGE[variable]
     if variable in (V.HUMIDITY_PCT, V.SOIL_MOISTURE_PCT):
         frac = np.mean((sample >= 0) & (sample <= 100))
-        if variable == V.SOIL_MOISTURE_PCT:  # also accept 0..1 volumetric fraction
+        if variable == V.SOIL_MOISTURE_PCT:
             frac = max(frac, np.mean((sample >= 0) & (sample <= 1)))
         return frac >= 0.9
-    if variable == V.PRESSURE_HPA:  # accept hPa or Pa scale
+    if variable == V.PRESSURE_HPA:
         return max(
             np.mean((sample >= lo) & (sample <= hi)),
             np.mean((sample >= 80000) & (sample <= 110000)),
         ) >= 0.8
-    if variable == V.TEMPERATURE_C:  # also accept Kelvin
+    if variable == V.TEMPERATURE_C:
         return max(
             np.mean((sample >= lo) & (sample <= hi)),
             np.mean((sample >= 223) & (sample <= 333)),
         ) >= 0.6
     return np.mean((sample >= lo) & (sample <= hi)) >= 0.6
 
-
-# --------------------------------------------------------------------------------------
-# result types
-# --------------------------------------------------------------------------------------
 
 @dataclass
 class ColumnProposal:
@@ -292,10 +237,10 @@ class ColumnProposal:
 
 @dataclass
 class MappingResult:
-    proposals: list                       # list[ColumnProposal]
-    layout: str                           # wide | long
+    proposals: list
+    layout: str
     auto_accepted: bool
-    profile_match: str                    # exact | partial | none
+    profile_match: str
     profile_id: Optional[int] = None
     fingerprint: str = ""
     value_type_column: Optional[str] = None
@@ -309,8 +254,6 @@ class MappingResult:
         return [p for p in self.proposals if p.role == role]
 
     def measurement_map(self) -> dict:
-        """{source_column: {variable, value_type, unit_conversion}} for accepted/confirmed
-        measurement columns (wide layout)."""
         out = {}
         for p in self.proposals:
             if p.role == ROLE_MEASUREMENT and p.decision in ("auto_accept", "confirmed"):
@@ -322,15 +265,10 @@ class MappingResult:
         return out
 
 
-# --------------------------------------------------------------------------------------
-# the mapper
-# --------------------------------------------------------------------------------------
-
 class SchemaMapper:
     def __init__(self, filename_hint: Optional[str] = None):
         self.filename_hint = (filename_hint or "").lower()
 
-    # ---- value_type -----------------------------------------------------------------
 
     def _value_type_from_filename(self) -> tuple[Optional[str], float]:
         fn = self.filename_hint
@@ -348,7 +286,6 @@ class SchemaMapper:
                 best_vt, best = vt.value, s
         return best_vt, best
 
-    # ---- structural detection -----------------------------------------------------
 
     def _find_value_type_column(self, df: pd.DataFrame) -> Optional[str]:
         known = set().union(*VALUE_TYPE_SYNONYMS.values())
@@ -362,8 +299,6 @@ class SchemaMapper:
         return None
 
     def _find_long_layout(self, df: pd.DataFrame) -> tuple[Optional[str], list]:
-        """Return (variable_name_column, [value_columns]) if the table is long, else
-        (None, [])."""
         norms = {c: normalize_header(c) for c in df.columns}
         var_col = next((c for c, n in norms.items() if n in VARIABLE_NAME_HEADERS), None)
         val_cols = [c for c, n in norms.items() if n in VALUE_COLUMN_HEADERS]
@@ -374,7 +309,6 @@ class SchemaMapper:
                 return var_col, val_cols
         return None, []
 
-    # ---- per column --------------------------------------------------------------
 
     def _classify_column(
         self,
@@ -407,14 +341,10 @@ class SchemaMapper:
                 vt = fn_vt
                 p.method = "structural+filename" if fn_vt else "structural"
             p.suggested_value_type = vt
-            # a generic 'value' column with no value_type signal must be confirmed
             p.decision = "auto_accept" if (vt is not None or value_type_column is not None) \
                 else "needs_confirmation"
             return p
 
-        # dimensions: score every dimension, take the best. A single-token synonym must
-        # match the whole header (tokens == {syn}); a multi-token synonym may match as a
-        # subset. This stops bare "date" claiming the init_date column, etc.
         dim_best, dim_score = None, 0
         for dim, syns in DIMENSION_SYNONYMS.items():
             for syn in syns:
@@ -436,7 +366,6 @@ class SchemaMapper:
 
         numeric_frac = _numeric_fraction(series)
 
-        # u/v wind components (numeric only)
         if numeric_frac >= NUMERIC_FRAC_MIN:
             if any(_tok(t) == tokens or _tok(t) <= tokens for t in U_WIND_TOKENS):
                 p.role, p.suggested_variable = ROLE_MEASUREMENT, "u_wind"
@@ -448,7 +377,6 @@ class SchemaMapper:
                 return p
 
         if numeric_frac < NUMERIC_FRAC_MIN:
-            # not a measurement; leave unmapped (reported, not dropped)
             p.role, p.decision, p.method = ROLE_UNMAPPED, "unmapped", "non_numeric"
             return p
 
@@ -477,9 +405,8 @@ class SchemaMapper:
             for v, c, *_ in scored[1:4] if c > 0.05
         ]
 
-        # value_type: header synonyms, else filename hint, unless a value_type column exists
         if value_type_column is not None:
-            p.suggested_value_type, vt_conf = None, 1.0  # row-level; not this column's problem
+            p.suggested_value_type, vt_conf = None, 1.0
         else:
             vt, vt_conf = self._score_value_type_header(norm)
             if vt_conf < VALUE_TYPE_OK:
@@ -497,7 +424,6 @@ class SchemaMapper:
             p.decision = "needs_confirmation"
         return p
 
-    # ---- public -----------------------------------------------------------------
 
     def map_table(self, df: pd.DataFrame, existing_profiles: Optional[list] = None) -> MappingResult:
         headers = [str(c) for c in df.columns]
@@ -513,7 +439,6 @@ class SchemaMapper:
             notes.append(f"long layout: variable names in '{long_var_col}', "
                          f"values in {long_val_cols}")
 
-        # profile reuse
         profile_match, profile_id, applied = "none", None, None
         for profile, jac in _sorted_profiles(existing_profiles, headers):
             if profile.fingerprint == fp or jac >= 0.9:
@@ -553,8 +478,6 @@ class SchemaMapper:
                     p.suggested_value_type = stored.get("value_type", p.suggested_value_type)
                     p.method = "profile"
 
-        # collision: several measurement columns claiming the same (variable, value_type)
-        # can't all be "the" canonical series - make the user pick.
         if profile_match != "exact":
             claims: dict = {}
             for p in proposals:

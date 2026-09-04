@@ -16,12 +16,6 @@ interface StateProps {
   st_code: string;
 }
 
-/**
- * India states choropleth, coloured by risk band.
- *
- * A region the API did not return is drawn in the explicit "no data" colour - never in a
- * risk colour - so an absent prediction can't be mistaken for a low-risk one.
- */
 export function IndiaChoroplethMap({
   regions,
   selectedRegionId,
@@ -119,7 +113,6 @@ export function IndiaChoroplethMap({
   );
 }
 
-/** Loads the vendored topojson once, lazily, so it isn't bundled into the entry chunk. */
 export async function loadTopology(): Promise<Topology> {
   const res = await fetch(topoData);
   if (!res.ok) throw new Error(`could not load India topojson (${res.status})`);

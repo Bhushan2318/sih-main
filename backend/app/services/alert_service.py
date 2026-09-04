@@ -1,9 +1,3 @@
-"""Alerts: the high-risk (region, lead) events of the current scored cycle.
-
-Alerts are derived from the same ScoredCycle the map uses, so the list can never disagree
-with the map. They are also persisted to SQLite per training run for history.
-"""
-
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -67,8 +61,6 @@ def get_alerts(limit: int = 50, risk_band: Optional[str] = None) -> schemas.Aler
 
 
 def persist_alerts_for_run(session: Session, run_id: str) -> int:
-    """Snapshot the current cycle's medium/high alerts into SQLite for this run. Replaces
-    any rows already stored for the same run so a re-score doesn't duplicate."""
     resp = get_alerts(limit=500)
     if not resp.model_trained or not resp.alerts:
         return 0

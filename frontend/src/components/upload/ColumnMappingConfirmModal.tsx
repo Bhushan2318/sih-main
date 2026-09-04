@@ -15,15 +15,10 @@ const CANONICAL_VARIABLES = [
 const VALUE_TYPES = ["forecast", "observed"];
 
 interface Choice {
-  variable: string;  // "" means exclude
-  valueType: string; // "" means undetermined
+  variable: string;
+  valueType: string;
 }
 
-/**
- * Confirm-mapping dialog. Pre-filled from the mapper's proposal with its confidence, but
- * the user decides. Columns left as "exclude" are genuinely excluded — the backend never
- * silently guesses one.
- */
 export function ColumnMappingConfirmModal({ upload, onCancel, onSubmit }: {
   upload: UploadResponse;
   onCancel: () => void;

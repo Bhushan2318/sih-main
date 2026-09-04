@@ -1,9 +1,3 @@
-"""Region-facing read logic: turn a ScoredCycle into the map and detail-panel payloads.
-
-Every branch that cannot produce a real number returns an explicit empty/`model_trained:
-false` shape with a human-readable `message`, never a placeholder.
-"""
-
 from __future__ import annotations
 
 from typing import Optional
@@ -63,8 +57,6 @@ def _risk_band_definitions(state) -> dict:
     }
 
 
-# --------------------------------------------------------------------------- map view
-
 def _not_trained_day(lead_time_days: int) -> schemas.RegionsResponse:
     return schemas.RegionsResponse(
         lead_time_days=lead_time_days, model_trained=False,
@@ -81,12 +73,8 @@ def _no_score_day(state, lead_time_days: int) -> schemas.RegionsResponse:
 
 
 def _day_response(state, scored, available: list, lead_time_days: int) -> schemas.RegionsResponse:
-    """One lead day's map payload from an already-scored cycle - no scoring, no I/O."""
     ev = scored.events[scored.events["lead_time_days"] == lead_time_days]
     if ev.empty:
-        # Say which days this cycle does cover rather than only what it lacks: a 06/12/18Z
-        # run legitimately has no day-1, and the dashboard uses this to land on a lead day
-        # that exists instead of an empty map.
         covered = (f" This cycle covers day {available[0]}-{available[-1]}."
                    if available else "")
         return schemas.RegionsResponse(
@@ -143,9 +131,6 @@ def get_regions(lead_time_days: int) -> schemas.RegionsResponse:
 
 
 def get_all_regions() -> schemas.AllRegionsResponse:
-    """Every lead day 1-10 in one payload. The cycle is scored exactly once; each day is
-    then a pure filter over that result, so the dashboard's lead-day selector needs no
-    request and shows no loading state after the first load."""
     state = inference.load_model_state()
     if state is None:
         return schemas.AllRegionsResponse(
@@ -170,8 +155,6 @@ def get_all_regions() -> schemas.AllRegionsResponse:
         days=[_day_response(state, scored, available, d) for d in range(1, 11)],
     )
 
-
-# ------------------------------------------------------------------------ detail view
 
 def get_region_detail(region_id: str) -> schemas.RegionDetailResponse:
     state = inference.load_model_state()
@@ -257,7 +240,7 @@ def get_region_detail(region_id: str) -> schemas.RegionDetailResponse:
         bust_probability_curve=curve,
         top_factors=factors,
         top_factors_method=method,
-        analog_cases=[],   # similarity search not implemented; empty rather than faked
+        analog_cases=[],
     )
 
 
@@ -271,7 +254,6 @@ def _unit(var: str) -> Optional[str]:
 def _top_factors(state, region_id: str, ev: pd.DataFrame):
     if state.shap_summary.empty or ev.empty:
         return [], None
-    # explain the riskiest lead day for this region
     lead = int(ev.sort_values("bust_probability", ascending=False)["lead_time_days"].iloc[0])
     raw = top_factors_for(state.shap_summary, region_id, lead, model="classifier", k=6)
     factors = [schemas.TopFactor(**f) for f in raw]

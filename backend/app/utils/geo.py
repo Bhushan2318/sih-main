@@ -1,11 +1,3 @@
-"""Region resolution: free-text name or lat/lon -> ISO 3166-2:IN ``region_id``.
-
-Name resolution goes through ``india_state_codes`` (exact + alias). Point resolution uses
-the vendored India-states GeoJSON with a shapely STRtree spatial index built once. Points
-that miss every polygon (coastal offsets, rounding) fall back to the nearest polygon
-within a small distance; anything further out is left unresolved rather than guessed.
-"""
-
 from __future__ import annotations
 
 import functools
@@ -23,16 +15,13 @@ from app.utils import india_state_codes
 
 GEOJSON_PATH = resolve_path(settings.geo_dir) / "india_states.geojson"
 
-# Max distance (degrees) from a polygon for the nearest-polygon fallback to apply.
-# ~1.5 deg ~ 165 km at this latitude - enough for coastal/rounding offsets, not enough
-# to snap a mid-ocean point to land.
 NEAREST_MAX_DEG = 1.5
 
 
 class RegionMatch(NamedTuple):
     region_id: str | None
     region_name: str | None
-    method: str  # name | point_in_polygon | nearest_polygon | unresolved
+    method: str
 
 
 class GeoResolver:
@@ -47,8 +36,6 @@ class GeoResolver:
             rec = india_state_codes.resolve_by_st_code(st_code)
             geom = shape(feat["geometry"])
             if not geom.is_valid:
-                # simplified public boundary data often has self-intersections; repair
-                # once at load so covers()/distance() don't raise on every query.
                 geom = make_valid(geom).buffer(0)
             self._geoms.append(geom)
             self._region_ids.append(rec.region_id if rec else None)
@@ -63,7 +50,6 @@ class GeoResolver:
         except (TypeError, ValueError):
             return RegionMatch(None, None, "unresolved")
 
-        # containment first
         for idx in self._tree.query(pt):
             i = int(idx)
             try:
@@ -72,7 +58,6 @@ class GeoResolver:
             except Exception:  # noqa: BLE001 - a still-broken polygon shouldn't kill ingest
                 continue
 
-        # nearest polygon within threshold
         try:
             nearest_idx = int(self._tree.nearest(pt))
             if self._geoms[nearest_idx].distance(pt) <= NEAREST_MAX_DEG:

@@ -1,5 +1,3 @@
-"""Upload + confirm-mapping endpoints."""
-
 from __future__ import annotations
 
 import shutil
@@ -15,7 +13,7 @@ from app.services import upload_service
 
 router = APIRouter(prefix="/api/upload", tags=["upload"])
 
-MAX_BYTES = 200 * 1024 * 1024  # 200 MB
+MAX_BYTES = 200 * 1024 * 1024
 
 
 @router.post("", response_model=schemas.UploadResponse)

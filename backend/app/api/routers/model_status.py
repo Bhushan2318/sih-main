@@ -1,5 +1,3 @@
-"""Model status: what has been trained, on how much data, and how well it scored."""
-
 from __future__ import annotations
 
 from fastapi import APIRouter
@@ -15,15 +13,6 @@ router = APIRouter(prefix="/api/model", tags=["model"])
 
 
 def _training_data(manifest: dict) -> dict:
-    """What the run that produced this model actually trained on, read from its own
-    manifest rather than inferred from the store.
-
-    The two genuinely differ. Training runs on a 16 GB CI runner against the full
-    reforecast archive; the serving box is 512 MB and carries only the cycles it has to
-    answer requests from. Counting rows here would therefore report a smaller evidence
-    base than the model really has - and on a project whose whole claim is not
-    overstating things, understating them by accident is the same failure.
-    """
     splits = manifest.get("split_cycles") or {}
     counts = {k: splits.get(k) for k in ("train", "val", "test")}
     known = [v for v in counts.values() if isinstance(v, int)]

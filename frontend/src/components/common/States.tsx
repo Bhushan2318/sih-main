@@ -2,10 +2,6 @@ import type { ReactNode } from "react";
 import { API_BASE } from "../../api/client";
 import { bandLabel } from "../../theme";
 
-/**
- * The empty state is load-bearing in this project: when no model or no data exists the
- * UI must say so plainly rather than render a placeholder chart or a fake number.
- */
 export function EmptyState({ title, message, action }: {
   title: string;
   message?: string | null;

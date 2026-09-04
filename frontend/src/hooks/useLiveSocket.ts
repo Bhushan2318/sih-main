@@ -4,12 +4,6 @@ import { WS_URL } from "../api/client";
 import type { LiveEvent } from "../api/types";
 import { useLiveStore } from "../store/liveStore";
 
-/**
- * Subscribes to the backend's WebSocket and turns each event into cache invalidation.
- * We deliberately do NOT merge WS payloads into UI state - the event name tells us what
- * became stale, and the data is refetched over REST. That keeps the socket and the REST
- * shapes decoupled.
- */
 export function useLiveSocket() {
   const queryClient = useQueryClient();
   const setStatus = useLiveStore((s) => s.setStatus);
@@ -63,7 +57,7 @@ export function useLiveSocket() {
       ws.onclose = () => {
         setStatus("closed");
         if (closedRef.current) return;
-        // capped exponential backoff so a stopped backend doesn't spin the browser
+
         const delay = Math.min(30_000, 1000 * 2 ** retryRef.current++);
         timer = window.setTimeout(connect, delay);
       };

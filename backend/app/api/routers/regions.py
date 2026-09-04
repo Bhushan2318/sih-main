@@ -1,5 +1,3 @@
-"""Map + region-detail endpoints."""
-
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query
@@ -21,7 +19,6 @@ def list_regions(
 
 @router.get("/all", response_model=schemas.AllRegionsResponse)
 def list_regions_all_lead_days() -> schemas.AllRegionsResponse:
-    """All 10 lead days at once - lets the dashboard switch lead day with no request."""
     return region_service.get_all_regions()
 
 

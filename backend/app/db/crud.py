@@ -1,7 +1,3 @@
-"""Thin persistence helpers over the ORM models. No business logic lives here - the
-ingestion pipeline decides *what* to write; these functions just write it.
-"""
-
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -17,8 +13,6 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-# --------------------------------------------------------------------------- UploadBatch
-
 def create_upload_batch(
     session: Session,
     *,
@@ -33,7 +27,7 @@ def create_upload_batch(
         status="received",
     )
     session.add(batch)
-    session.flush()  # populate batch.id
+    session.flush()
     return batch
 
 
@@ -50,13 +44,9 @@ def update_batch(session: Session, batch: UploadBatch, **fields: Any) -> UploadB
     return batch
 
 
-# ------------------------------------------------------------------------- ColumnMapping
-
 def replace_column_mappings(
     session: Session, batch_id: str, rows: Iterable[dict]
 ) -> list[ColumnMapping]:
-    """Drop any existing mappings for the batch and insert the given ones. Used both on
-    the first mapper pass and again after the user confirms."""
     session.query(ColumnMapping).filter(ColumnMapping.upload_batch_id == batch_id).delete()
     created: list[ColumnMapping] = []
     for row in rows:
@@ -72,8 +62,6 @@ def get_column_mappings(session: Session, batch_id: str) -> list[ColumnMapping]:
     return list(session.scalars(stmt))
 
 
-# ------------------------------------------------------------------------- SourceProfile
-
 def find_source_profile(session: Session, fingerprint: str) -> SourceProfile | None:
     stmt = select(SourceProfile).where(SourceProfile.fingerprint == fingerprint)
     return session.scalars(stmt).first()
@@ -86,8 +74,6 @@ def all_source_profiles(session: Session) -> list[SourceProfile]:
 def find_similar_source_profiles(
     session: Session, header_set: Sequence[str], min_jaccard: float = 0.6
 ) -> list[tuple[SourceProfile, float]]:
-    """Every profile whose header set has Jaccard >= min_jaccard with ``header_set``,
-    sorted best-first."""
     target = set(header_set)
     out: list[tuple[SourceProfile, float]] = []
     for profile in all_source_profiles(session):
