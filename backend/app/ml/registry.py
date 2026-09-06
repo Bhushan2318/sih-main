@@ -141,3 +141,14 @@ def list_runs() -> list:
     if not MODEL_DIR.exists():
         return []
     return sorted(p.name for p in MODEL_DIR.iterdir() if p.is_dir() and p.name.startswith("run_"))
+
+
+def load_metrics(run_id: str) -> Optional[dict]:
+    """The metrics a run recorded, or None if it has none readable."""
+    path = run_dir(run_id) / "metrics.json"
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return None
