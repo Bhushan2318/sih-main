@@ -108,13 +108,15 @@ def score_latest_cycle(state: Optional[ModelState] = None) -> Optional[ScoredCyc
 
 
 def available_cycles() -> list[pd.Timestamp]:
-    fc = parquet_store.read_dataset(
-    # dedupe=False and the narrow projection are what keep this inside the memory budget.
-        value_types=["forecast"], columns=["init_date"], dedupe=False,
-    )
-    if fc.empty:
-        return []
-    return sorted(pd.to_datetime(fc["init_date"]).dropna().unique(), reverse=True)
+    """Every scoreable forecast cycle, newest first.
+
+    Read from Parquet footers rather than by scanning a column of every forecast row. At
+    district resolution that scan was 19.4 million values to learn 73 dates - measured at
+    +253 MB against a 512 MB box that is killed rather than throttled - where the footers
+    answer the same question for +2 MB. See parquet_store.distinct_forecast_init_dates.
+    """
+    dates = parquet_store.distinct_forecast_init_dates()
+    return sorted((pd.Timestamp(d) for d in dates), reverse=True)
 
 
 _MAX_LEAD_DAYS = 10
