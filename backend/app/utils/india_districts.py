@@ -58,7 +58,11 @@ class DistrictRecord:
     @property
     def display_name(self) -> str:
         """Districts are not uniquely named to a reader: Delhi, Karnataka and Tamil Nadu
-        all have a 'North'. Anything user-facing needs the state alongside."""
+        all have a 'North'. Anything user-facing needs the state alongside - except where
+        the district and the state share a name, because "Delhi, Delhi" and
+        "Lakshadweep, Lakshadweep" read as a bug rather than as a location."""
+        if self.region_name.lower() == self.state_name.lower():
+            return self.region_name
         return f"{self.region_name}, {self.state_name}"
 
 

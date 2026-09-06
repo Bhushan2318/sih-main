@@ -70,6 +70,23 @@ def test_display_name_carries_the_state():
     assert d is not None and d.display_name == "Nagpur, Maharashtra"
 
 
+@pytest.mark.parametrize("region_id,expected", [
+    ("IN-DL-DELHI", "Delhi"),
+    ("IN-LD-LAKSHADWEEP", "Lakshadweep"),
+    ("IN-CH-CHANDIGARH", "Chandigarh"),
+    ("IN-PY-PUDUCHERRY", "Puducherry"),
+])
+def test_display_name_does_not_repeat_itself(region_id, expected):
+    """"Delhi, Delhi" reads as a bug rather than as a location."""
+    assert idist.resolve_by_id(region_id).display_name == expected
+
+
+def test_display_names_stay_unique():
+    """Collapsing the repeats must not make two districts indistinguishable to a reader."""
+    names = [d.display_name for d in load_registry()]
+    assert len(names) == len(set(names))
+
+
 def test_ambiguous_names_refuse_to_resolve():
     """Aurangabad is in both Bihar and Maharashtra, Bilaspur in both Chhattisgarh and
     Himachal Pradesh. Guessing between them would silently attribute one district's

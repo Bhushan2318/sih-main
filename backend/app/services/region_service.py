@@ -188,7 +188,10 @@ def get_region_detail(region_id: str) -> schemas.RegionDetailResponse:
             region_id=region_id, region_name=_region_name(region_id),
             model_trained=True, current_run_id=state.run_id,
             init_date=scored.init_date.date(),
-            message=f"No forecast data for {region_id} in the current cycle.",
+            # The display name, not the raw id: "IN-MH-NAGPUR" is what the store calls
+            # this district, not what a reader calls it.
+            message=(f"No forecast data for "
+                     f"{_region_name(region_id) or region_id} in the current cycle."),
         )
 
     metrics = inference.model_validation_metrics(state).get("regressors", {})
