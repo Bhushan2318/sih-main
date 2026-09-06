@@ -9,7 +9,7 @@ from app.api import schemas
 from app.ingestion.canonical_schema import VARIABLE_UNITS, CanonicalVariable
 from app.ml import inference, registry
 from app.ml.explain import top_factors_for
-from app.utils import india_state_codes
+from app.utils import india_districts, india_state_codes
 
 NOT_TRAINED_MSG = (
     "No model has been trained yet. Upload a forecast dataset with matching observations "
@@ -21,8 +21,17 @@ NO_SCORE_MSG = (
 
 
 def _region_name(region_id: str) -> Optional[str]:
-    rec = india_state_codes.resolve_by_region_id(region_id)
-    return rec.region_name if rec else None
+    """Display name for a region id, district or state.
+
+    Districts get their state appended: Delhi, Karnataka, Sikkim and Tamil Nadu all have
+    a district called "North", and "North" alone on an alert row says nothing about where
+    it is.
+    """
+    dist = india_districts.resolve_by_id(region_id)
+    if dist is not None:
+        return dist.display_name
+    state = india_state_codes.resolve_by_region_id(region_id)
+    return state.region_name if state else None
 
 
 def _f(v) -> Optional[float]:

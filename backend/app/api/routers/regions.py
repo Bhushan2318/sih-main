@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from app.api import schemas
 from app.services import region_service
-from app.utils import india_state_codes
+from app.utils import india_districts, india_state_codes
 
 router = APIRouter(prefix="/api/regions", tags=["regions"])
 
@@ -24,6 +24,12 @@ def list_regions_all_lead_days() -> schemas.AllRegionsResponse:
 
 @router.get("/{region_id}", response_model=schemas.RegionDetailResponse)
 def region_detail(region_id: str) -> schemas.RegionDetailResponse:
-    if india_state_codes.resolve_by_region_id(region_id) is None:
-        raise HTTPException(404, f"unknown region_id '{region_id}' (expected ISO 3166-2:IN, e.g. IN-MH)")
+    known = (india_districts.resolve_by_id(region_id) is not None
+             or india_state_codes.resolve_by_region_id(region_id) is not None)
+    if not known:
+        raise HTTPException(
+            404,
+            f"unknown region_id '{region_id}' (expected a district such as "
+            f"IN-MH-NAGPUR, or a state such as IN-MH)",
+        )
     return region_service.get_region_detail(region_id)
