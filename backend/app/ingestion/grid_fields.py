@@ -168,6 +168,32 @@ def load_bundle(path: Path) -> GridBundle:
         )
 
 
+def _axis_map(src: np.ndarray, want: np.ndarray, modulo: float | None = None
+              ) -> tuple[np.ndarray, np.ndarray]:
+    """For each wanted coordinate, the index of the matching source cell.
+
+    Returns (index, found). Matching is on integer quarter-degrees so float noise in
+    either grid cannot miss a cell, and it makes no assumption about the source being
+    ascending - GEFS publishes latitude descending.
+    """
+    s = np.asarray(src, dtype=np.float64)
+    w = np.asarray(want, dtype=np.float64)
+    if modulo is not None:
+        s, w = s % modulo, w % modulo
+    s_key = np.rint(s / GRID_DEG).astype(np.int64)
+    w_key = np.rint(w / GRID_DEG).astype(np.int64)
+
+    order = np.argsort(s_key, kind="stable")
+    sorted_keys = s_key[order]
+    pos = np.searchsorted(sorted_keys, w_key)
+    in_range = pos < len(sorted_keys)
+    found = np.zeros(len(w_key), dtype=bool)
+    found[in_range] = sorted_keys[pos[in_range]] == w_key[in_range]
+    idx = np.zeros(len(w_key), dtype=np.int64)
+    idx[found] = order[pos[found]]
+    return idx, found
+
+
 def subset_to_domain(lats: np.ndarray, lons: np.ndarray, field: np.ndarray) -> np.ndarray:
     """Regrid a decoded GRIB field onto the stored domain.
 
@@ -175,18 +201,15 @@ def subset_to_domain(lats: np.ndarray, lons: np.ndarray, field: np.ndarray) -> n
     and uses -180..180. Cells the source does not cover become NaN rather than being
     filled by the nearest neighbour - an invented value at the domain edge would be
     indistinguishable from a real one to the network.
+
+    Vectorised because the fetch calls it for every 3-hourly step of every variable,
+    member and lead day: 3,200 times per cycle, on a 145x141 domain.
     """
     want_lats, want_lons = domain_coords()
-    src_lat = {int(round(float(v) / GRID_DEG)): i for i, v in enumerate(lats)}
-    src_lon = {int(round((float(v) % 360.0) / GRID_DEG)): i for i, v in enumerate(lons)}
+    lat_idx, lat_ok = _axis_map(lats, want_lats)
+    lon_idx, lon_ok = _axis_map(lons, want_lons, modulo=360.0)
 
-    out = np.full((len(want_lats), len(want_lons)), np.nan, dtype=np.float32)
-    for i, la in enumerate(want_lats):
-        si = src_lat.get(int(round(float(la) / GRID_DEG)))
-        if si is None:
-            continue
-        for j, lo in enumerate(want_lons):
-            sj = src_lon.get(int(round((float(lo) % 360.0) / GRID_DEG)))
-            if sj is not None:
-                out[i, j] = field[si, sj]
+    out = np.asarray(field, dtype=np.float32)[np.ix_(lat_idx, lon_idx)].astype(np.float32)
+    out[~lat_ok, :] = np.nan
+    out[:, ~lon_ok] = np.nan
     return out
