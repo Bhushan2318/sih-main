@@ -138,10 +138,39 @@ class DistrictGridAggregator:
         self._cell_pos = {_cell_key(c.lat, c.lon): i for i, c in enumerate(cells)}
 
         self._rows = w["region_id"].map(region_pos).to_numpy(dtype=np.int32)
-        self._cols = np.array([self._cell_pos[_cell_key(la, lo)]
-                               for la, lo in zip(w["lat"], w["lon"])], dtype=np.int32)
+        self._cell_keys = [_cell_key(la, lo) for la, lo in zip(w["lat"], w["lon"])]
         self._w = w["weight"].to_numpy(dtype=np.float64)
         self._n_cells = len(self._cell_pos)
+
+    def prepare(self, lats, lons) -> np.ndarray:
+        """Index of every weight row into a field ravelled on this grid; -1 where the
+        grid does not carry that cell.
+
+        Built once per grid and reused. The fetch aggregates 400 fields per cycle - eight
+        variables, five members, ten lead days - and resolving each cell through a dict on
+        every one of them costs 8 million Python-level lookups per cycle. With the index
+        prepared, each aggregation is a gather and two bincounts.
+        """
+        lats = np.asarray(lats, dtype=np.float64).ravel()
+        lons = np.asarray(lons, dtype=np.float64).ravel()
+        if len(lats) != len(lons):
+            raise ValueError("lats and lons must be the same length")
+        pos = {_cell_key(la, lo): i for i, (la, lo) in enumerate(zip(lats, lons))}
+        return np.array([pos.get(k, -1) for k in self._cell_keys], dtype=np.int64)
+
+    def aggregate_prepared(self, index: np.ndarray, values) -> pd.Series:
+        """Aggregate a field ravelled on the grid ``index`` was prepared for."""
+        values = np.asarray(values, dtype=np.float64).ravel()
+        cell_vals = np.where(index >= 0, values[np.clip(index, 0, None)], np.nan)
+
+        valid = ~np.isnan(cell_vals)
+        n = len(self.region_ids)
+        num = np.bincount(self._rows[valid],
+                          weights=(self._w[valid] * cell_vals[valid]), minlength=n)
+        den = np.bincount(self._rows[valid], weights=self._w[valid], minlength=n)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            out = np.where(den > 0, num / den, np.nan)
+        return pd.Series(out, index=pd.Index(self.region_ids, name="region_id"))
 
     def aggregate(self, lats, lons, values) -> pd.Series:
         """Flat arrays of cell latitude, longitude and value -> value per ``region_id``.
@@ -152,27 +181,11 @@ class DistrictGridAggregator:
         a coastal district is not turned into ``NaN`` by the sea cells it overlaps. A
         district with no valid cell at all returns ``NaN``, never a fabricated number.
         """
-        lats = np.asarray(lats, dtype=np.float64).ravel()
-        lons = np.asarray(lons, dtype=np.float64).ravel()
         values = np.asarray(values, dtype=np.float64).ravel()
-        if not (len(lats) == len(lons) == len(values)):
+        if not (len(np.asarray(lats).ravel()) == len(np.asarray(lons).ravel())
+                == len(values)):
             raise ValueError("lats, lons and values must be the same length")
-
-        grid = np.full(self._n_cells, np.nan)
-        for la, lo, v in zip(lats, lons, values):
-            pos = self._cell_pos.get(_cell_key(la, lo))
-            if pos is not None:
-                grid[pos] = v
-
-        cell_vals = grid[self._cols]
-        valid = ~np.isnan(cell_vals)
-        n = len(self.region_ids)
-        num = np.bincount(self._rows[valid],
-                          weights=(self._w[valid] * cell_vals[valid]), minlength=n)
-        den = np.bincount(self._rows[valid], weights=self._w[valid], minlength=n)
-        with np.errstate(invalid="ignore", divide="ignore"):
-            out = np.where(den > 0, num / den, np.nan)
-        return pd.Series(out, index=pd.Index(self.region_ids, name="region_id"))
+        return self.aggregate_prepared(self.prepare(lats, lons), values)
 
 
 @functools.lru_cache(maxsize=1)

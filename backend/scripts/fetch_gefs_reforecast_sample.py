@@ -10,11 +10,19 @@ https://registry.opendata.aws/noaa-gefs-reforecast/  and the bucket's
 
 What this script does
 ---------------------
-For a fixed set of Indian city points, a set of 00 UTC initialisation dates in 2019, and
-all 5 members, it pulls the Day 1-10 forecast for eight surface variables, extracts the
-value at each city by nearest-grid-point, aggregates the 3-hourly data to a daily value
-per lead day, converts to canonical units, and writes one wide CSV/parquet row per
-``(city, init_date, member, valid_date)``.
+For a set of 00 UTC initialisation dates and all 5 members, it pulls the Day 1-10 forecast
+for eight surface variables, aggregates the 3-hourly data to a daily field per lead day,
+converts to canonical units, and writes **two** artifacts from that one decode:
+
+  * the tabular sample - one wide row per ``(region_id, init_date, member, valid_date)``,
+    where each value is the area-weighted mean over that district's 0.25 deg grid cells.
+    666 districts, not 36 city points: a district is the unit an administration acts on,
+    and a single city point made a whole state's forecast into its capital's forecast.
+  * the gridded fields - ensemble mean and spread per variable and lead day over
+    lon 65-100, lat 2-38, for the convolutional model. See app/ingestion/grid_fields.py.
+
+Both come from the same download. At ~2.3 GB per initialisation, fetching the archive once
+per model family was the thing worth avoiding.
 
 Only the GRIB2 messages actually needed are downloaded, via HTTP ``Range`` requests keyed
 off each file's ``.idx`` sidecar - not the whole 30-70 MB files.
@@ -55,8 +63,14 @@ warnings.filterwarnings("ignore")  # LibreSSL/urllib3 + cfgrib chatter
 
 import numpy as np
 import pandas as pd
+import pyarrow.parquet as pq
 import requests
 import xarray as xr
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from app.ingestion import grid_fields as gf                            # noqa: E402
+from app.utils.india_districts import get_aggregator, load_registry    # noqa: E402
 
 # --------------------------------------------------------------------------------------
 # Configuration
@@ -67,7 +81,7 @@ REFORECAST_YEAR = 2019
 SCRIPT_DIR = Path(__file__).resolve().parent
 BACKEND_DIR = SCRIPT_DIR.parent
 OUT_DIR = BACKEND_DIR / "data" / "samples"
-CITIES_JSON = SCRIPT_DIR / "india_cities.json"
+GRID_DIR = OUT_DIR / "grids"
 
 ALL_MEMBERS = ["c00", "p01", "p02", "p03", "p04"]
 LEAD_DAYS = list(range(1, 11))  # Day 1 .. Day 10
@@ -288,12 +302,16 @@ def merge_ranges(recs: Iterable[IdxRecord]) -> list[tuple[int, int | None, list[
 # GRIB decode + point extraction
 # --------------------------------------------------------------------------------------
 
-def extract_points(grib_bytes: bytes, spec: dict, cities: pd.DataFrame) -> pd.DataFrame:
-    """Decode concatenated GRIB2 messages, sample each city by nearest grid point.
+def extract_grid(grib_bytes: bytes, spec: dict) -> tuple[np.ndarray, np.ndarray]:
+    """Decode concatenated GRIB2 messages onto the stored domain.
 
-    Returns long rows: city, valid_time, value (raw units, pre-conversion).
+    Returns ``(valid_times, field[step, lat, lon])`` in the GRIB's own units. The whole
+    field is kept rather than a handful of sampled points: the district values and the
+    convolutional model's inputs are both derived from it downstream, so one decode of
+    one download serves both model families.
     """
     tmp = OUT_DIR / f".decode_{int(time.time()*1e6)}_{id(grib_bytes) & 0xffff}.grib2"
+    tmp.parent.mkdir(parents=True, exist_ok=True)
     tmp.write_bytes(grib_bytes)
     try:
         # Level selection already happened at the .idx stage (select_for_day keeps only
@@ -301,26 +319,16 @@ def extract_points(grib_bytes: bytes, spec: dict, cities: pd.DataFrame) -> pd.Da
         # and passing one breaks when a single message makes the level coord scalar.
         ds = xr.open_dataset(tmp, engine="cfgrib", backend_kwargs={"indexpath": ""})
         var = ds[spec["short_name"]]
-
-        lats = xr.DataArray(cities["lat"].to_numpy(), dims="city")
-        lons = xr.DataArray(cities["lon"].to_numpy() % 360, dims="city")
-        pts = var.sel(latitude=lats, longitude=lons, method="nearest")
-
-        if "step" not in pts.dims:
-            pts = pts.expand_dims("step")
-        vt = pts["valid_time"].values
-        vt = np.atleast_1d(vt)
-
-        rows = []
-        vals = pts.transpose("step", "city").values
-        cnames = cities["city"].to_numpy()
-        for si in range(vals.shape[0]):
-            for ci in range(vals.shape[1]):
-                rows.append((cnames[ci], pd.Timestamp(vt[si]), float(vals[si, ci])))
-        return pd.DataFrame(rows, columns=["city", "valid_time", "raw_value"])
+        if "step" not in var.dims:
+            var = var.expand_dims("step")
+        var = var.transpose("step", "latitude", "longitude")
+        vals = var.values
+        stack = np.stack([gf.subset_to_domain(ds["latitude"].values,
+                                              ds["longitude"].values, vals[i])
+                          for i in range(vals.shape[0])])
+        return np.atleast_1d(var["valid_time"].values), stack
     finally:
         tmp.unlink(missing_ok=True)
-
 
 # --------------------------------------------------------------------------------------
 # Canonicalisation
@@ -354,9 +362,13 @@ DAILY_AGG = {  # how to collapse 3-hourly -> one value per lead day
 # Main pull
 # --------------------------------------------------------------------------------------
 
-def pull_one_file(var_prefix: str, init: str, member: str, cities: pd.DataFrame) -> pd.DataFrame:
-    """All covered lead days for one (variable, init, member). Long rows:
-    city, init_date, member, lead_day, valid_date, source_grib, source_msgs, <daily value>.
+def pull_one_file(var_prefix: str, init: str, member: str, prepared: np.ndarray):
+    """All covered lead days for one (variable, init, member).
+
+    Returns ``(district_rows, grids)`` - the per-district daily values as long rows, and
+    the daily field per lead day for the gridded artifact. Both come from the same decode
+    of the same download; fetching the archive once per model family would cost another
+    790 GB.
     """
     spec = VAR_SPEC[var_prefix]
     key = key_for(var_prefix, init, member)
@@ -364,55 +376,105 @@ def pull_one_file(var_prefix: str, init: str, member: str, cities: pd.DataFrame)
         idx_txt = _get(f"{BUCKET}/{key}.idx").text
     except RuntimeError as exc:
         print(f"    ! missing idx  {key}  ({exc})", file=sys.stderr)
-        return pd.DataFrame()
+        return pd.DataFrame(), {}
     recs = parse_idx(idx_txt)
 
-    per_day = []
+    per_day, grids = [], {}
     for lead in LEAD_DAYS:
         chosen = select_for_day(recs, spec, lead)
         if not chosen:
             continue
-        frames = []
+        stacks = []
         for start, end, group in merge_ranges(chosen):
             rng = f"bytes={start}-{end - 1}" if end is not None else f"bytes={start}-"
             blob = _get(f"{BUCKET}/{key}", headers={"Range": rng}).content
-            frames.append(extract_points(blob, spec, cities))
-        long = pd.concat(frames, ignore_index=True)
-        # Day k is defined as valid at init + k days; aggregate every 3-hourly sample in
-        # the hour window ((k-1)*24, k*24] into one value per city for that lead day.
-        # (Grouping on the raw valid_time's calendar day would split the +24h sample,
-        # which lands at 00:00 of the next day, into the following lead day.)
-        agg = DAILY_AGG[var_prefix]
-        daily = long.groupby("city", as_index=False)["raw_value"].agg(agg)
-        # Day k is built from forecast hours ((k-1)*24, k*24]. For a 00 UTC init those
-        # valid times are calendar day init+(k-1) - hour 3 through hour 24 all fall on the
-        # init day itself, with only the closing +24 h sample landing at the next
-        # midnight. Labelling it init+k (as this script originally did) put every forecast
-        # a day later than its own contents, so each row was verified against the wrong
-        # day's observation: measured over the 2019 sample that cost ~8% MAE on average,
-        # and 15-16% on pressure and precipitable water.
-        daily["valid_date"] = pd.Timestamp(init) + pd.Timedelta(days=lead - 1)
-        daily["init_date"] = pd.Timestamp(init)
-        daily["member"] = member
-        daily["lead_day"] = lead
-        daily["source_grib"] = key
-        daily["source_msgs"] = ",".join(str(r.msg) for r in chosen)
-        per_day.append(daily)
+            stacks.append(extract_grid(blob, spec)[1])
+        stack = np.concatenate(stacks, axis=0)
+
+        # Day k is built from forecast hours ((k-1)*24, k*24]; collapse those 3-hourly
+        # samples into one field for the lead day.
+        if DAILY_AGG[var_prefix] == "sum":
+            daily = np.nansum(stack, axis=0)
+        else:
+            daily = np.nanmean(stack, axis=0)
+        # nansum returns 0.0 for a cell that is NaN at every step, which would publish an
+        # uncovered cell as a real zero - and for rainfall a zero is a meaningful forecast.
+        daily = np.where(np.isnan(stack).all(axis=0), np.nan, daily).astype(np.float32)
+        grids[lead] = daily
+
+        vals = get_aggregator().aggregate_prepared(prepared, daily.ravel())
+        # For a 00 UTC init those valid times are calendar day init+(k-1): hours 3 through
+        # 24 all fall on the init day itself, with only the closing +24 h sample landing at
+        # the next midnight. Labelling it init+k (as this script originally did) put every
+        # forecast a day later than its own contents, so each row was verified against the
+        # wrong day's observation - ~8% MAE on average over the 2019 sample, 15-16% on
+        # pressure and precipitable water.
+        per_day.append(pd.DataFrame({
+            "region_id": vals.index.to_numpy(),
+            var_prefix: vals.to_numpy(),
+            "valid_date": pd.Timestamp(init) + pd.Timedelta(days=lead - 1),
+            "init_date": pd.Timestamp(init),
+            "member": member,
+            "lead_day": lead,
+            "source_grib": key,
+            "source_msgs": ",".join(str(r.msg) for r in chosen),
+        }))
 
     if not per_day:
-        return pd.DataFrame()
-    out = pd.concat(per_day, ignore_index=True)
-    return out.rename(columns={"raw_value": var_prefix})
+        return pd.DataFrame(), {}
+    return pd.concat(per_day, ignore_index=True), grids
 
 
-def build(cities: pd.DataFrame, inits: list, members: list, resume: bool) -> None:
+def _write_grid_bundle(init: str, grids_by: dict, members: list) -> Path | None:
+    """Collapse the members into ensemble mean and spread, and store the fields.
+
+    Mean and spread rather than the raw members: five members at float32 is 11.25 GB over
+    the archive against 2.25 GB for two statistics, and mean and spread are what the
+    ensemble is actually saying - its best guess, and its own confidence in it. Spread is
+    the population standard deviation across members, so a single-member run yields zero
+    spread rather than an undefined one.
+    """
+    variables = tuple(VAR_SPEC)
+    leads = tuple(LEAD_DAYS)
+    lats, lons = gf.domain_coords()
+    values = np.full((len(variables), len(leads), len(gf.STATS), len(lats), len(lons)),
+                     np.nan, dtype=np.float32)
+
+    for vi, vp in enumerate(variables):
+        for li, lead in enumerate(leads):
+            planes = [grids_by[(vp, m)][lead] for m in members
+                      if (vp, m) in grids_by and lead in grids_by[(vp, m)]]
+            if not planes:
+                continue  # variable does not reach this lead day; stays NaN
+            stack = np.stack(planes)
+            allnan = np.isnan(stack).all(axis=0)
+            mean = np.where(allnan, np.nan, np.nanmean(stack, axis=0))
+            spread = np.where(allnan, np.nan, np.nanstd(stack, axis=0))
+            values[vi, li, 0] = mean
+            values[vi, li, 1] = spread
+
+    if np.isnan(values).all():
+        return None
+    bundle = gf.GridBundle(init, variables, leads, lats, lons, values)
+    return gf.save_bundle(GRID_DIR / f"{init}.npz", bundle)
+
+
+def build(inits: list, members: list, resume: bool) -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
+    GRID_DIR.mkdir(parents=True, exist_ok=True)
     part_dir = OUT_DIR / "_gefs_parts"
     part_dir.mkdir(exist_ok=True)
 
+    # The domain is fixed, so the mapping from weight rows into a ravelled field is built
+    # once for the whole run rather than per field - 400 aggregations per cycle, 82x
+    # faster prepared than not.
+    lat2d, lon2d = np.meshgrid(*gf.domain_coords(), indexing="ij")
+    prepared = get_aggregator().prepare(lat2d.ravel(), lon2d.ravel())
+
     for init in inits:
         part_path = part_dir / f"{init}.parquet"
-        if resume and part_path.exists():
+        grid_path = GRID_DIR / f"{init}.npz"
+        if resume and part_path.exists() and grid_path.exists():
             print(f"= {init}  (cached, skipping)")
             continue
         t0 = time.time()
@@ -421,19 +483,27 @@ def build(cities: pd.DataFrame, inits: list, members: list, resume: bool) -> Non
         merged: pd.DataFrame | None = None
         jobs = [(vp, init, m) for m in members for vp in VAR_SPEC]
         results: dict[tuple[str, str], pd.DataFrame] = {}
+        grids_by: dict[tuple[str, str], dict] = {}
         with ThreadPoolExecutor(max_workers=DOWNLOAD_WORKERS) as pool:
-            fut = {pool.submit(pull_one_file, vp, init, m, cities): (vp, m) for vp, init_, m in jobs}
+            fut = {pool.submit(pull_one_file, vp, init, m, prepared): (vp, m)
+                   for vp, init_, m in jobs}
             for f in as_completed(fut):
                 vp, m = fut[f]
-                df = f.result()
+                df, grids = f.result()
                 results[(vp, m)] = df
+                grids_by[(vp, m)] = grids
                 n = 0 if df.empty else len(df)
-                print(f"    {vp:<12} {m}  rows={n}")
+                print(f"    {vp:<12} {m}  rows={n}  grids={len(grids)}")
 
-        # assemble wide table keyed by (city, init_date, member, lead_day, valid_date):
-        # first stack every member for a given variable, then merge one column per
-        # variable across the shared keys (no column-name collisions that way).
-        keys = ["city", "init_date", "member", "lead_day", "valid_date"]
+        written = _write_grid_bundle(init, grids_by, members)
+        if written is not None:
+            print(f"    grid  -> {written.name}  {written.stat().st_size/1e6:.2f} MB")
+        del grids_by  # ~33 MB of fields per cycle; do not carry it into the next one
+
+        # assemble wide table keyed by (region_id, init_date, member, lead_day,
+        # valid_date): first stack every member for a given variable, then merge one
+        # column per variable across the shared keys (no column-name collisions that way).
+        keys = ["region_id", "init_date", "member", "lead_day", "valid_date"]
         for vp in VAR_SPEC:
             parts = [df for (v, _m), df in results.items() if v == vp and not df.empty]
             if not parts:
@@ -448,14 +518,14 @@ def build(cities: pd.DataFrame, inits: list, members: list, resume: bool) -> Non
             print(f"    (no data for {init})")
             continue
 
-        merged = _canonicalise(merged, cities)
+        merged = _canonicalise(merged)
         merged.to_parquet(part_path, index=False)
         print(f"  -> {part_path.name}  {len(merged):,} rows  {time.time()-t0:,.0f}s")
 
-    _finalise(cities, part_dir, sorted({int(i[:4]) for i in inits}))
+    _finalise(part_dir, sorted({int(i[:4]) for i in inits}))
 
 
-def _canonicalise(df: pd.DataFrame, cities: pd.DataFrame) -> pd.DataFrame:
+def _canonicalise(df: pd.DataFrame) -> pd.DataFrame:
     """Raw GEFS columns -> canonical units and derived fields."""
     out = df.copy()
 
@@ -479,24 +549,36 @@ def _canonicalise(df: pd.DataFrame, cities: pd.DataFrame) -> pd.DataFrame:
     if "soilw_bgrnd" in out:
         out["soilw_vol_pct"] = out["soilw_bgrnd"] * 100.0
 
-    meta = cities.rename(columns={"lat": "latitude", "lon": "longitude"})
-    out = out.merge(meta[["city", "state", "region", "latitude", "longitude"]], on="city", how="left")
+    meta = pd.DataFrame([
+        {"region_id": d.region_id, "region_name": d.region_name,
+         "state_id": d.state_id, "state_name": d.state_name,
+         "latitude": d.centroid_lat, "longitude": d.centroid_lon}
+        for d in load_registry()
+    ])
+    out = out.merge(meta, on="region_id", how="left")
+    unknown = out["region_name"].isna().sum()
+    if unknown:
+        raise SystemExit(f"{unknown} rows carry a region_id absent from the registry")
 
+    # latitude/longitude are the district centroid, kept so a consumer can place the
+    # region on a map. They are NOT where the value was read: every value is the
+    # area-weighted mean over the district's grid cells, not a point sample.
     canon = [
-        "city", "state", "region", "latitude", "longitude",
+        "region_id", "region_name", "state_id", "state_name", "latitude", "longitude",
         "init_date", "valid_date", "lead_day", "member",
         "t2m_c", "rh2m_pct", "apcp_mm", "mslp_hpa", "psfc_hpa",
         "pwat_kgm2", "wspd10m_ms", "wdir10m_deg", "soilw_vol_pct",
     ]
     src_cols = sorted(c for c in out.columns if c.startswith(("src_", "srcmsg_")))
     keep = [c for c in canon if c in out.columns] + src_cols
-    out = out[keep].sort_values(["city", "init_date", "member", "lead_day"]).reset_index(drop=True)
+    out = out[keep].sort_values(
+        ["region_id", "init_date", "member", "lead_day"]).reset_index(drop=True)
     out["init_date"] = pd.to_datetime(out["init_date"]).dt.date
     out["valid_date"] = pd.to_datetime(out["valid_date"]).dt.date
     return out
 
 
-def _finalise(cities: pd.DataFrame, part_dir: Path, years: list) -> None:
+def _finalise(part_dir: Path, years: list) -> None:
     """Write one CSV/parquet per year, from that year's cached parts.
 
     Per year, and only for the years this run asked for, on purpose. An earlier version
@@ -510,7 +592,23 @@ def _finalise(cities: pd.DataFrame, part_dir: Path, years: list) -> None:
         if not parts:
             print(f"No parts for {year}; nothing to finalise.", file=sys.stderr)
             continue
-        _write_year(pd.concat((pd.read_parquet(p) for p in parts), ignore_index=True), year)
+
+        # A part written before the move to districts is keyed by `city`, not
+        # `region_id`. Concatenating the two schemas would not fail - pandas would take
+        # the union of the columns and fill the rest with NaN - so it would quietly
+        # publish a year that is half district rows and half city rows, each missing the
+        # other's key. Refuse instead, and say which files to delete.
+        stale = [q for q in parts
+                 if "region_id" not in pq.ParquetFile(q).schema_arrow.names]
+        if stale:
+            raise SystemExit(
+                f"{len(stale)} of {len(parts)} cached parts for {year} predate the move "
+                f"to districts and are keyed by city:\n  "
+                + "\n  ".join(str(q) for q in stale[:5])
+                + (f"\n  ... and {len(stale) - 5} more" if len(stale) > 5 else "")
+                + "\nDelete them and re-fetch those initialisations."
+            )
+        _write_year(pd.concat((pd.read_parquet(q) for q in parts), ignore_index=True), year)
 
 
 def _write_year(full: pd.DataFrame, year: int) -> None:
@@ -524,7 +622,8 @@ def _write_year(full: pd.DataFrame, year: int) -> None:
     print(f"                     {pq_path.relative_to(BACKEND_DIR)}")
     print("=" * 78)
     print(f"rows            : {len(full):,}")
-    print(f"cities          : {full['city'].nunique()}")
+    print(f"districts       : {full['region_id'].nunique()}")
+    print(f"states/UTs      : {full['state_id'].nunique()}")
     print(f"init cycles      : {full['init_date'].nunique()}  "
           f"({full['init_date'].min()} .. {full['init_date'].max()})")
     print(f"members         : {sorted(full['member'].unique())}")
@@ -562,10 +661,6 @@ def main() -> None:
     ap.add_argument("--list-only", action="store_true", help="print the plan and exit")
     args = ap.parse_args()
 
-    if not CITIES_JSON.exists():
-        sys.exit(f"missing {CITIES_JSON} - run the city-extraction step first")
-    cities = pd.DataFrame(json.loads(CITIES_JSON.read_text()))
-
     if args.inits:
         inits = [d.strip() for d in args.inits.split(",") if d.strip()]
         bad = [d for d in inits if len(d) != 10 or int(d[:4]) not in ARCHIVE_YEARS]
@@ -595,7 +690,7 @@ def main() -> None:
 
     est_files = len(inits) * len(members) * len(VAR_SPEC)
     print(f"years={years[0]}..{years[-1]} ({len(years)})  "
-          f"cities={len(cities)}  inits={len(inits)}  members={len(members)}  "
+          f"districts={len(load_registry())}  inits={len(inits)}  members={len(members)}  "
           f"variables={len(VAR_SPEC)}  -> ~{est_files} GRIB files, "
           f"~{est_files * 8} range GETs")
     if args.list_only:
@@ -603,7 +698,7 @@ def main() -> None:
             print("  init", i)
         return
 
-    build(cities, inits, members, resume=args.resume)
+    build(inits, members, resume=args.resume)
 
 
 if __name__ == "__main__":
