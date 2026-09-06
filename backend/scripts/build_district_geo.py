@@ -52,6 +52,27 @@ forecasts without any claim that those districts existed then.
 
 The generated files are committed, so this only needs re-running when the boundaries
 themselves change. It is not on the ingest path.
+
+Building the map's TopoJSON
+---------------------------
+The dashboard needs a small, topology-aware version. Simplifying each polygon
+independently - which is what ``india_districts.geojson`` above does, and is fine for
+point lookup - breaks the vertices neighbours share, so a simplifier can no longer tell
+that two districts have a common border and draws slivers between them. Hence
+``--full-geojson`` and mapshaper:
+
+    python backend/scripts/build_district_geo.py --full-geojson /tmp/districts_full.geojson
+    npx mapshaper@0.6 /tmp/districts_full.geojson \
+        -simplify percentage=12% keep-shapes planar \
+        -clean \
+        -rename-layers districts \
+        -o format=topojson frontend/src/assets/geo/india_districts.topojson
+
+666 districts land at 374 KB (111 KB gzipped) - smaller than the 36-state file it sits
+beside, which was never simplified. ``-clean`` matters: it drops 421 sliver polygons left
+between neighbours, and was checked to keep all 666 districts with no empty geometry.
+``percentage=25%`` is not better - it leaves *more* unrepaired self-intersections (526
+against 288), because those come from the source boundaries rather than from simplifying.
 """
 from __future__ import annotations
 
@@ -258,6 +279,12 @@ def main() -> None:
                     help=f"GADM 4.1 India level-2 GeoJSON. Downloaded from {SOURCE_URL} "
                          "if not given.")
     ap.add_argument("--out-dir", type=Path, default=GEO_DIR)
+    ap.add_argument("--full-geojson", type=Path, default=None,
+                    help="also write unsimplified boundaries here. Input for building the "
+                         "map's TopoJSON: simplifying each polygon on its own breaks the "
+                         "vertices neighbours share, so a topology-aware simplifier can no "
+                         "longer tell that two districts have a common border and draws "
+                         "slivers between them.")
     args = ap.parse_args()
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
@@ -309,6 +336,18 @@ def main() -> None:
     reg_path = args.out_dir / "india_districts.json"
     geo_path = args.out_dir / "india_districts.geojson"
     w_path = args.out_dir / "district_grid_weights.parquet"
+
+    if args.full_geojson:
+        full = {"type": "FeatureCollection", "features": [
+            {"type": "Feature",
+             "properties": {"region_id": r["region_id"], "region_name": r["region_name"],
+                            "state_id": r["state_id"], "state_name": r["state_name"]},
+             "geometry": mapping(r["geometry"])}
+            for r in records]}
+        args.full_geojson.parent.mkdir(parents=True, exist_ok=True)
+        args.full_geojson.write_text(json.dumps(full, ensure_ascii=False))
+        print(f"wrote {args.full_geojson}  "
+              f"({args.full_geojson.stat().st_size/1e6:.1f} MB, unsimplified)")
 
     reg_path.write_text(json.dumps(registry, indent=1, ensure_ascii=False))
     geo_path.write_text(json.dumps(
