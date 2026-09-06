@@ -594,7 +594,9 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 }
 .map { width: 100%; height: auto; display: block; }
 .region {
-  stroke: var(--card); stroke-width: 0.7; cursor: pointer;
+  /* 0.7 was right for 36 states. At 666 districts the borders are most of the ink on the
+     map and the risk colours stop reading as a field, so they thin to a hairline. */
+  stroke: var(--card); stroke-width: 0.25; cursor: pointer;
   transition: fill 0.35s cubic-bezier(0.2, 0.7, 0.25, 1), opacity 0.15s;
 }
 .region:hover { opacity: 0.82; }
@@ -603,7 +605,32 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 .region--medium { fill: var(--watch); }
 .region--high { fill: var(--bust); }
 .region--nodata { fill: var(--nodata); cursor: default; }
-.region--selected { stroke: var(--ink); stroke-width: 2; }
+.region--selected { stroke: var(--ink); stroke-width: 1.4; }
+.region:hover { stroke: var(--ink-2); stroke-width: 0.9; }
+
+/* No one finds one of 666 districts by clicking. */
+.map-search { position: relative; margin-bottom: 0.5rem; }
+.map-search input {
+  width: 100%; box-sizing: border-box;
+  padding: 0.45rem 0.6rem; border: 1px solid var(--rule);
+  border-radius: 8px; background: var(--card-2); color: var(--ink);
+  font: inherit; font-size: 0.82rem;
+}
+.map-search input:focus-visible { outline: 2px solid var(--blue); border-color: var(--blue); }
+.map-search__results {
+  position: absolute; z-index: 6; top: calc(100% + 2px); left: 0; right: 0;
+  margin: 0; padding: 0.25rem; list-style: none;
+  background: var(--card); border: 1px solid var(--rule); border-radius: 8px;
+  box-shadow: 0 12px 26px -12px rgba(11, 18, 32, 0.35);
+}
+.map-search__results button {
+  display: block; width: 100%; text-align: left;
+  padding: 0.35rem 0.5rem; border: 0; border-radius: 6px;
+  background: transparent; color: var(--ink); font: inherit; font-size: 0.8rem;
+  cursor: pointer;
+}
+.map-search__results button:hover,
+.map-search__results button:focus-visible { background: var(--blue-wash); outline: none; }
 .map-tooltip {
   position: absolute; pointer-events: none; z-index: 5;
   background: var(--ink); color: #fff;
