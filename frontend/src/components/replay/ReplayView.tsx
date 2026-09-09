@@ -148,7 +148,7 @@ export function ReplayView({ topology }: { topology: Topology | null }) {
             onSelect={(rid) => chartableRegionIds.has(rid) && setFocusRegionId(rid)}
             topology={topology}
           />
-          <p className="muted small">Click a state to chart its forecast against what actually happened.</p>
+          <p className="muted small">Click a district to chart its forecast against what actually happened.</p>
         </div>
 
         <div className="replay__sidecol">

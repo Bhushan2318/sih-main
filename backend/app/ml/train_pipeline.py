@@ -49,6 +49,7 @@ class TrainReport:
     regressor_metrics: dict = field(default_factory=dict)
     classifier_metrics: dict = field(default_factory=dict)
     thresholds: dict = field(default_factory=dict)
+    promotion_note: str = ""
     error: str | None = None
     seconds: float = 0.0
 
@@ -118,6 +119,70 @@ def _split_by_cycle(paired: pd.DataFrame):
     a = max(1, int(round(n * TRAIN_FRAC)))
     b = max(a + 1, int(round(n * (TRAIN_FRAC + VAL_FRAC))))
     return set(cycles[:a]), set(cycles[a:b]), set(cycles[b:])
+
+
+# A run may score this much worse than the current one and still ship. Deliberately
+# generous, because the two numbers are not measured on the same rows: adding cycles moves
+# the held-out split, so a small difference between runs is a different test set as much
+# as a different model. What this catches is the collapse - a broken feature, an empty
+# join, a label inverted - not the noise.
+MAX_ROC_AUC_REGRESSION = 0.05
+
+# And an absolute floor, which does not depend on the split at all: a classifier that
+# cannot beat predicting the base rate has no business being served, however it compares
+# to whatever came before.
+MIN_ROC_AUC = 0.55
+
+
+def _held_out(metrics: dict | None) -> dict:
+    if not isinstance(metrics, dict):
+        return {}
+    clf = metrics.get("classifier", metrics)
+    for split in ("test", "val"):
+        if isinstance(clf.get(split), dict):
+            return clf[split]
+    return {}
+
+
+def _promotion_decision(new_metrics: dict | None) -> tuple[bool, str]:
+    """Whether this run should become the served model.
+
+    `make_current` used to be unconditional: any run that finished without raising became
+    current, published its artifact and fired the deploy. A model that had quietly got
+    worse shipped itself, and the failure looked exactly like success. For a project whose
+    whole claim is knowing when to distrust a forecast, that was the wrong default.
+    """
+    new = _held_out(new_metrics)
+    auc = new.get("roc_auc")
+    if not isinstance(auc, (int, float)):
+        return True, "promoted: this run reported no held-out ROC-AUC to check"
+
+    if auc < MIN_ROC_AUC:
+        return False, (f"NOT promoted: held-out ROC-AUC {auc:.4f} is below the floor of "
+                       f"{MIN_ROC_AUC}. A model that cannot beat the base rate should not "
+                       f"be served.")
+
+    current = registry.current_run_id()
+    if not current:
+        return True, f"promoted: first model (held-out ROC-AUC {auc:.4f})"
+
+    prev = _held_out(registry.load_metrics(current))
+    prev_auc = prev.get("roc_auc")
+    if not isinstance(prev_auc, (int, float)):
+        return True, (f"promoted: held-out ROC-AUC {auc:.4f}; the current run "
+                      f"({current}) has no comparable metric")
+
+    drop = prev_auc - auc
+    # Compared with a tolerance: 0.84 - 0.05 is 0.05000000000000004 in binary floating
+    # point, so an exact-boundary regression would be refused by a bare `>`.
+    if drop > MAX_ROC_AUC_REGRESSION + 1e-9:
+        return False, (f"NOT promoted: held-out ROC-AUC {auc:.4f} is {drop:.4f} below the "
+                       f"current run {current} ({prev_auc:.4f}), more than the "
+                       f"{MAX_ROC_AUC_REGRESSION} tolerated. The current model stays "
+                       f"served.")
+    direction = "above" if drop <= 0 else "below"
+    return True, (f"promoted: held-out ROC-AUC {auc:.4f}, {abs(drop):.4f} {direction} the "
+                  f"previous run {current} ({prev_auc:.4f})")
 
 
 def full_retrain(triggered_by_batch_id: str | None = None, make_current: bool = True,
@@ -271,8 +336,13 @@ def full_retrain(triggered_by_batch_id: str | None = None, make_current: bool = 
         report.status = "success"
         report.seconds = time.time() - t0
         if make_current:
-            registry.set_current(run_id)
-            report.made_current = True
+            promote, why = _promotion_decision({"classifier": report.classifier_metrics})
+            report.promotion_note = why
+            if promote:
+                registry.set_current(run_id)
+                report.made_current = True
+            else:
+                report.status = "not_promoted"
         return report
 
     except Exception as exc:  # noqa: BLE001
@@ -314,6 +384,8 @@ def _event_mean_error(paired: pd.DataFrame) -> pd.DataFrame:
 def _print_report(r: TrainReport) -> None:
     print("\n" + "=" * 78)
     print(f"TRAIN RUN {r.run_id}   status={r.status}   made_current={r.made_current}   {r.seconds:.1f}s")
+    if r.promotion_note:
+        print(f"  {r.promotion_note}")
     print("=" * 78)
     if r.status != "success":
         print(f"  {r.error or r.status}")
