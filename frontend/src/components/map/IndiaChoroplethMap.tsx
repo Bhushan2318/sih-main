@@ -137,6 +137,15 @@ export function IndiaChoroplethMap({
     return out;
   }, [districts, byRegionId, aggregation]);
 
+  // The API keys regions by whatever the canonical store holds. Until the archive is
+  // re-fetched at district resolution it holds states, which match no district id here -
+  // and the map would render entirely grey with nothing saying why. Say why.
+  const matched = useMemo(
+    () => districts.reduce((n, f) => n + (byRegionId.has(f.properties.region_id) ? 1 : 0), 0),
+    [districts, byRegionId],
+  );
+  const staleGrain = regions.length > 0 && matched === 0;
+
   const shown = useMemo(
     () => (activeState ? districts.filter((f) => f.properties.state_id === activeState) : []),
     [districts, activeState],
@@ -232,6 +241,13 @@ export function IndiaChoroplethMap({
           )}
         </div>
       </div>
+
+      {staleGrain ? (
+        <p className="map-notice">
+          This forecast cycle is stored by state, not by district, so the map has nothing
+          to colour. It fills in once the archive is re-fetched at district resolution.
+        </p>
+      ) : null}
 
       <svg
         viewBox={`0 0 ${WIDTH} ${HEIGHT}`}

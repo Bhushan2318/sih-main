@@ -635,6 +635,12 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 .map-agg button:not(.is-on):hover { color: var(--ink); }
 
 /* No one finds one of 666 districts by clicking. */
+.map-notice {
+  margin: 0 0 0.5rem; padding: 0.45rem 0.6rem;
+  border: 1px solid var(--rule); border-left: 3px solid var(--watch);
+  border-radius: 6px; background: var(--card-2);
+  color: var(--ink-2); font-size: 0.76rem; line-height: 1.45;
+}
 .map-search { position: relative; }
 .map-search input {
   width: 100%; box-sizing: border-box;
