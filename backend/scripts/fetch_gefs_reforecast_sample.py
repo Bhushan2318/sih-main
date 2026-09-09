@@ -106,7 +106,27 @@ INIT_MMDD = [
 ARCHIVE_YEARS = range(2000, 2020)
 
 
-def init_dates_for(years, stride: int = 0) -> list:
+def parse_months(spec: str | None) -> list | None:
+    """`11`, `1-3` or `1,6,12` -> a sorted list of months. Empty or None means all."""
+    if not spec or not str(spec).strip():
+        return None
+    out: set = set()
+    for chunk in str(spec).split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        if "-" in chunk:
+            a, b = chunk.split("-", 1)
+            out.update(range(int(a), int(b) + 1))
+        else:
+            out.add(int(chunk))
+    bad = sorted(m for m in out if not 1 <= m <= 12)
+    if bad:
+        raise ValueError(f"not months: {bad}")
+    return sorted(out)
+
+
+def init_dates_for(years, stride: int = 0, months: list | None = None) -> list:
     """Initialisation dates for the given years.
 
     ``stride`` 0 keeps the seasonal 17-a-year pattern above. ``stride`` 1 takes every
@@ -120,14 +140,19 @@ def init_dates_for(years, stride: int = 0) -> list:
     gaps to be asked about, and enough events to slice results by season or by district.
     """
     if stride <= 0:
-        return [f"{y}-{md}" for y in years for md in INIT_MMDD]
-    out = []
-    for y in years:
-        d = date(y, 1, 1)
-        end = date(y, 12, 31)
-        while d <= end:
-            out.append(d.isoformat())
-            d += timedelta(days=stride)
+        out = [f"{y}-{md}" for y in years for md in INIT_MMDD]
+    else:
+        out = []
+        for y in years:
+            d, end = date(y, 1, 1), date(y, 12, 31)
+            while d <= end:
+                out.append(d.isoformat())
+                d += timedelta(days=stride)
+    if months:
+        # Filtered on the dates themselves rather than during generation, so this
+        # composes with the seasonal pattern as well as with a stride.
+        keep = set(months)
+        out = [d for d in out if int(d[5:7]) in keep]
     return out
 
 
@@ -717,6 +742,10 @@ def main() -> None:
                          "a fetch across parallel CI jobs. Strided rather than contiguous "
                          "so a failed shard thins the seasonal sample evenly instead of "
                          "removing a whole quarter.")
+    ap.add_argument("--months", default=None, metavar="SPEC",
+                    help="restrict to these months: 11, 1-3, or 1,6,12. A year at daily "
+                         "density is ~842 GB, too much for one 6-hour Actions job, so CI "
+                         "matrices the year by month.")
     ap.add_argument("--stride", type=int, default=0, metavar="DAYS",
                     help="take every Nth calendar day instead of the 17-a-year seasonal "
                          "pattern: 1 = every day the archive has, 2 = every other day. "
@@ -740,7 +769,11 @@ def main() -> None:
             years = parse_years(args.years)
         except ValueError as exc:
             sys.exit(str(exc))
-        inits = init_dates_for(years, stride=args.stride)
+        try:
+            months = parse_months(args.months)
+        except ValueError as exc:
+            sys.exit(str(exc))
+        inits = init_dates_for(years, stride=args.stride, months=months)
     if args.shard:
         try:
             i, n = (int(x) for x in args.shard.split("/", 1))
