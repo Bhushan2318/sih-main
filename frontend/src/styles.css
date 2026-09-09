@@ -594,7 +594,9 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 }
 .map { width: 100%; height: auto; display: block; }
 .region {
-  stroke: var(--card); stroke-width: 0.7; cursor: pointer;
+  /* Thin, because a drilled state draws many small districts and at that size the
+     borders are most of the ink on the map. */
+  stroke: var(--card); stroke-width: 0.35; cursor: pointer;
   transition: fill 0.35s cubic-bezier(0.2, 0.7, 0.25, 1), opacity 0.15s;
 }
 .region:hover { opacity: 0.82; }
@@ -603,7 +605,64 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 .region--medium { fill: var(--watch); }
 .region--high { fill: var(--bust); }
 .region--nodata { fill: var(--nodata); cursor: default; }
-.region--selected { stroke: var(--ink); stroke-width: 2; }
+.region--selected { stroke: var(--ink); stroke-width: 1.4; }
+.region:hover { stroke: var(--ink-2); stroke-width: 0.9; }
+
+/* The national view shows states; districts appear once you open one. 666 districts at
+   once is unreadable at rest - neighbouring districts are highly correlated, so the map
+   renders as speckle rather than as a field - and unclickable besides. */
+.map-controls { margin-bottom: 0.55rem; }
+.map-controls__row {
+  display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
+  margin-top: 0.4rem; min-height: 1.6rem;
+}
+.map-level {
+  font-family: var(--f-m); font-size: 0.68rem; letter-spacing: 0.04em;
+  text-transform: uppercase; color: var(--ink-3);
+}
+.map-back {
+  border: 1px solid var(--rule); background: var(--card-2); color: var(--ink);
+  border-radius: 999px; padding: 0.2rem 0.6rem; font: inherit; font-size: 0.74rem;
+  cursor: pointer;
+}
+.map-back:hover { border-color: var(--blue); color: var(--blue); }
+.map-agg { display: inline-flex; border: 1px solid var(--rule); border-radius: 999px; overflow: hidden; }
+.map-agg button {
+  border: 0; background: transparent; color: var(--ink-3); cursor: pointer;
+  font: inherit; font-size: 0.7rem; padding: 0.2rem 0.6rem;
+}
+.map-agg button.is-on { background: var(--ink); color: #fff; }
+.map-agg button:not(.is-on):hover { color: var(--ink); }
+
+/* No one finds one of 666 districts by clicking. */
+.map-notice {
+  margin: 0 0 0.5rem; padding: 0.45rem 0.6rem;
+  border: 1px solid var(--rule); border-left: 3px solid var(--watch);
+  border-radius: 6px; background: var(--card-2);
+  color: var(--ink-2); font-size: 0.76rem; line-height: 1.45;
+}
+.map-search { position: relative; }
+.map-search input {
+  width: 100%; box-sizing: border-box;
+  padding: 0.45rem 0.6rem; border: 1px solid var(--rule);
+  border-radius: 8px; background: var(--card-2); color: var(--ink);
+  font: inherit; font-size: 0.82rem;
+}
+.map-search input:focus-visible { outline: 2px solid var(--blue); border-color: var(--blue); }
+.map-search__results {
+  position: absolute; z-index: 6; top: calc(100% + 2px); left: 0; right: 0;
+  margin: 0; padding: 0.25rem; list-style: none;
+  background: var(--card); border: 1px solid var(--rule); border-radius: 8px;
+  box-shadow: 0 12px 26px -12px rgba(11, 18, 32, 0.35);
+}
+.map-search__results button {
+  display: block; width: 100%; text-align: left;
+  padding: 0.35rem 0.5rem; border: 0; border-radius: 6px;
+  background: transparent; color: var(--ink); font: inherit; font-size: 0.8rem;
+  cursor: pointer;
+}
+.map-search__results button:hover,
+.map-search__results button:focus-visible { background: var(--blue-wash); outline: none; }
 .map-tooltip {
   position: absolute; pointer-events: none; z-index: 5;
   background: var(--ink); color: #fff;

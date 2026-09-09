@@ -1,9 +1,17 @@
 name: Backfill reforecast years
 
-# Expands the historical training base. The model was trained on 17 initialisation dates
-# from 2019 - a full seasonal spread, but 17 weather events, which leaves the held-out test
-# split at 3 cycles. This fetches the same seasonal pattern for earlier years so the split
-# becomes ~26 held-out initialisations across ten monsoons.
+# Rebuilds the whole training base at district resolution.
+#
+# Every cycle has to be re-fetched, not just new years: the archive shipped in the
+# `backfill-data` release is keyed by `city`, and the region unit is now the district. The
+# GRIB2 files themselves were never kept - they are discarded as soon as their values are
+# extracted - so there is nothing to re-read locally and the only way to district values is
+# to pull the bytes again. ~2.3 GB per initialisation, ~790 GB over the archive, none of it
+# stored: it flows through and only the extracted values persist.
+#
+# Each cycle now yields two artifacts from one decode: the tabular per-district sample, and
+# the gridded ensemble mean and spread that the convolutional model trains on. Fetching once
+# per model family would have meant doing all 790 GB twice.
 #
 # GEFSv12 reforecast, 2000-2019, one 00 UTC cycle per date, 5 members, 0.25 deg - the same
 # product and script the 2019 sample came from, so extending carries no consistency risk.
@@ -21,9 +29,10 @@ name: Backfill reforecast years
 # finalises a different span, finds no parts for it, and publishes nothing - a silent
 # no-op that looks like a green run.
 #
-# Currently set to 2000-2009: 2010-2019 is already fetched and shipped in the
-# `backfill-data` release, and the GEFSv12 reforecast archive stops at 2019 (2020+ is
-# 404 - it is a one-time retrospective product, not a rolling feed).
+# Set to the full 2000-2019 archive. The previously-shipped 2010-2019 tarball cannot be
+# reused - it predates districts - so the whole span is refetched. The GEFSv12 reforecast
+# archive stops at 2019 (2020+ is 404: it is a one-time retrospective product, not a
+# rolling feed).
 on:
   workflow_dispatch:
 
@@ -42,7 +51,8 @@ jobs:
       # Data bucket. Enough to finish in a few waves, modest enough to be a good citizen.
       max-parallel: 8
       matrix:
-        year: [2000, 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009]
+        year: [2000, 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009,
+               2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019]
         shard: [1, 2]
     steps:
       - uses: actions/checkout@v4
@@ -75,6 +85,17 @@ jobs:
         with:
           name: parts-${{ matrix.year }}-${{ matrix.shard }}
           path: backend/data/samples/_gefs_parts/*.parquet
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Upload this shard's gridded fields
+        # Separate artifact from the parts: these are the convolutional model's inputs and
+        # are ~20x the size, so a job that produced tabular rows but no grids should be
+        # visible as exactly that rather than hidden inside one mixed upload.
+        uses: actions/upload-artifact@v4
+        with:
+          name: grids-${{ matrix.year }}-${{ matrix.shard }}
+          path: backend/data/samples/grids/*.npz
           retention-days: 7
           if-no-files-found: error
 
@@ -111,39 +132,72 @@ jobs:
           merge-multiple: true
           path: backend/data/samples/_gefs_parts
 
+      - name: Collect every shard's gridded fields
+        uses: actions/download-artifact@v4
+        with:
+          pattern: grids-*
+          merge-multiple: true
+          path: backend/data/samples/grids
+
       - name: Build one dataset per year
         working-directory: backend
         # --resume with every part already present downloads nothing: it skips each init
         # as cached and goes straight to writing the per-year CSV/parquet.
         run: |
           ls data/samples/_gefs_parts/*.parquet | wc -l | xargs echo "parts collected:"
+          ls data/samples/grids/*.npz | wc -l | xargs echo "grid bundles collected:"
           python -m scripts.fetch_gefs_reforecast_sample \
-            --years 2000-2009 --resume
+            --years 2000-2019 --resume
 
       - name: Summarise what arrived
         working-directory: backend
         run: |
           python - <<'PY' | tee "$GITHUB_STEP_SUMMARY"
           import glob, pandas as pd
-          print("### Reforecast backfill\n")
-          print("| year | rows | init dates | members |")
-          print("|---|---|---|---|")
+          import os
+          print("### Reforecast backfill (district resolution)\n")
+          print("| year | rows | districts | init dates | members | grid bundles |")
+          print("|---|---|---|---|---|---|")
           total = 0
           for f in sorted(glob.glob("data/samples/gefs_reforecast_india_*.parquet")):
               d = pd.read_parquet(f)
               total += len(d)
               year = f.split("_")[-1].split(".")[0]
-              print(f"| {year} | {len(d):,} | {d.init_date.nunique()} | "
-                    f"{len(d.member.unique())} |")
+              grids = len(glob.glob(f"data/samples/grids/{year}-*.npz"))
+              print(f"| {year} | {len(d):,} | {d.region_id.nunique()} | "
+                    f"{d.init_date.nunique()} | {len(d.member.unique())} | {grids} |")
+          gb = sum(os.path.getsize(g) for g in glob.glob("data/samples/grids/*.npz"))
           print(f"\n**{total:,} forecast rows total.**")
+          print(f"\n**{len(glob.glob('data/samples/grids/*.npz'))} grid bundles, "
+                f"{gb/1e9:.2f} GB.**")
+          # A year that fetched rows but no grids, or vice versa, is a half-failure that
+          # would otherwise look green - say so here rather than discovering it at train
+          # time.
+          for f in sorted(glob.glob("data/samples/gefs_reforecast_india_*.parquet")):
+              year = f.split("_")[-1].split(".")[0]
+              d = pd.read_parquet(f)
+              grids = len(glob.glob(f"data/samples/grids/{year}-*.npz"))
+              if grids != d.init_date.nunique():
+                  print(f"\n> **{year}: {d.init_date.nunique()} init dates but "
+                        f"{grids} grid bundles - these must match.**")
           PY
 
-      - name: Publish the dataset
+      - name: Publish the tabular dataset
         uses: actions/upload-artifact@v4
         with:
           name: reforecast-backfill
           path: |
             backend/data/samples/gefs_reforecast_india_*.parquet
             backend/data/samples/gefs_reforecast_india_*.csv
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Publish the gridded fields
+        # ~1.4 GB over the archive, published separately: only the convolutional model
+        # reads these, and the tabular half must stay downloadable on its own.
+        uses: actions/upload-artifact@v4
+        with:
+          name: reforecast-grids
+          path: backend/data/samples/grids/*.npz
           retention-days: 30
           if-no-files-found: error
