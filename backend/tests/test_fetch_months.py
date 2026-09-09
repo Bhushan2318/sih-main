@@ -66,3 +66,28 @@ def test_parse_months_accepts_the_forms_the_workflow_sends():
 def test_a_month_outside_the_calendar_is_refused():
     with pytest.raises(ValueError):
         fetch.parse_months("13")
+
+
+def test_the_fetch_script_imports_without_the_grib_stack():
+    """xarray and cfgrib live in requirements-live.txt, which the test job does not
+    install. The README states the whole suite runs without the GRIB stack, and this
+    module must stay importable for that to be true.
+
+    The project has already paid for this once: the gather job of
+    backfill-reforecast.yml carries a comment about a version that skipped
+    requirements-live "on the reasoning that the parts are already parquet - true of the
+    work, wrong about the import, and the job failed here."
+    """
+    import ast
+
+    src = (BACKEND / "scripts" / "fetch_gefs_reforecast_sample.py").read_text()
+    tree = ast.parse(src)
+    heavy = {"xarray", "cfgrib", "eccodes"}
+    offenders = []
+    for node in tree.body:                      # module scope only, not nested
+        if isinstance(node, ast.Import):
+            offenders += [a.name for a in node.names if a.name.split(".")[0] in heavy]
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            if node.module.split(".")[0] in heavy:
+                offenders.append(node.module)
+    assert not offenders, f"imported at module scope: {offenders}"

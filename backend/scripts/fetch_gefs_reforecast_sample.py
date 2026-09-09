@@ -65,7 +65,13 @@ import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq
 import requests
-import xarray as xr
+
+# xarray/cfgrib are NOT imported here. They live in requirements-live.txt, which the test
+# job deliberately does not install - the README's claim that the whole suite runs without
+# the GRIB stack depends on this module staying importable without it. Only extract_grid
+# decodes anything, so the import is deferred to there. The gather job of
+# backfill-reforecast.yml already carries a comment about an earlier version of this exact
+# mistake; a test now pins it.
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -360,6 +366,8 @@ def extract_grid(grib_bytes: bytes, spec: dict) -> tuple[np.ndarray, np.ndarray]
     tmp.parent.mkdir(parents=True, exist_ok=True)
     tmp.write_bytes(grib_bytes)
     try:
+        import xarray as xr  # deferred: see the import block at the top of this file
+
         # Level selection already happened at the .idx stage (select_for_day keeps only
         # the wanted level's messages), so no cfgrib filter_by_keys is needed here -
         # and passing one breaks when a single message makes the level coord scalar.
