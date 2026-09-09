@@ -20,7 +20,7 @@ export function RegionDetailPanel({
   if (!regionId) {
     return (
       <aside className="panel">
-        <EmptyState title="No region selected" message="Click a state on the map to see its forecast detail." />
+        <EmptyState title="No region selected" message="Open a state on the map and pick a district — or search for one directly." />
       </aside>
     );
   }
