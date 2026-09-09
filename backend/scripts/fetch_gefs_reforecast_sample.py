@@ -200,6 +200,24 @@ VAR_SPEC: dict[str, dict] = {
                      "level_key": "heightAboveGround", "level_val": 10.0},
     "soilw_bgrnd":  {"short_name": "soilw", "max_lead_h": 72,  "accum": False,
                      "level_key": "depthBelowLandLayer", "level_val": 0.0},
+
+    # Predictor-only fields: read for the convolutional model, never paired.
+    #
+    # These carry the predictability signal the surface variables do not. Z500 is the
+    # synoptic pattern - the field a forecaster reads to see a trough arriving, and the
+    # one Rodwell's bust definition is built on. CAPE and CIN are the textbook predictors
+    # of convection, which is what drives rainfall busts, the hardest variable here.
+    #
+    # `grid_only` because there is no observed counterpart: no reanalysis product offers
+    # a "CAPE observation" to verify a CAPE forecast against. Every row in the paired
+    # store is a forecast matched to an observation, so letting these in would create rows
+    # that can never pair and would dilute every count derived from it.
+    "hgt_pres_abv700mb": {"short_name": "gh", "max_lead_h": 240, "accum": False,
+                          "level": "500 mb", "grid_only": True},
+    "cape_sfc":     {"short_name": "cape", "max_lead_h": 240, "accum": False,
+                     "grid_only": True},
+    "cin_sfc":      {"short_name": "cin",  "max_lead_h": 240, "accum": False,
+                     "grid_only": True},
 }
 
 HTTP_RETRIES = 5
@@ -307,7 +325,14 @@ def select_for_day(recs: list[IdxRecord], spec: dict, lead_day: int) -> list[Idx
     if lo >= spec["max_lead_h"]:
         return []
 
-    if spec.get("level_key") == "heightAboveGround":
+    # A file may hold many levels. hgt_pres_abv700mb carries 1,440 messages across 18
+    # pressure levels, of which only 80 are 500 mb - and because messages are fetched by
+    # byte range off the .idx, taking just those costs ~16 MB rather than the file's
+    # 296 MB. A level that is absent selects nothing, so the completeness check refuses
+    # the cycle rather than the fetch quietly falling back to a different level.
+    if spec.get("level"):
+        recs = [r for r in recs if r.level.strip() == spec["level"]]
+    elif spec.get("level_key") == "heightAboveGround":
         recs = [r for r in recs if r.level.strip() == "10 m above ground"]
     elif spec.get("level_key") == "depthBelowLandLayer":
         recs = [r for r in recs if r.level.strip() == "0-0.1 m below ground"]
@@ -409,6 +434,10 @@ DAILY_AGG = {  # how to collapse 3-hourly -> one value per lead day
     "tmp_2m": "mean", "spfh_2m": "mean", "pres_sfc": "mean", "pres_msl": "mean",
     "pwat_eatm": "mean", "apcp_sfc": "sum", "ugrd_hgt": "mean", "vgrd_hgt": "mean",
     "soilw_bgrnd": "mean",
+    # Instantaneous fields; a daily mean is the right collapse. CAPE peaks in the
+    # afternoon, so the mean understates the peak - a known simplification, recorded
+    # rather than hidden.
+    "hgt_pres_abv700mb": "mean", "cape_sfc": "mean", "cin_sfc": "mean",
 }
 
 
@@ -593,7 +622,7 @@ def build(inits: list, members: list, resume: bool) -> None:
         # valid_date): first stack every member for a given variable, then merge one
         # column per variable across the shared keys (no column-name collisions that way).
         keys = ["region_id", "init_date", "member", "lead_day", "valid_date"]
-        for vp in VAR_SPEC:
+        for vp in (v for v in VAR_SPEC if not VAR_SPEC[v].get("grid_only")):
             parts = [df for (v, _m), df in results.items() if v == vp and not df.empty]
             if not parts:
                 continue
