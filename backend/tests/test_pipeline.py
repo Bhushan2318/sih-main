@@ -259,3 +259,67 @@ def test_compaction_removes_superseded_rows_without_changing_what_is_read(sessio
 
     # Idempotent: a compacted store has nothing left to remove.
     assert ps.compact_store()["removed"] == 0
+
+
+# ----------------------------------------------------- listing cycles from footers
+
+def _forecast_row(region_id, init, valid, variable="temperature_c", value=25.0):
+    from datetime import datetime, timezone
+    import uuid
+    return {
+        "record_id": str(uuid.uuid4()), "upload_batch_id": "b-cycles",
+        "source_file": "f.csv", "source_column": "t",
+        "variable": variable, "value_type": "forecast", "value": value,
+        "region_id": region_id, "region_name": region_id,
+        "init_date": init, "valid_date": valid, "lead_time_days": 1,
+        "mapping_confidence": 1.0, "ingested_at": datetime.now(timezone.utc),
+        "grain": "native",
+    }
+
+
+def test_distinct_forecast_init_dates_sees_every_cycle_in_a_mixed_batch():
+    """One batch holding several cycles lands in a row group whose min and max differ,
+    which statistics alone cannot resolve. The fallback must read that group rather than
+    report only its endpoints - otherwise cycles in the middle vanish silently and the
+    replay tab simply never offers them."""
+    from datetime import date
+
+    from app.storage import parquet_store
+
+    inits = [date(2019, 7, d) for d in (1, 5, 9, 14, 20)]
+    rows = [_forecast_row(f"IN-MH-D{i}", init, init)
+            for i, init in enumerate(inits) for _ in range(3)]
+    parquet_store.append_batch("b-cycles", rows)
+    try:
+        got = parquet_store.distinct_forecast_init_dates()
+        assert set(got) >= set(inits), f"missing cycles: {set(inits) - set(got)}"
+        assert got == sorted(got)
+        assert parquet_store.latest_forecast_init_date() == max(inits)
+    finally:
+        parquet_store.drop_batch("b-cycles")
+
+
+def test_distinct_forecast_init_dates_ignores_observations():
+    """An observed row carries no init_date; it must not become a phantom cycle."""
+    from datetime import date, datetime, timezone
+    import uuid
+
+    from app.storage import parquet_store
+
+    init = date(2019, 8, 14)
+    rows = [_forecast_row("IN-MH-D0", init, init)]
+    rows.append({
+        "record_id": str(uuid.uuid4()), "upload_batch_id": "b-obs",
+        "source_file": "o.csv", "source_column": "t",
+        "variable": "temperature_c", "value_type": "observed", "value": 24.0,
+        "region_id": "IN-MH-D0", "region_name": "IN-MH-D0",
+        "init_date": None, "valid_date": init, "lead_time_days": None,
+        "mapping_confidence": 1.0, "ingested_at": datetime.now(timezone.utc),
+        "grain": "native",
+    })
+    parquet_store.append_batch("b-obs", rows)
+    try:
+        got = parquet_store.distinct_forecast_init_dates()
+        assert got == [init]
+    finally:
+        parquet_store.drop_batch("b-obs")
