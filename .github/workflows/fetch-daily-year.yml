@@ -1,0 +1,171 @@
+name: Fetch a year at daily density
+
+# Pulls every 00 UTC initialisation of one calendar year at district resolution, keeping
+# both artifacts: the tabular per-district sample and the gridded ensemble mean/spread the
+# convolutional model trains on.
+#
+# Why by month. A year at daily density is ~842 GB (365 cycles x ~2.3 GB, measured). Even
+# at the ~80 MB/s CI reaches against that bucket, one job would not finish inside the
+# 6-hour limit GitHub kills at. Twelve month-shaped jobs each move ~69 GB.
+#
+# Why 2017 first. Cyclone Ockhi ran 29 Nov - 6 Dec 2017, so a full calendar year covers
+# every initialisation that was supposed to see it coming. At the old 17-a-year seasonal
+# pattern you cannot land on 29 November at all.
+#
+# THE ARCHIVE IS A PUBLIC GOOD. 842 GB per year comes out of a public NOAA bucket. The
+# fetch is idempotent and cached per month so a re-run continues rather than re-pulls;
+# do not dispatch this casually, and do not raise max-parallel to "go faster".
+#
+# This workflow publishes nothing and fires no deploy hook. It produces artifacts to be
+# inspected, then ingested deliberately.
+on:
+  workflow_dispatch:
+    inputs:
+      year:
+        description: "Calendar year to fetch (archive is 2000-2019)"
+        type: string
+        required: true
+        default: "2017"
+      months:
+        description: "Months: 11, or 1-12, or 1,6,12"
+        type: string
+        required: true
+        default: "11"
+      stride:
+        description: "1 = every day. 2 = every other day."
+        type: string
+        required: true
+        default: "1"
+
+concurrency:
+  # Never two of these at once - they would fight over the same month caches.
+  group: fetch-daily-${{ github.event.inputs.year }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      months: ${{ steps.expand.outputs.months }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: expand
+        name: Expand the month spec into a matrix
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, os
+          spec = os.environ["SPEC"].strip()
+          out = set()
+          for chunk in spec.split(","):
+              chunk = chunk.strip()
+              if not chunk:
+                  continue
+              if "-" in chunk:
+                  a, b = chunk.split("-", 1)
+                  out.update(range(int(a), int(b) + 1))
+              else:
+                  out.add(int(chunk))
+          bad = sorted(m for m in out if not 1 <= m <= 12)
+          if bad:
+              raise SystemExit(f"not months: {bad}")
+          print("months=" + json.dumps(sorted(out)))
+          PY
+        env:
+          SPEC: ${{ github.event.inputs.months }}
+
+  fetch:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      # 4 concurrent months x 20 download workers = ~80 connections into a public AWS
+      # Open Data bucket. Deliberately modest; this is someone else's infrastructure.
+      max-parallel: 4
+      matrix:
+        month: ${{ fromJson(needs.plan.outputs.months) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-live.txt
+
+      - name: Install dependencies
+        working-directory: backend
+        # requirements-live brings eccodes/cfgrib/xarray, needed to decode GRIB2.
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-live.txt
+          python -m eccodes selfcheck
+
+      - name: Restore any part of this month already fetched
+        # This is what makes a re-dispatch resume rather than re-pull. --resume skips a
+        # cycle only when BOTH its part and its grid are present, so a half-written cycle
+        # is fetched again rather than cached as done.
+        uses: actions/cache@v4
+        with:
+          path: |
+            backend/data/samples/_gefs_parts
+            backend/data/samples/grids
+          key: gefs-${{ github.event.inputs.year }}-${{ matrix.month }}-${{ github.run_id }}
+          restore-keys: |
+            gefs-${{ github.event.inputs.year }}-${{ matrix.month }}-
+
+      - name: Fetch month
+        working-directory: backend
+        run: |
+          python -m scripts.fetch_gefs_reforecast_sample \
+            --years '${{ github.event.inputs.year }}' \
+            --stride '${{ github.event.inputs.stride }}' \
+            --months '${{ matrix.month }}' \
+            --resume
+
+      - name: What arrived
+        working-directory: backend
+        if: always()
+        run: |
+          python - <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
+          import glob, os
+          y, m = os.environ["Y"], int(os.environ["M"])
+          pre = f"{y}-{m:02d}-"
+          parts = sorted(glob.glob(f"data/samples/_gefs_parts/{pre}*.parquet"))
+          grids = sorted(glob.glob(f"data/samples/grids/{pre}*.npz"))
+          pb = sum(os.path.getsize(p) for p in parts)
+          gb = sum(os.path.getsize(g) for g in grids)
+          print(f"### {y}-{m:02d}\n")
+          print(f"| | |\n|---|---|")
+          print(f"| cycles with a district part | {len(parts)} |")
+          print(f"| cycles with a grid bundle | {len(grids)} |")
+          print(f"| district parts | {pb/1e6:.1f} MB |")
+          print(f"| grid bundles | {gb/1e6:.1f} MB |")
+          if len(parts) != len(grids):
+              print(f"\n> **{len(parts)} parts against {len(grids)} grids - these must match.**")
+          PY
+        env:
+          Y: ${{ github.event.inputs.year }}
+          M: ${{ matrix.month }}
+
+      - name: Upload district parts
+        uses: actions/upload-artifact@v4
+        with:
+          name: parts-${{ github.event.inputs.year }}-${{ matrix.month }}
+          path: backend/data/samples/_gefs_parts/*.parquet
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Upload gridded fields
+        # Separate from the parts: ~20x the size, and only the convolutional model reads
+        # them, so a month that produced rows but no grids is visible as exactly that.
+        uses: actions/upload-artifact@v4
+        with:
+          name: grids-${{ github.event.inputs.year }}-${{ matrix.month }}
+          path: backend/data/samples/grids/*.npz
+          retention-days: 14
+          if-no-files-found: error
