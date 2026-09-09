@@ -1,0 +1,15 @@
+# Training-only dependencies for the convolutional bust model.
+#
+# Deliberately NOT in requirements.txt. The serving box has 512 MB and is killed rather
+# than throttled when it exceeds them; a CPU build of PyTorch is several hundred MB on
+# disk before it imports anything. Training runs on a CI runner with 16 GB that never
+# answers a request - the same split the rest of the system already uses - and the
+# serving process loads the trained network through onnxruntime instead.
+#
+# Same pattern as requirements-live.txt: an optional layer the app runs without.
+#
+#   pip install -r requirements.txt -r requirements-train.txt
+
+torch>=2.0,<2.3
+onnx>=1.15,<1.17
+onnxruntime>=1.17,<1.19
