@@ -106,8 +106,29 @@ INIT_MMDD = [
 ARCHIVE_YEARS = range(2000, 2020)
 
 
-def init_dates_for(years) -> list:
-    return [f"{y}-{md}" for y in years for md in INIT_MMDD]
+def init_dates_for(years, stride: int = 0) -> list:
+    """Initialisation dates for the given years.
+
+    ``stride`` 0 keeps the seasonal 17-a-year pattern above. ``stride`` 1 takes every
+    calendar day the archive publishes, 2 every other day, and so on - the archive has one
+    00 UTC cycle per day, so a stride is a straight thinning of it.
+
+    Density is not free and not linear in value. Each extra day multiplies download,
+    storage and training rows alike, while adding far less independent information: the
+    cycle before and the cycle after see largely the same weather, which is the reason the
+    seasonal pattern exists. What density does buy is *complete coverage* - no seasonal
+    gaps to be asked about, and enough events to slice results by season or by district.
+    """
+    if stride <= 0:
+        return [f"{y}-{md}" for y in years for md in INIT_MMDD]
+    out = []
+    for y in years:
+        d = date(y, 1, 1)
+        end = date(y, 12, 31)
+        while d <= end:
+            out.append(d.isoformat())
+            d += timedelta(days=stride)
+    return out
 
 
 def parse_years(spec: str) -> list:
@@ -425,6 +446,31 @@ def pull_one_file(var_prefix: str, init: str, member: str, prepared: np.ndarray)
     return pd.concat(per_day, ignore_index=True), grids
 
 
+def cycle_is_complete(results: dict, members: list) -> tuple[bool, str]:
+    """Did every (variable, member) download for this cycle return data?
+
+    Rule 3: an incomplete cycle is rejected, not partially ingested. Without this a cycle
+    that lost three of its five members still writes a parquet part and a grid bundle,
+    `--resume` sees both files and marks that date done forever, and the ensemble spread
+    on those rows is computed over two members instead of five. That does not look wrong
+    downstream - it looks like a calm day. Spread is one of the model's real inputs, so a
+    silently narrow one is a fabricated confidence.
+
+    Checked against the members actually requested, not a hardcoded five, so a deliberate
+    single-member run is still complete.
+    """
+    if not results:
+        return False, "no downloads returned for this cycle"
+    missing = [f"{v}/{m}" for m in members for v in VAR_SPEC
+               if results.get((v, m)) is None or results[(v, m)].empty]
+    if missing:
+        shown = ", ".join(missing[:8])
+        more = f" (+{len(missing) - 8} more)" if len(missing) > 8 else ""
+        return False, (f"{len(missing)} of {len(members) * len(VAR_SPEC)} "
+                       f"variable/member files returned nothing: {shown}{more}")
+    return True, ""
+
+
 def _write_grid_bundle(init: str, grids_by: dict, members: list) -> Path | None:
     """Collapse the members into ensemble mean and spread, and store the fields.
 
@@ -470,6 +516,7 @@ def build(inits: list, members: list, resume: bool) -> None:
     # faster prepared than not.
     lat2d, lon2d = np.meshgrid(*gf.domain_coords(), indexing="ij")
     prepared = get_aggregator().prepare(lat2d.ravel(), lon2d.ravel())
+    refused: list[tuple[str, str]] = []
 
     for init in inits:
         part_path = part_dir / f"{init}.parquet"
@@ -494,6 +541,15 @@ def build(inits: list, members: list, resume: bool) -> None:
                 grids_by[(vp, m)] = grids
                 n = 0 if df.empty else len(df)
                 print(f"    {vp:<12} {m}  rows={n}  grids={len(grids)}")
+
+        complete, why = cycle_is_complete(results, members)
+        if not complete:
+            # Refused, not partially written - and deliberately NOT cached, so a retry
+            # picks it up rather than `--resume` treating a broken cycle as done.
+            print(f"    ! REFUSED {init}: {why}", file=sys.stderr)
+            refused.append((init, why))
+            del grids_by
+            continue
 
         written = _write_grid_bundle(init, grids_by, members)
         if written is not None:
@@ -521,6 +577,13 @@ def build(inits: list, members: list, resume: bool) -> None:
         merged = _canonicalise(merged)
         merged.to_parquet(part_path, index=False)
         print(f"  -> {part_path.name}  {len(merged):,} rows  {time.time()-t0:,.0f}s")
+
+    if refused:
+        # Named individually: at 366 cycles "a cycle failed" is not enough to know
+        # whether to retry the date or whether the archive lacks it.
+        print(f"\n{len(refused)} cycle(s) REFUSED as incomplete:", file=sys.stderr)
+        for init, why in refused:
+            print(f"  {init}  {why}", file=sys.stderr)
 
     _finalise(part_dir, sorted({int(i[:4]) for i in inits}))
 
@@ -654,6 +717,11 @@ def main() -> None:
                          "a fetch across parallel CI jobs. Strided rather than contiguous "
                          "so a failed shard thins the seasonal sample evenly instead of "
                          "removing a whole quarter.")
+    ap.add_argument("--stride", type=int, default=0, metavar="DAYS",
+                    help="take every Nth calendar day instead of the 17-a-year seasonal "
+                         "pattern: 1 = every day the archive has, 2 = every other day. "
+                         "Multiplies download, storage and training rows by roughly 365/N "
+                         "over 17 - see init_dates_for.")
     ap.add_argument("--max-inits", type=int, default=None, help="use only the first N init dates")
     ap.add_argument("--members", default=",".join(ALL_MEMBERS),
                     help="comma list, subset of c00,p01,p02,p03,p04")
@@ -672,7 +740,7 @@ def main() -> None:
             years = parse_years(args.years)
         except ValueError as exc:
             sys.exit(str(exc))
-        inits = init_dates_for(years)
+        inits = init_dates_for(years, stride=args.stride)
     if args.shard:
         try:
             i, n = (int(x) for x in args.shard.split("/", 1))
@@ -689,10 +757,12 @@ def main() -> None:
         sys.exit(f"unknown members: {sorted(bad)}")
 
     est_files = len(inits) * len(members) * len(VAR_SPEC)
+    # ~460 MB of GRIB per (init, member) - measured, not estimated.
+    est_gb = len(inits) * len(members) * 0.46
     print(f"years={years[0]}..{years[-1]} ({len(years)})  "
           f"districts={len(load_registry())}  inits={len(inits)}  members={len(members)}  "
           f"variables={len(VAR_SPEC)}  -> ~{est_files} GRIB files, "
-          f"~{est_files * 8} range GETs")
+          f"~{est_files * 8} range GETs, ~{est_gb:,.0f} GB to transfer")
     if args.list_only:
         for i in inits:
             print("  init", i)
