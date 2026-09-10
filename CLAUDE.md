@@ -86,6 +86,22 @@ Query, Zustand, Recharts, hand-written CSS. Hosting cost: $0.
 
 ---
 
+## What keeps going wrong here, and why
+
+**Four separate things in one night were written, unit-tested, committed with a
+confident message, and wrong at real volume.** The cycle completeness check
+wrote short cycles as whole; the observation fetch lost all work on failure and
+died on a limit that clears itself; the CNN encoder was built for half the
+channels it was handed; the data loader materialised 14.3 GB.
+
+Every one passed its tests, because the tests used a handful of synthetic
+samples where the bug cannot appear. This is a data pipeline: it fails on
+**volume, shape and duration**, none of which a toy fixture expresses.
+
+So in this repo, "it has tests" is **weak evidence**. Before believing anything
+works, run it at real scale, and treat a green suite as a statement about
+plumbing rather than about correctness.
+
 ## Before you write code
 
 - **Read the module you are about to change.** Do not infer its API.
@@ -173,9 +189,24 @@ the failure looked like success. **Do not modify the gate or its thresholds.**
 ## Measured facts
 
 Do not re-derive these, and do not contradict them without new measurement.
+Figures marked **(2026-09-10)** replaced earlier estimates after a real run.
 
-- GEFS reforecast download: **~2.3 GB per initialisation** (5 members × 9
-  variable files)
+- GEFS reforecast: **1.79 GB per initialisation actually transferred** for 9
+  variables, **2.2 GB for 12** — measured from the real `.idx` byte ranges
+  (2026-09-10). The older "~2.3 GB" was computed from whole file sizes and
+  overstated it; the fetch pulls only the messages it needs.
+- **The fetch reads 12 variables, not 9.** Three are `grid_only` predictors for
+  the convolutional model — Z500 (`hgt_pres_abv700mb` at 500 mb), `cape_sfc`,
+  `cin_sfc`. They have no observed counterpart, so they never enter the paired
+  store; they reach the CNN as channels and stop there.
+- Byte-range selection is what makes that cheap: **Z500 costs 19 MB out of a
+  296 MB file** (80 of 1,440 messages).
+- **A full year at daily density is 0.81 TB and ~2.9 h of CI**, month-matrixed
+  at 4 in parallel. 2017 measured end to end: 365 cycles, 12,154,500 rows,
+  zero refusals, every cycle exactly 33,300 rows.
+- Gridded fields: **3.88 MB per cycle** on real data at 12 variables, so a year
+  is 1.42 GB and fits one Release asset. A synthetic estimate said 5.97 MB and
+  was 50% pessimistic — real meteorological fields compress better.
 - CI runners reach **~80 MB/s** to that bucket; local is ~90 KB/s. **The fetch is
   a CI job, always.**
 - District store at serving scale (666 districts, 73 cycles, 19.4 M forecast
@@ -191,6 +222,16 @@ Do not re-derive these, and do not contradict them without new measurement.
   costs +163 MB.
 - District geo index: ~4 MB resident, ~24 MB transient while parsing.
 - Serving currently uses **388 MB of 512**.
+- **CNN training streams from disk.** Materialising a year is 14.3 GB (X at
+  [3650, 24, 145, 141] float32 is 7.2 GB, plus the mask); `FieldIndex` holds
+  paths and labels only and reads one cycle per batch — **617 MB**, a 23x
+  reduction. Five years materialised would be 72 GB. Do not reintroduce
+  stacking.
+- **Open-Meteo cannot supply district observations in bulk.** Measured
+  2026-09-10: 80 of 4,902 cells in 3.5 hours — ~215 hours for one year. Its cap
+  is on request *weight*, and water vapour (no daily endpoint, so hourly) is
+  ~24x the weight of the other eight variables combined. Bulk ERA5 needs
+  Copernicus CDS, which requires a free account and an API key.
 
 ## Known limitations
 
@@ -213,8 +254,17 @@ them.
 - **"Bust" is defined on surface-variable error**, not the synoptic criterion of
   Rodwell et al. (2013). Deliberate: surface error is what reaches agriculture and
   disaster response.
-- **The CNN has never been trained on real data.** Every claim about it is
-  architectural until that changes.
+- **Label coverage is 34 districts of 666 for 2017.** Only city-point ERA5
+  exists for that year, and only districts with observations can pair. The CNN
+  still reads the full 666-district geography; unlabelled districts are masked
+  to NaN and contribute nothing to the loss. Fixing this needs CDS.
+- **One year is one monsoon.** The 2017 split trains on Jan–Sep and holds out
+  Nov–Dec, so it tests generalisation *across* seasons and leaves monsoon busts
+  untested as a held-out case.
+- **The bust base rate is ~43%, not ~10%.** The 90th-percentile threshold is per
+  *variable*, and an event busts if any of ~8 exceeds its own, so
+  1 − 0.9⁸ ≈ 0.57 before dependence. Applying a `pos_weight` for a 10% base rate
+  would push every probability up and wreck calibration.
 
 ## Deadline
 
