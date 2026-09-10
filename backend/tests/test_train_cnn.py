@@ -122,3 +122,22 @@ def test_comparison_gets_brier_direction_right():
 def test_comparison_survives_a_missing_metric():
     cnn = train_cnn.CNNReport(status="success", metrics={"test": {"roc_auc": 0.8}})
     assert "-" in train_cnn.format_comparison(cnn, {"test": {}})
+
+
+def test_fit_one_builds_an_encoder_that_accepts_its_own_input(region_ids):
+    """A shape bug that only appears at the first training step.
+
+    BustCNN doubles in_channels internally, because forward concatenates the data with its
+    mask. The training loop keeps those two arrays separate and passes the *data* channel
+    count, so halving it there builds an encoder for half the channels it will be handed -
+    and nothing fails until the first batch reaches the first convolution.
+    """
+    n_data = 6
+    x = np.zeros((2, n_data, 145, 141), dtype=np.float32)
+    m = np.ones_like(x)
+    ex = np.zeros((2, 666, 1), dtype=np.float32)
+    y = np.zeros((2, 666), dtype=np.float32)
+    model, _ = train_cnn._fit_one(0, x, m, ex, y, y, x, m, ex, y,
+                                  epochs=1, patience=1, lr=1e-3, region_ids=region_ids)
+    assert model.encoder[0].in_channels == n_data * 2, \
+        "the encoder must accept data and mask concatenated"
