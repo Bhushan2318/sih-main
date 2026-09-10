@@ -60,3 +60,15 @@ docs/results.md
 # Local editor/agent tooling config. Machine-specific (it carries absolute paths from
 # whoever generated it) and of no use to anyone cloning this, so it is not published.
 .claude/
+
+# Derived observation and ingest artefacts. All are rebuildable from the fetch scripts
+# and none belong in git: the CDS checkpoints are ~1.7 MB per month, the year file is
+# ~20 MB, and _ingest_chunks holds a transient per-cycle parquet that only exists while
+# scripts/ingest_districts_chunked.py is running.
+backend/data/_ingest_chunks/
+backend/data/samples/_era5_cds/
+backend/data/samples/era5_cds_district_observations_india_*.parquet
+backend/data/samples/*_labelled.parquet
+# Gridded fields for the convolutional model: ~3.9 MB per cycle, ~1.5 GB for a year.
+# Rebuilt by the fetch; shipped as a Release asset, never through git.
+backend/data/samples/grids/
