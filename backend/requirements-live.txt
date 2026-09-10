@@ -14,3 +14,10 @@ ecmwflibs>=0.6
 eccodes>=2.38
 cfgrib>=0.9.10,<0.10
 xarray>=2024.1
+
+# Bulk ERA5 observations from the Copernicus CDS
+# (scripts/fetch_era5_cds_district_observations.py). Needs a free CDS account and a
+# personal access token in ~/.cdsapirc; see that script's docstring. Fetch-side only -
+# never imported by the serving app, which must stay inside 512 MB.
+cdsapi>=0.7.7
+netCDF4>=1.6,<2.0
