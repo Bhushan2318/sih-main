@@ -78,6 +78,32 @@ def iter_sample_files():
                 yield p
 
 
+# Samples this big are not parsed by the parametrised parser test. The daily-density
+# fetch writes a full year into data/samples - 675 MB as parquet and 11 GB as CSV for
+# 2017 - and pulling 12.15 million rows into pandas gets the whole pytest process
+# SIGKILLed. It killed the suite twice at 85% before anyone worked out why, because the
+# wrapper's exit code hid the 137.
+#
+# Nothing is lost by skipping them: the test proves that each FORMAT parses, and the
+# 1.6 MB single-year samples are the identical format from the identical writer. What
+# would be lost is the suite.
+PARSE_SIZE_CAP_BYTES = 100 * 1024 * 1024
+
+
+def oversized_samples() -> list:
+    """Sample files excluded from the parser sweep, largest first."""
+    return sorted((p for p in iter_sample_files()
+                   if p.stat().st_size > PARSE_SIZE_CAP_BYTES),
+                  key=lambda p: -p.stat().st_size)
+
+
+def iter_parseable_samples():
+    """Every sample the parser test should actually open."""
+    for p in iter_sample_files():
+        if p.stat().st_size <= PARSE_SIZE_CAP_BYTES:
+            yield p
+
+
 def find_sample(*name_fragments: str) -> Path | None:
     for p in iter_sample_files():
         if all(frag.lower() in p.name.lower() for frag in name_fragments):
