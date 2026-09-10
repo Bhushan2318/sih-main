@@ -223,3 +223,52 @@ at the scale the project actually needs. "Observations are done" was true of the
 false of the data. The same sentence could be true of other things in this repo, and the
 only way to know is to run them at real volume — which is exactly what tonight has been
 doing to the fetch path and what tomorrow should do to the training path.
+
+---
+
+# Overnight log — 2026-09-11
+
+## Why the machine was on its knees
+
+Load average 13–20, and it was paging, not computing. Free physical memory 15–19 MB;
+swap 7.5 GB of 8. The 2017 district ingest peaks at **5,761 MB per chunk** — 4,947 MB on
+cycle 1, 5,761 MB by cycle 24, flat for the 201 cycles since, so it is the cost of one
+chunk and not an accumulation. Beside a dev uvicorn holding 1.4 GB, a vite server and a
+browser, that does not fit in 16 GB. Per-cycle time went 94 s → 166 s → 222 s as the
+thrash compounded. Written up in `docs/known-issues.md` and in the script's docstring,
+which previously said only that peak memory is bounded by the chunk — true, and reassuring
+in a way the 5.8 GB figure is not.
+
+Also found still running from Monday 02:00: a headless Chrome from `/tmp/chrome-sanket2`
+with 16.3 CPU-hours on the clock, holding a core for four days. Left alone on request.
+
+## Two things in the data I did not expect
+
+**Wind stops at lead 5, soil moisture at lead 3.** Not scattered gaps — clean truncation,
+every cycle, traceable to the message strides in the source (`srcmsg_ugrd_hgt` 1,3,5,…
+stride 2; `srcmsg_soilw_bgrnd` 1,5,9,… stride 4). Days 6–10 have no wind features and days
+4–10 no soil features. Whether that is the archive's limit or the fetch's selection is
+**not yet established** — do not write it up until it is.
+
+**Five district ids each carry two different polygons.** 666 polygons resolve to 661
+`region_id`s: Valsad, Senapati, Ukhrul, Karbi Anglong and Sambalpur each appear twice in
+GADM under one name, and the id derives from the name. Senapati's two polygons differ by
+2.1 °C at lead 1; Karbi Anglong's by 1.3 °C — comparable to a bust threshold. `_DEDUPE_KEY`
+holds `region_id` but not lat/lon, so `groupby(keys).tail(1)` keeps whichever landed last
+and silently drops the other. Five districts get an arbitrary one of two values; five real
+districts are absent. Left for a schema decision rather than patched mid-run.
+
+## The plan for the next year, and why it stopped
+
+Asked to roll straight into the next year's ingest once 2017 finishes. It cannot be done:
+`gefs_reforecast_india_2018.parquet` is 2 MB, 30,600 rows, 17 initialisations — and its
+schema is `city`/`state`/`region`, the pre-district city-point format. It has no
+`region_id`, so `ingest_districts_chunked` would raise on line 132. 2010–2016 and 2019 are
+the same. **2017 is the only dense district-grain year that exists.** Producing 2018 means
+the CI fetch — 0.81 TB, ~2.9 h — which is a decision to be taken awake, not a thing to
+start while someone sleeps.
+
+**Opinion:** yesterday's entry ended saying the only way to know is to run things at real
+volume. That held again tonight. Nothing here was found by reading code — the truncated
+leads, the duplicate ids and the 5.8 GB chunk all came out of the actual bytes on disk.
+
