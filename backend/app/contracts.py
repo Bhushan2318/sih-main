@@ -42,9 +42,9 @@ LABEL = "y_bust"
 # int32 vs int64 and category vs object are not worth failing a build over, while a float
 # column arriving as text is exactly what must fail.
 _KINDS: dict[str, str] = {
-    "region_id": "C", "variable": "O", "valid_date": "M", "forecast_value": "f",
-    "value_type": "O", "init_date": "M", "lead_time_days": "i",
-    "ensemble_member_id": "O", "observed_value": "f", "verification_status": "O",
+    "region_id": "C", "variable": "C", "valid_date": "M", "forecast_value": "f",
+    "value_type": "C", "init_date": "M", "lead_time_days": "i",
+    "ensemble_member_id": "C", "observed_value": "f", "verification_status": "C",
     "abs_error": "f", "month": "i", "season": "C", "ensemble_spread": "f",
     "ensemble_member_count": "i", "pressure_rate_of_change": "f",
     "moisture_rate_of_change": "f", "forecast_error_lag": "f",
