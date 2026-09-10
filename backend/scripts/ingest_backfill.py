@@ -32,6 +32,40 @@ BACKEND_DIR = SCRIPT_DIR.parent
 SAMPLES = BACKEND_DIR / "data" / "samples"
 
 
+
+# Observation sources, best coverage first. Order matters and is tested.
+#
+# The district files cover all 666 districts; the city file covers the 35 points it
+# replaced, which is why 2017's labels sat at 34 districts of 666. When a broader file
+# exists it must win, because the failure mode is silent: the backfill reads the narrow
+# file, the store keeps the old coverage, and the retrain that follows looks entirely
+# normal.
+#
+# Only whole-year files are eligible. A partial run (`--months 11`) writes
+# `..._2017_m11-11.parquet`, and ingesting that as the year would train on one month
+# while reporting twelve.
+OBSERVATION_STEMS = (
+    "era5_cds_district_observations_india_{year}",   # CDS, ERA5 native 0.25 deg grid
+    "era5_district_observations_india_{year}",       # Open-Meteo, districts
+    "era5_observations_india_{year}",                # city points
+)
+
+
+def observation_file(year: int, samples_dir=None):
+    """The best available observation file for `year`, or None if there is none.
+
+    Prefers .parquet over .csv for the same source: identical content, ~18x smaller,
+    which matters when these are shipped to a CI runner. The parser handles both.
+    """
+    root = Path(samples_dir) if samples_dir is not None else SAMPLES
+    for stem in OBSERVATION_STEMS:
+        base = stem.format(year=year)
+        for ext in (".parquet", ".csv"):
+            candidate = root / f"{base}{ext}"
+            if candidate.exists():
+                return candidate
+    return None
+
 def parse_years(spec: str) -> list:
     out: set = set()
     for chunk in spec.split(","):
@@ -75,8 +109,12 @@ def main() -> int:
             f = pick(f"gefs_reforecast_india_{y}")
             (plan if f.exists() else missing).append(("forecast", y, f))
         if not args.skip_observations:
-            o = pick(f"era5_observations_india_{y}")
-            (plan if o.exists() else missing).append(("observed", y, o))
+            o = observation_file(y)
+            if o is None:
+                missing.append(("observed", y,
+                                SAMPLES / f"{OBSERVATION_STEMS[0].format(year=y)}.parquet"))
+            else:
+                plan.append(("observed", y, o))
     if missing:
         for kind, y, f in missing:
             print(f"MISSING {kind} {y}: {f.name}", file=sys.stderr)
