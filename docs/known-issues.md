@@ -50,6 +50,26 @@ here rather than discovered live.
 - **Provisional observations are excluded from training** and badged in the UI. Verifying
   against a different product than the model was trained on would shift both the error and
   the bust label derived from it.
+- **The CDS needs two licences accepted, not one.** ERA5 requires
+  `licence-to-use-copernicus-products` *and* `cc-by`. The second does not appear in the
+  portal licence list (`get_licences(scope="dataset")`) - it is only reachable as a
+  `rel: license` link on the dataset itself. With just the first accepted, every request
+  returns `403 required licences not accepted`, which reads like a client fault and is
+  not. Measured 2026-09-10.
+- **The CDS ignores `download_format: unarchived`.** A multi-variable ERA5 request comes
+  back as a zip of two NetCDF files split by `stepType` - accumulations
+  (`total_precipitation`) in one, instantaneous fields in the other. Opening the
+  downloaded `.nc` directly fails; it is a zip. The time coordinate is `valid_time`, not
+  `time`. Both verified against a real download rather than documentation.
+- **ERA5 stamps an accumulation with the end of its hour.** `total_precipitation` at
+  00:00 on the 2nd is rain that fell 23:00-24:00 on the 1st, so every variable is grouped
+  by `valid_time - 1h`. That makes an observation day the half-open window `(t-24h, t]`,
+  which is deliberately the convention the forecast side already uses for day *k* -
+  `((k-1)*24, k*24]` - so both sides of a bust label describe the same interval. The
+  consequence: a complete day needs stamps `01:00..00:00` of the next day, so a per-month
+  request loses its final day unless it also pulls the first hour of the month after. The
+  fetch does, and drops the spillover.
+
 - **A cycle too incomplete to publish is refused, not partially ingested.** A short
   rainfall *sum* is roughly half the real accumulation, and rainfall drives most busts, so
   publishing a thin cycle would be worse than publishing nothing.
