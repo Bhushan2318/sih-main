@@ -28,9 +28,18 @@ Because:
 ### Now — this week
 - **C5 retrain at district grain.** In flight. Until it works the product is either 36
   districts or saturated nonsense.
-- **A4 branch protection on `main`.** Browser, 5 minutes. A2 is done.
-- **A1** push the six local commits to `develop`, open the PR. Tag what production
-  actually runs (`a24a663`), not `d0916bb` — that is 21 commits behind it.
+- **A4, reduced to one toggle: block force-pushes to `main`.** The rest of A4 - PR
+  required, status checks, CODEOWNERS - is written for a team and is pure friction on a
+  single-committer repo. A2 (auto-deploy off, done) already removed the real hazard: a
+  push to `main` no longer ships. What remains worth locking is the one irreversible
+  operation, and this repo has already contemplated it - six commits carry
+  `Co-Authored-By` trailers that were left alone precisely because stripping them means
+  force-pushing `main`.
+- **Tag what production actually runs.** More valuable to a solo dev than any of the
+  above, and currently missing: no tag points at `origin/main`.
+  `git tag prod-2026-09-10 a24a663 && git push origin prod-2026-09-10`
+  Note `a24a663`, not the brief's `d0916bb` - that is 21 commits behind production.
+- **A1** push the local commits to `develop` and open the PR.
 - **A5** serving memory check. Set the budget from a fresh measurement; the 440 MB in the
   brief is below the 442 MB already recorded in `known-issues.md`, and the CI harness
   cannot resolve below ~±55 MB. Measure first, then pick the number.
