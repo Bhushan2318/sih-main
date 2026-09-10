@@ -13,6 +13,12 @@ So the source is split by cycle, each chunk is written to a temp parquet and ing
 its own, and the chunk is deleted before the next one starts. Peak memory is set by the
 chunk size rather than by the year.
 
+That bounds the growth but does not make it small: one cycle at 666 districts is 33,300
+wide rows melting to 209,790 long, and it peaks at 5.8 GB. Measured 2026-09-11 over 225
+consecutive cycles of 2017 - 4,947 MB on the first, 5,761 MB by cycle 24, flat thereafter.
+Give this script a 16 GB machine and do not run a dev server beside it; see
+docs/known-issues.md.
+
 Idempotent: a cycle already present in the target store is skipped, not re-ingested, so a
 death at 80% resumes rather than restarting.
 

@@ -40,6 +40,19 @@ here rather than discovered live.
   peak on consecutive runs, so it cannot resolve differences below roughly ±55 MB. Use it
   for large effects only; for small ones read `/api/health` on the running instance, where
   readings are stable.
+- **A district-grain ingest needs the machine to itself.**
+  `scripts/ingest_districts_chunked.py` splits a year by cycle so peak memory is set by the
+  chunk rather than the year. That holds — but the chunk is expensive. One cycle is 33,300
+  wide rows across 666 districts, melting to 209,790 long, and it peaks at **5,761 MB**.
+  Measured 2026-09-11 over 225 consecutive cycles of 2017: 4,947 MB on the first, rising to
+  5,761 MB by cycle 24, then flat for the 201 since — the cost of one chunk, not an
+  accumulation across them. So the script will not run on a box under 16 GB, and on a 16 GB
+  box it cannot share with much. Run alongside a dev uvicorn holding 1.4 GB and a browser,
+  it drove a laptop into continuous paging — 7.5 GB of 8 GB swap, load average above 13 —
+  and per-cycle time went from 60–90 s to 200–330 s, roughly doubling the wall time of the
+  run. Nothing is wrong when this happens and no cycle is corrupted; it is simply slow.
+  A death from memory pressure costs the cycle in flight rather than the run, because a
+  cycle already carrying its full district set is skipped on the next start.
 
 ## Data
 
