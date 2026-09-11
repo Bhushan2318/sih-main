@@ -77,3 +77,44 @@ def test_city_keyed_parts_are_refused_not_merged(tmp_path, monkeypatch):
     with pytest.raises(SystemExit, match="keyed by city"):
         fetch._finalise(parts, [2018])
     assert not list(out.glob("*.parquet"))
+
+
+# --- surviving a transient Windows file lock --------------------------------------------
+# Path.replace() raised PermissionError [WinError 32] renaming the finalised CSV into place
+# on the 4060 laptop, twice in a row, with the write itself already complete - some other
+# process (Defender's real-time scan, VS Code's file watcher, the indexer; all three were
+# running) briefly had the destination open. POSIX rename has no such restriction, so this
+# is Windows-only and transient - retrying clears it without touching data that was already
+# written correctly.
+
+def test_replace_with_retry_recovers_from_a_transient_lock(tmp_path, monkeypatch):
+    tmp = tmp_path / "x.partial"; tmp.write_text("data")
+    dest = tmp_path / "x"
+
+    calls = {"n": 0}
+    real_replace = Path.replace
+
+    def flaky_replace(self, target):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise PermissionError(32, "The process cannot access the file")
+        return real_replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", flaky_replace)
+    monkeypatch.setattr(fetch.time, "sleep", lambda s: None)
+    fetch._replace_with_retry(tmp, dest)
+    assert dest.read_text() == "data"
+    assert calls["n"] == 3
+
+
+def test_replace_with_retry_gives_up_and_raises_eventually(tmp_path, monkeypatch):
+    tmp = tmp_path / "x.partial"; tmp.write_text("data")
+    dest = tmp_path / "x"
+
+    def always_locked(self, target):
+        raise PermissionError(32, "The process cannot access the file")
+
+    monkeypatch.setattr(Path, "replace", always_locked)
+    monkeypatch.setattr(fetch.time, "sleep", lambda s: None)
+    with pytest.raises(PermissionError):
+        fetch._replace_with_retry(tmp, dest, tries=3)
