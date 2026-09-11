@@ -41,3 +41,26 @@ def test_peak_rss_mb_grows_after_a_real_allocation():
 def test_peak_rss_mb_uses_psutil_on_windows():
     assert "psutil" in sys.modules, (
         "expected the Windows path to go through psutil, not the POSIX resource module")
+
+
+# --- --source override -------------------------------------------------------------------
+# 2019 is the first year where a district-scale fetch collides with a filename the test
+# suite already owns: tests/conftest.py hardcodes gefs_reforecast_india_2019.parquet as the
+# small 36-city legacy sample. The real 2019 archive year has to live under a different
+# name, so the ingest needs a way to be pointed at it explicitly.
+
+def test_resolve_source_defaults_to_the_plain_year_filename():
+    from scripts.ingest_districts_chunked import SAMPLES, resolve_source
+    assert resolve_source(2018) == SAMPLES / "gefs_reforecast_india_2018.parquet"
+
+
+def test_resolve_source_honours_an_explicit_filename():
+    from scripts.ingest_districts_chunked import SAMPLES, resolve_source
+    got = resolve_source(2019, "gefs_reforecast_india_2019_district.parquet")
+    assert got == SAMPLES / "gefs_reforecast_india_2019_district.parquet"
+
+
+def test_resolve_source_honours_an_explicit_absolute_path(tmp_path):
+    from scripts.ingest_districts_chunked import resolve_source
+    p = tmp_path / "somewhere_else.parquet"
+    assert resolve_source(2019, str(p)) == p
