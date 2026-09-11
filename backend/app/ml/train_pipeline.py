@@ -82,9 +82,16 @@ def _downcast_paired(df: "pd.DataFrame") -> "pd.DataFrame":
     this the district-grain retrain does not fit 16 GB, and neither the box nor a CI
     runner has more.
 
-    Values are preserved exactly. float64 -> float32 keeps roughly seven significant
-    digits, far more than any meteorological value carries, and XGBoost converts to
-    float32 internally anyway - so this changes what the frame costs, not what it says.
+    Values are preserved to float32 precision, not exactly. float64 -> float32 keeps
+    roughly seven significant digits - far more than any meteorological value carries, and
+    XGBoost converts to float32 internally anyway - but statistics computed on the frame
+    move in the sixth digit: a pressure bust threshold measured 2.50132446 against
+    2.50133672 on float64. Anything that recomputes a value the pipeline publishes must do
+    it on this representation.
+
+    It also makes `variable` categorical, and pandas' Series.map on a categorical returns a
+    categorical when the mapping is one-to-one; arithmetic on the result raises. Cast
+    mapped values explicitly (see pivot.build_event_frame).
     """
     for col in _CATEGORICAL_PAIRED:
         if col in df.columns and not isinstance(df[col].dtype, pd.CategoricalDtype):

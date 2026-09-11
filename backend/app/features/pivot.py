@@ -17,7 +17,10 @@ def build_event_frame(
 ) -> pd.DataFrame:
     df = paired.copy()
     df["pred_err"] = pred_err.reindex(df.index).to_numpy()
-    df["p90"] = df["variable"].map(p90_error)
+    # `variable` is categorical in the retrain's paired frame. Series.map on a categorical
+    # returns a categorical when every category maps to a distinct value - true for a
+    # real year, where no two variables share a p90 - and a categorical cannot be divided.
+    df["p90"] = df["variable"].map(p90_error).astype(float)
     df["conf"] = (1.0 - df["pred_err"] / df["p90"]).clip(CONF_FLOOR, 1.0)
 
     em = (df.groupby(EVENT_KEYS + ["variable"], observed=True)
