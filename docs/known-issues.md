@@ -61,6 +61,15 @@ here rather than discovered live.
   which it never reached, may raise the true peak further. A 16 GB CI runner has no swap
   to absorb that; district-scale training in CI is not assumed to fit until it has been
   measured there. Measured 2026-09-11.
+- **Reading the store while an ingest writes to it killed a retrain twice over.** A reader
+  lists every batch file, then opens them; an ingest adds a file every ~18 s. Writing the
+  file straight to its final name let a reader open it without a footer. The first fix
+  wrote to `part-0.parquet.partial` and renamed — but pyarrow's discovery skips only names
+  starting with `.` or `_`, so the temp file was listed, renamed away, and the 2017 retrain
+  (run_20260911T082621Z) died with `FileNotFoundError` after 2,558 s. The temp name is now
+  `.part-0.parquet.partial`, and `test_store_atomic_write` reproduces the listing race.
+  Concurrency is safe for reads now, but the two still compete for memory: that run's
+  footprint was 13.4 GB beside the ingest's 4.9 GB. On a 16 GB box, run them in sequence.
 
 ## Data
 
