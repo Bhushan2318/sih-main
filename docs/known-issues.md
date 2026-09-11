@@ -128,6 +128,40 @@ here rather than discovered live.
   happens to validate and test on its easiest months. Measured 2026-09-11 from
   run_20260911T201511Z's own eval_events frame (`model_proba` vs `y_bust` grouped by
   calendar month); no retrain required to reproduce.
+- **2019 collides with a filename the test suite already owns, and it was nearly
+  overwritten tonight.** `tests/conftest.py:37` hardcodes `gefs_reforecast_india_2019.
+  parquet`/`.csv` as the small 36-city legacy sample (30,600 rows, 36 columns - city/
+  state/region schema) that `_ingested_slice` and every test built on it depend on. 2019
+  was the very first year this project ever sampled, back when the unit was a city point;
+  nobody anticipated it would later also become a real district-scale archive year fetched
+  the same way 2017 and 2018 were, under the exact same filename pattern. Real district-
+  scale 2019 is 12,154,500 rows, 37 columns - a different row count, a different schema,
+  and a different unit of geography, so overwriting the legacy file would not have failed
+  loudly; it would have made every fixture that reads it silently wrong. `_finalise` wrote
+  the real 660 MB district parquet over the tracked 1.6 MB legacy one before this was
+  caught; `git status` showed it modified, `git restore` put it back, and a full green
+  suite (386 passed) confirmed the fixture's row/column counts were intact. No data was
+  lost, but it was close.
+
+  **Why it isn't renamed:** the obvious fix - give the legacy sample a name that doesn't
+  collide with a real archive year - touches `.github/workflows/setup.yml:47`, which
+  ingests `data/samples/gefs_reforecast_india_2019.parquet --confirm-all` by that literal
+  path. Editing a workflow is a decision this repo's standing rule reserves for the user
+  to make explicitly, not something to do unilaterally overnight. Also referenced by
+  `tests/conftest.py:37`, `scripts/README.md:10`, and `scripts/fetch_era5_observations.py`'s
+  docstring (2026-09-12).
+
+  **What was done instead, so 2017/2018/future years are unaffected:** the real 2019
+  archive lives at `data/samples/gefs_reforecast_india_2019_district.parquet` - an
+  inconsistent name next to 2017/2018's plain ones, forced by the collision, not a
+  stylistic choice. `scripts/ingest_districts_chunked.py` gained `resolve_source()` /
+  `--source` to point the ingest at a non-default filename (default behaviour for every
+  other year is unchanged). `scripts/fetch_gefs_reforecast_sample.py` gained `--no-csv`:
+  a district-scale year's CSV twin is tens of GB (measured ~12 GB for 2019 at daily
+  density) and nothing reads it - the ingest, the training pipeline and every test read
+  the parquet - so it is skipped for district years now rather than written and then
+  fought over. Renaming the legacy fixture properly, so 2019 does not need a special-
+  cased filename at all, is a real fix and is the user's call to make; not done tonight.
 
 ## Data
 
