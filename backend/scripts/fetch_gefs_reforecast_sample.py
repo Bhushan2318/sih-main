@@ -703,6 +703,27 @@ def _canonicalise(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def _replace_with_retry(tmp: Path, dest: Path, tries: int = 8, delay: float = 0.5) -> None:
+    """`Path.replace()` raised `PermissionError: [WinError 32]` renaming a freshly-written
+    year file into place on Windows - twice in a row, with the write itself already
+    complete. Some other process (Windows Defender's real-time scan, VS Code's file
+    watcher, the search indexer - all three were running) briefly had the destination
+    open; POSIX rename has no such restriction, so this is Windows-only and, empirically,
+    transient. Retrying with backoff clears it without risking the data, which was
+    already fully written to `tmp` before this is ever called.
+    """
+    last: PermissionError | None = None
+    for attempt in range(tries):
+        try:
+            tmp.replace(dest)
+            return
+        except PermissionError as exc:
+            last = exc
+            if attempt < tries - 1:
+                time.sleep(delay * (attempt + 1))
+    raise last
+
+
 def _finalise(part_dir: Path, years: list) -> None:
     """Write one CSV/parquet per year, from that year's cached parts.
 
@@ -801,8 +822,8 @@ def _write_year(parts: list, year: int) -> None:
         if csv_writer is not None:
             csv_writer.close()
 
-    pq_tmp.replace(pq_path)
-    csv_tmp.replace(csv_path)
+    _replace_with_retry(pq_tmp, pq_path)
+    _replace_with_retry(csv_tmp, csv_path)
 
     print("\n" + "=" * 78)
     print(f"FORECAST SAMPLE  ->  {csv_path.relative_to(BACKEND_DIR)}")
