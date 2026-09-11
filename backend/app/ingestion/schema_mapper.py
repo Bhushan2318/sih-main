@@ -75,8 +75,12 @@ VALUE_TYPE_SYNONYMS: dict[ValueType, set[str]] = {
 }
 
 DIMENSION_SYNONYMS: dict[str, set[str]] = {
-    "region": {"region", "state", "state ut", "province", "subdivision", "zone", "city",
-               "location", "station name", "district", "station", "name"},
+    # "region id" is spelled out because the scorer only credits a single-token synonym on
+    # an exact match: district-grain files key rows by `region_id`, which scored 0, came
+    # back unmapped, and left every row to be placed by coordinate - where five districts'
+    # representative points fall inside a neighbour.
+    "region": {"region", "region id", "state", "state ut", "province", "subdivision", "zone",
+               "city", "location", "station name", "district", "station", "name"},
     "lat": {"lat", "latitude"},
     "lon": {"lon", "long", "longitude"},
     "valid_date": {"valid date", "valid time", "date", "time", "datetime", "timestamp",
