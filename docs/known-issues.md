@@ -86,3 +86,23 @@ here rather than discovered live.
 - **A cycle too incomplete to publish is refused, not partially ingested.** A short
   rainfall *sum* is roughly half the real accumulation, and rainfall drives most busts, so
   publishing a thin cycle would be worse than publishing nothing.
+
+- **The 2017 store places eight districts wrongly, and five of them are absent.** Until
+  2026-09-11 the schema mapper did not recognise a `region_id` column, so district rows
+  were placed by coordinate. Five districts' representative points lie inside a
+  neighbour, and their rows were re-keyed onto it: Imphal East -> Senapati, Dadra and
+  Nagar Haveli -> Valsad, Nagaon -> Karbi Anglong, Phek -> Ukhrul, Sundargarh -> Sambalpur.
+  After dedupe, Karbi Anglong, Ukhrul and Sambalpur hold the neighbour's forecasts and
+  observations (Karbi Anglong read 29.19 °C against its own 27.76 °C on 2017-07-15), and
+  the five do not appear. The mapper is fixed; the 2017 rows stay wrong until those ten
+  districts are re-ingested, and any model trained before that saw 661 districts with
+  three mislabelled. Anything ingested after the fix - 2018 onward - is unaffected.
+- **Wind stops at day 5 and soil moisture at day 3, in every year.** The reforecast
+  archive does not carry those messages past 120 h and 72 h (`VAR_SPEC.max_lead_h` in the
+  fetch script). Measured identically in 2017 and 2018. Models see no wind features for
+  days 6-10 and no soil-moisture features for days 4-10; this is the source, not a gap in
+  the fetch.
+- **Soil moisture has intermittent holes inside its three days.** In 2017 some cycles are
+  60 values short (four districts × 3 leads × 5 members), starting 2017-11-16 and
+  recurring after; in 2018 the year is 6,240 values short per lead. The ingest propagates
+  the gap rather than filling it. Which districts, and why, is not yet established.
