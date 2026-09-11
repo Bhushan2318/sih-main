@@ -567,7 +567,7 @@ def _write_grid_bundle(init: str, grids_by: dict, members: list) -> Path | None:
     return gf.save_bundle(GRID_DIR / f"{init}.npz", bundle)
 
 
-def build(inits: list, members: list, resume: bool) -> None:
+def build(inits: list, members: list, resume: bool, no_csv: bool = False) -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     GRID_DIR.mkdir(parents=True, exist_ok=True)
     part_dir = OUT_DIR / "_gefs_parts"
@@ -647,7 +647,7 @@ def build(inits: list, members: list, resume: bool) -> None:
         for init, why in refused:
             print(f"  {init}  {why}", file=sys.stderr)
 
-    _finalise(part_dir, sorted({int(i[:4]) for i in inits}))
+    _finalise(part_dir, sorted({int(i[:4]) for i in inits}), no_csv=no_csv)
 
 
 def _canonicalise(df: pd.DataFrame) -> pd.DataFrame:
@@ -724,7 +724,7 @@ def _replace_with_retry(tmp: Path, dest: Path, tries: int = 8, delay: float = 0.
     raise last
 
 
-def _finalise(part_dir: Path, years: list) -> None:
+def _finalise(part_dir: Path, years: list, no_csv: bool = False) -> None:
     """Write one CSV/parquet per year, from that year's cached parts.
 
     Per year, and only for the years this run asked for, on purpose. An earlier version
@@ -754,11 +754,12 @@ def _finalise(part_dir: Path, years: list) -> None:
                 + (f"\n  ... and {len(stale) - 5} more" if len(stale) > 5 else "")
                 + "\nDelete them and re-fetch those initialisations."
             )
-        _write_year(parts, year)
+        _write_year(parts, year, no_csv=no_csv)
 
 
-def _write_year(parts: list, year: int) -> None:
-    """Stream a year's parts into one Parquet and one CSV, a part at a time.
+def _write_year(parts: list, year: int, no_csv: bool = False) -> None:
+    """Stream a year's parts into one Parquet (and, unless `no_csv`, one CSV), a part at
+    a time.
 
     This used to pd.concat every part first. A district part is ~71 MB in pandas (the
     src_* provenance strings dominate), so a year at daily density is ~26 GB before
@@ -769,6 +770,13 @@ def _write_year(parts: list, year: int) -> None:
     Both files are written under a .partial name and renamed only when every part is in:
     a year file that stopped at part 200 would otherwise look like a finished, shorter
     year to the next step.
+
+    `no_csv` exists because a district-scale year's CSV twin is tens of GB (measured
+    ~12 GB for one year at daily density) and nothing reads it - the ingest, the training
+    pipeline and every test read the parquet. Skipping it also sidesteps a Windows-only
+    failure mode: the search indexer holds a rename lock on a freshly-written multi-GB
+    text file far longer than on the binary parquet, which cost four failed finalise
+    attempts on the RTX 4060 box before this flag existed.
     """
     import pyarrow as pa
     import pyarrow.csv as pacsv
@@ -793,7 +801,8 @@ def _write_year(parts: list, year: int) -> None:
             if schema is None:
                 schema = table.schema
                 pq_writer = pq.ParquetWriter(pq_tmp, schema)
-                csv_writer = pacsv.CSVWriter(csv_tmp, schema.remove_metadata())
+                if not no_csv:
+                    csv_writer = pacsv.CSVWriter(csv_tmp, schema.remove_metadata())
             elif not table.schema.equals(schema, check_metadata=False):
                 try:
                     table = table.cast(schema)
@@ -801,7 +810,8 @@ def _write_year(parts: list, year: int) -> None:
                     raise SystemExit(f"{q.name} does not match the schema of {parts[0].name}: "
                                      f"{exc}") from exc
             pq_writer.write_table(table)
-            csv_writer.write_table(table.replace_schema_metadata(None))
+            if csv_writer is not None:
+                csv_writer.write_table(table.replace_schema_metadata(None))
 
             s = table.select([c for c in stat_cols + value_cols
                               if c in table.column_names]).to_pandas()
@@ -823,10 +833,13 @@ def _write_year(parts: list, year: int) -> None:
             csv_writer.close()
 
     _replace_with_retry(pq_tmp, pq_path)
-    _replace_with_retry(csv_tmp, csv_path)
+    if no_csv:
+        csv_tmp.unlink(missing_ok=True)
+    else:
+        _replace_with_retry(csv_tmp, csv_path)
 
     print("\n" + "=" * 78)
-    print(f"FORECAST SAMPLE  ->  {csv_path.relative_to(BACKEND_DIR)}")
+    print(f"FORECAST SAMPLE  ->  {'(csv skipped)' if no_csv else csv_path.relative_to(BACKEND_DIR)}")
     print(f"                     {pq_path.relative_to(BACKEND_DIR)}")
     print("=" * 78)
     print(f"rows            : {rows:,}")
@@ -871,6 +884,9 @@ def main() -> None:
                     help="comma list, subset of c00,p01,p02,p03,p04")
     ap.add_argument("--resume", action="store_true", help="skip init dates already in _gefs_parts/")
     ap.add_argument("--list-only", action="store_true", help="print the plan and exit")
+    ap.add_argument("--no-csv", action="store_true",
+                    help="skip the CSV twin - a district-scale year's CSV is tens of GB "
+                         "and nothing reads it; only the parquet is used downstream")
     args = ap.parse_args()
 
     if args.inits:
@@ -916,7 +932,7 @@ def main() -> None:
             print("  init", i)
         return
 
-    build(inits, members, resume=args.resume)
+    build(inits, members, resume=args.resume, no_csv=args.no_csv)
 
 
 if __name__ == "__main__":

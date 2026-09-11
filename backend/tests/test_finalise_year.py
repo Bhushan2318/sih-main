@@ -54,6 +54,25 @@ def test_year_file_holds_every_part_row_in_order(tmp_path, monkeypatch):
     assert len(pd.read_csv(out / "gefs_reforecast_india_2018.csv")) == len(expected)
 
 
+def test_no_csv_skips_it_but_still_writes_the_parquet(tmp_path, monkeypatch):
+    """A district-scale year's CSV twin is tens of GB (measured ~12 GB for one year at
+    daily density) - nothing reads it, and on the RTX 4060 Windows box writing it cost
+    12 GB of disk and four failed finalise attempts to a transient rename lock the search
+    indexer holds on large text files but not on the binary parquet. --no-csv skips it."""
+    parts = tmp_path / "parts"; parts.mkdir()
+    out = tmp_path / "out"; out.mkdir()
+    expected = _real_slices(parts)
+    monkeypatch.setattr(fetch, "OUT_DIR", out)
+    monkeypatch.setattr(fetch, "BACKEND_DIR", tmp_path)
+
+    fetch._finalise(parts, [2018], no_csv=True)
+
+    got = pd.read_parquet(out / "gefs_reforecast_india_2018.parquet")
+    assert len(got) == len(expected)
+    assert not (out / "gefs_reforecast_india_2018.csv").exists()
+    assert not list(out.glob("*.csv.partial")), "no CSV temp file should be left behind either"
+
+
 def test_only_the_requested_year_is_written(tmp_path, monkeypatch):
     parts = tmp_path / "parts"; parts.mkdir()
     out = tmp_path / "out"; out.mkdir()
