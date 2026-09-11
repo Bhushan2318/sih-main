@@ -148,13 +148,16 @@ def test_thresholds_are_fit_on_the_train_split_only(_retrain):
     full-data ones - so this fails if anyone ever widens the frame it is fitted on.
     """
     from app.ml.thresholds import compute_error_thresholds
-    from app.ml.train_pipeline import _event_mean_error, _split_by_cycle
+    from app.ml.train_pipeline import _downcast_paired, _event_mean_error, _split_by_cycle
     from app.storage.parquet_store import read_dataset
 
     report = _retrain
     assert report.status == "success", report.error
 
-    paired = fe.build_training_frame(read_dataset())
+    # The pipeline fits thresholds on the downcast frame (float32), so recompute on that
+    # same representation. On float64 the pressure percentile differs in the sixth
+    # significant digit (2.50132446 vs 2.50133672), which is not the leak this test guards.
+    paired = _downcast_paired(fe.build_training_frame(read_dataset()))
     train_c, _, _ = _split_by_cycle(paired)
     tr = paired[paired["init_date"].isin(train_c)]
 
@@ -360,3 +363,26 @@ def test_replay_service_narrates_from_real_numbers(_retrain):
         if other:
             pinned = replay_service.get_replay(str(rep.init_date), focus_region=other)
             assert pinned.focus is not None and pinned.focus.region_id == other
+
+
+def test_event_frame_survives_a_categorical_variable_column(_ingested_slice):
+    """The retrain holds `variable` as category (_downcast_paired, a2f0e84). pandas'
+    Series.map on a categorical returns a categorical whenever the mapping gives each
+    category a distinct value - true at full scale, where every variable's p90 differs -
+    and dividing by a categorical raises. The 2017 district retrain died here after
+    2 h 54 min. test_classifier_features_exclude_actual_error maps every variable to the
+    same 5.0, which pandas returns as float64, so it could not see this.
+    Fixture: the real GEFS/ERA5 slice this module ingests."""
+    from app.ml.train_pipeline import _downcast_paired
+    from app.storage.parquet_store import read_dataset
+
+    paired = _downcast_paired(fe.build_training_frame(read_dataset()))
+    assert isinstance(paired["variable"].dtype, pd.CategoricalDtype)
+    cycles = sorted(paired["init_date"].dropna().unique())
+    tr = paired[paired["init_date"].isin(cycles[: max(2, len(cycles) - 1)])]
+    variables = [str(v) for v in tr["variable"].unique()]
+    p90 = {v: 2.0 + i for i, v in enumerate(variables)}     # distinct, as in a real year
+    thr = {v: 1.0 + i for i, v in enumerate(variables)}
+    ev = pv.build_event_frame(tr, pd.Series(1.0, index=tr.index), p90, thr)
+    conf = [c for c in ev.columns if c.startswith("conf_")]
+    assert conf and all(ev[c].dtype.kind == "f" for c in conf)
