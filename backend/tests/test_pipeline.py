@@ -323,3 +323,40 @@ def test_distinct_forecast_init_dates_ignores_observations():
         assert got == [init]
     finally:
         parquet_store.drop_batch("b-obs")
+
+
+# --------------------------------------------------------------------------- district identity
+
+def test_a_district_keeps_its_own_id_when_its_centroid_lies_in_a_neighbour(session, tmp_path):
+    """Imphal East's and Nagaon's representative points fall inside Senapati and Karbi
+    Anglong. Ingest resolved by coordinate because the region_id column went unrecognised,
+    so both were re-keyed onto the neighbour: the neighbour's rows doubled, the store's
+    dedupe kept whichever came last, and the district itself vanished. Fixture: REAL rows
+    for those four districts from one 2018 fetch part, lead 1-2, two members."""
+    from pathlib import Path
+    from app.live.orchestrator import FORECAST_MAPPINGS
+
+    # fresh_store rmtree's CANONICAL_DIR; never let that be the real store.
+    assert "sih-main/backend/data/canonical" not in str(parquet_store.CANONICAL_DIR)
+
+    part = Path(__file__).resolve().parents[1] / "data/samples/parts-2018/2018-07-15.parquet"
+    if not part.exists():
+        pytest.skip("real 2018 part not on disk")
+    ids = ["IN-MN-IMPHALEAST", "IN-MN-SENAPATI", "IN-AS-NAGAON", "IN-AS-KARBIANGLONG"]
+    src = pd.read_parquet(part)
+    src = src[src.region_id.isin(ids) & src.lead_day.isin([1, 2]) & src.member.isin(["c00", "p01"])]
+    path = tmp_path / "gefs_2018_chunk_0000.parquet"
+    src.to_parquet(path, index=False)
+
+    r = ingest_upload(session, path, path.name, confirmed_mappings=FORECAST_MAPPINGS,
+                      verification_status=None)
+    session.commit()
+    assert r.status == "ingested"
+
+    got = parquet_store.read_dataset(value_types=["forecast"], variables=["temperature_c"])
+    assert sorted(got.region_id.unique()) == sorted(ids)
+    for rid in ids:
+        own = src[(src.region_id == rid) & (src.lead_day == 1) & (src.member == "c00")].t2m_c.iloc[0]
+        row = got[(got.region_id == rid) & (got.lead_time_days == 1) & (got.ensemble_member_id == "c00")]
+        assert len(row) == 1, (rid, len(row))
+        assert row.value.iloc[0] == pytest.approx(own), rid
