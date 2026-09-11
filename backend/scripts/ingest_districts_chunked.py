@@ -65,6 +65,23 @@ def peak_rss_mb() -> float:
     return raw / 1e6 if sys.platform == "darwin" else raw / 1024
 
 
+def resolve_source(year: int, source: str | None = None) -> Path:
+    """Where to read forecast rows from for this year's ingest.
+
+    Defaults to today's behaviour (`SAMPLES/gefs_reforecast_india_{year}.parquet`). An
+    override exists because a district-scale year can collide with a filename the test
+    suite's fixtures already own - 2019 is the first case: `tests/conftest.py` hardcodes
+    `gefs_reforecast_india_2019.parquet` as the small 36-city legacy sample every test
+    fixture depends on, so the real district-scale 2019 archive year has to live under a
+    different name. A bare filename resolves under `SAMPLES`; a path with directories
+    (relative or absolute) is used as given.
+    """
+    if source:
+        p = Path(source)
+        return p if p.is_absolute() or p.parent != Path(".") else SAMPLES / p
+    return SAMPLES / f"gefs_reforecast_india_{year}.parquet"
+
+
 def cycles_in_store() -> set:
     from app.storage import parquet_store
     df = parquet_store.read_dataset(value_types=["forecast"], columns=["init_date"],
@@ -89,6 +106,12 @@ def main() -> int:
     ap.add_argument("--chunk-cycles", type=int, default=1,
                     help="cycles per ingest call. 1 is safest; raise only after measuring")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--source", default=None,
+                    help="override the source parquet (default: "
+                         "gefs_reforecast_india_<year>.parquet under data/samples). "
+                         "A bare filename resolves there too; a path with directories "
+                         "is used as given. Needed when a year's filename collides with "
+                         "an existing sample, e.g. 2019's legacy 36-city test fixture.")
     args = ap.parse_args()
 
     months = None
@@ -102,7 +125,7 @@ def main() -> int:
             elif c:
                 months.add(int(c))
 
-    src = SAMPLES / f"gefs_reforecast_india_{args.year}.parquet"
+    src = resolve_source(args.year, args.source)
     if not src.exists():
         print(f"MISSING {src}", file=sys.stderr)
         return 1
