@@ -13,3 +13,8 @@
 torch>=2.0,<2.3
 onnx>=1.15,<1.17
 onnxruntime>=1.17,<1.19
+
+# Cross-platform peak-memory reporting for scripts/ingest_districts_chunked.py. Not
+# `resource` (POSIX-only - the module failed to import at all on Windows) and not psutil's
+# own memory_info().rss, which is current usage, not the peak the ingest logs per cycle.
+psutil>=5.9,<8.0

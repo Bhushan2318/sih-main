@@ -29,12 +29,19 @@ from __future__ import annotations
 
 import argparse
 import os
-import resource
 import sys
 import time
 from pathlib import Path
 
 import pandas as pd
+
+# `resource` is POSIX-only, so importing it unconditionally made this whole script
+# unimportable on Windows before a single line of its own logic ran. psutil covers all
+# three platforms this needs to run on (Mac, Linux CI, this Windows box).
+if sys.platform == "win32":
+    import psutil
+else:
+    import resource
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 BACKEND_DIR = SCRIPT_DIR.parent
@@ -45,7 +52,15 @@ SAMPLES = BACKEND_DIR / "data" / "samples"
 
 def peak_rss_mb() -> float:
     """macOS reports ru_maxrss in BYTES; Linux in kilobytes. Getting this wrong produces
-    a number 1000x out, which is how a 2.08 GB peak got printed as '2079.97 GB' once."""
+    a number 1000x out, which is how a 2.08 GB peak got printed as '2079.97 GB' once.
+
+    Windows has no `resource` module and no ru_maxrss equivalent - psutil's `peak_wset`
+    (peak working set, bytes) is the closest match: the high-water mark, not current
+    usage, which is what every other branch here reports and what the per-cycle ceiling
+    in docs/known-issues.md was measured against.
+    """
+    if sys.platform == "win32":
+        return psutil.Process().memory_info().peak_wset / 1e6
     raw = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     return raw / 1e6 if sys.platform == "darwin" else raw / 1024
 
