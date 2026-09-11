@@ -9,6 +9,25 @@ try:
 except Exception:  # noqa: BLE001
     _SHAP_OK = False
 
+# Rows explained per (region_id, lead_time_days) for the per-variable regressors. Measured
+# 2026-09-11 on the 2017 district models: TreeSHAP runs ~2,830 rows/s on a 300-tree
+# regressor and ~13,100 rows/s on the classifier. Explaining the full validation frame cost
+# ~86 min for the eight regressors (14.5 M rows) and ~0.5 min for the classifier (366 k
+# events). 25 rows per group takes the regressors to ~8 min. The classifier - the model
+# the region panel serves - is explained in full.
+SHAP_ROWS_PER_GROUP = 25
+
+
+def _stratified_sample(df: pd.DataFrame, group_cols, n: int | None, seed: int = 0) -> pd.DataFrame:
+    """At most `n` rows per group, reproducibly. None keeps every row."""
+    gcols = [c for c in group_cols if c in df.columns]
+    if n is None or not gcols or df.empty:
+        return df
+    order = np.random.default_rng(seed).permutation(len(df))
+    shuffled = df.iloc[order]
+    keep = shuffled.groupby(gcols, observed=True, sort=False).cumcount().to_numpy() < n
+    return shuffled[keep].sort_index()
+
 
 def _prep(df: pd.DataFrame, cols: list, categorical: list) -> pd.DataFrame:
     X = df[cols].copy()
@@ -29,7 +48,10 @@ def _shap_values(model, X: pd.DataFrame) -> np.ndarray | None:
         if isinstance(vals, list):
             vals = vals[-1]
         return np.asarray(vals)
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        # Still a fallback, no longer a silent one: the served explanation changes kind here.
+        print(f"SHAP failed ({type(exc).__name__}: {str(exc)[:200]}); "
+              f"falling back to feature importance", flush=True)
         return None
 
 
@@ -40,9 +62,11 @@ def explain_model(
     categorical: list,
     model_name: str,
     group_cols=("region_id", "lead_time_days"),
+    max_rows_per_group: int | None = None,
 ) -> pd.DataFrame:
     if val_df.empty:
         return pd.DataFrame()
+    val_df = _stratified_sample(val_df, group_cols, max_rows_per_group)
     X = _prep(val_df, feature_columns, categorical)
     sv = _shap_values(model, X)
 
