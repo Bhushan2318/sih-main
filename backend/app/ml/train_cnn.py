@@ -33,6 +33,19 @@ from pathlib import Path
 
 import numpy as np
 
+# Windows only, load-bearing: torch must be the first thing in the process to touch its
+# own OpenMP/MKL runtime, or a later torch.onnx.export() (app.ml.cnn.export_encoder)
+# fails with a generic "DLL initialization routine failed" from onnx's compiled
+# extension - see the matching comment in tests/conftest.py for the full story and the
+# minimal repro. `app.ml.classifier` below imports pandas/xgboost before this module
+# otherwise would ever import torch (done lazily, inside functions, in app.ml.cnn), so
+# the guard belongs here, not there. A no-op today - nothing here calls export_encoder
+# yet - kept so wiring it in later doesn't reopen this on Windows.
+try:
+    import torch  # noqa: F401
+except ImportError:
+    pass
+
 from app.ingestion import grid_fields as gf
 from app.ml import classifier as clf_mod
 
@@ -58,6 +71,24 @@ class CNNReport:
     metrics: dict = field(default_factory=dict)
     seconds: float = 0.0
     error: str | None = None
+    device: str = ""
+
+
+def resolve_device(requested: "str | torch.device | None" = None) -> "torch.device":
+    """CUDA when available, unless the caller pins one explicitly.
+
+    Silently falling back to CPU when the caller asked for `cuda` by name would let a run
+    look GPU-trained in its own report when it was not - so an explicit `cuda` request on
+    a machine without one raises rather than degrading quietly.
+    """
+    import torch
+
+    if requested is not None:
+        device = torch.device(requested)
+        if device.type == "cuda" and not torch.cuda.is_available():
+            raise RuntimeError(f"--device {requested} requested but CUDA is not available")
+        return device
+    return torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
 
 def load_bundles(grid_dir: Path) -> dict:
@@ -229,12 +260,16 @@ def build_arrays(bundles: dict, events, region_ids: list[str]):
 
 def fit_streaming(seed, index: "FieldIndex", tr_idx, va_idx,
                   epochs=DEFAULT_EPOCHS, patience=DEFAULT_PATIENCE, lr=DEFAULT_LR,
-                  region_ids=None, log=True):
+                  region_ids=None, log=True, device=None):
     """Train from the index, reading one cycle at a time.
 
     Same loop as _fit_one, but the fields never all exist at once: a batch is one bundle's
     lead days, loaded, used and dropped. Peak memory is a batch rather than a year, which
     is what lets this run on a 16 GB runner and what makes five years possible at all.
+
+    `device` moves the model and every batch onto it (CUDA when available by default -
+    see `resolve_device`). `best_state` is cloned before moving anything back, so the
+    checkpoint restored at the end lives on the same device the model already trained on.
     """
     import time as _t
 
@@ -242,10 +277,11 @@ def fit_streaming(seed, index: "FieldIndex", tr_idx, va_idx,
     import torch.nn as nn
     from app.ml.cnn import BustCNN
 
+    device = resolve_device(device)
     torch.manual_seed(seed)
     np.random.seed(seed)
     rng = np.random.default_rng(seed)
-    model = BustCNN(in_channels=index.n_channels, region_ids=region_ids)
+    model = BustCNN(in_channels=index.n_channels, region_ids=region_ids).to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
     bce = nn.BCEWithLogitsLoss(reduction="none")
     huber = nn.HuberLoss(reduction="none")
@@ -257,9 +293,9 @@ def fit_streaming(seed, index: "FieldIndex", tr_idx, va_idx,
         last = 0.0
         for x, m, ex, y, aux in index.batches(tr_idx, shuffle=True, rng=rng):
             opt.zero_grad()
-            xb, mb = torch.from_numpy(x), torch.from_numpy(m)
-            yb, ab = torch.from_numpy(y), torch.from_numpy(aux)
-            logits = model(xb, mb, torch.from_numpy(ex))
+            xb, mb = torch.from_numpy(x).to(device), torch.from_numpy(m).to(device)
+            yb, ab = torch.from_numpy(y).to(device), torch.from_numpy(aux).to(device)
+            logits = model(xb, mb, torch.from_numpy(ex).to(device))
             keep = ~torch.isnan(yb)
             if not keep.any():
                 continue
@@ -276,8 +312,9 @@ def fit_streaming(seed, index: "FieldIndex", tr_idx, va_idx,
         num = den = 0.0
         with torch.no_grad():
             for x, m, ex, y, aux in index.batches(va_idx, shuffle=False):
-                p = torch.sigmoid(model(torch.from_numpy(x), torch.from_numpy(m),
-                                        torch.from_numpy(ex))).numpy()
+                p = torch.sigmoid(model(torch.from_numpy(x).to(device),
+                                        torch.from_numpy(m).to(device),
+                                        torch.from_numpy(ex).to(device))).cpu().numpy()
                 keep = ~np.isnan(y)
                 num += float(((p[keep] - y[keep]) ** 2).sum())
                 den += int(keep.sum())
@@ -299,15 +336,23 @@ def fit_streaming(seed, index: "FieldIndex", tr_idx, va_idx,
     return model, best
 
 
-def predict_streaming(model, index: "FieldIndex", idx) -> tuple:
-    """Probabilities and labels for the given samples, in index order."""
+def predict_streaming(model, index: "FieldIndex", idx, device=None) -> tuple:
+    """Probabilities and labels for the given samples, in index order.
+
+    Defaults to wherever `model` already lives, so a caller that trained on CUDA does not
+    have to repeat the device at every call site; pass it explicitly to score a model on
+    a different device than it trained on (the CPU-vs-CUDA parity test does this).
+    """
     import torch
 
+    device = device or next(model.parameters()).device
     ps, ys = [], []
     with torch.no_grad():
         for x, m, ex, y, aux in index.batches(idx, shuffle=False):
-            ps.append(torch.sigmoid(model(torch.from_numpy(x), torch.from_numpy(m),
-                                          torch.from_numpy(ex))).numpy())
+            p = torch.sigmoid(model(torch.from_numpy(x).to(device),
+                                    torch.from_numpy(m).to(device),
+                                    torch.from_numpy(ex).to(device))).cpu().numpy()
+            ps.append(p)
             ys.append(y)
     return np.concatenate(ps), np.concatenate(ys)
 
@@ -420,13 +465,16 @@ def splits_from_eval(ev) -> dict:
 
 def train(grid_dir: Path, events, splits: dict, region_ids: list[str],
           seeds: int = DEFAULT_SEEDS, epochs: int = DEFAULT_EPOCHS,
-          patience: int = DEFAULT_PATIENCE, lr: float = DEFAULT_LR) -> CNNReport:
+          patience: int = DEFAULT_PATIENCE, lr: float = DEFAULT_LR,
+          device=None) -> CNNReport:
     t0 = time.time()
     try:
         import torch  # noqa: F401
     except ImportError:
         return CNNReport(status="skipped",
                          error="torch is not installed; pip install -r requirements-train.txt")
+
+    device = resolve_device(device)
 
     if not any(Path(grid_dir).glob("*.npz")):
         return CNNReport(status="skipped",
@@ -463,7 +511,7 @@ def train(grid_dir: Path, events, splits: dict, region_ids: list[str],
     models = []
     for s in range(seeds):
         m, _ = fit_streaming(s, index, tr_idx, va_idx, epochs=epochs, patience=patience,
-                             lr=lr, region_ids=region_ids)
+                             lr=lr, region_ids=region_ids, device=device)
         models.append(m)
 
     def scored(idx):
@@ -471,7 +519,7 @@ def train(grid_dir: Path, events, splits: dict, region_ids: list[str],
             return {}
         # Seed ensemble: averaging probabilities cuts variance and improves calibration,
         # which is nearly free at this model size.
-        runs = [predict_streaming(m, index, idx) for m in models]
+        runs = [predict_streaming(m, index, idx, device=device) for m in models]
         proba = np.mean([p for p, _ in runs], axis=0)
         y = runs[0][1]
         keep = ~np.isnan(y)
@@ -483,7 +531,7 @@ def train(grid_dir: Path, events, splits: dict, region_ids: list[str],
         status="success", seeds=seeds,
         train_cycles=n_tr_cycles, val_cycles=len(set(CYC[va])), test_cycles=len(set(CYC[te])),
         n_train_samples=int(tr.sum()), parameters=int(n_params),
-        metrics=metrics, seconds=time.time() - t0)
+        metrics=metrics, seconds=time.time() - t0, device=str(device))
 
 
 def format_comparison(cnn: CNNReport, xgb_metrics: dict) -> str:
@@ -518,6 +566,8 @@ def main() -> int:
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--run-id", help="tabular run whose eval events to train against "
                     "(default: the most recent in data/analysis/eval_events)")
+    ap.add_argument("--device", default=None,
+                    help="cuda | cpu (default: cuda if available, else cpu)")
     args = ap.parse_args()
 
     from dataclasses import asdict
@@ -549,8 +599,8 @@ def main() -> int:
           f"{len(splits['train'])}/{len(splits['val'])}/{len(splits['test'])}")
 
     rep = train(args.grid_dir, events, splits, [d.region_id for d in load_registry()],
-                seeds=args.seeds, epochs=args.epochs)
-    print(f"CNN: status={rep.status} {rep.error or ''}")
+                seeds=args.seeds, epochs=args.epochs, device=args.device)
+    print(f"CNN: status={rep.status} device={rep.device} {rep.error or ''}")
     if rep.status == "success":
         print(f"  {rep.train_cycles} train cycles, {rep.n_train_samples} samples, "
               f"{rep.parameters:,} parameters, {rep.seeds} seeds, {rep.seconds:.0f}s")
