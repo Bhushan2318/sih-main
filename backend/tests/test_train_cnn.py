@@ -6,6 +6,8 @@ a result and is not one.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -15,6 +17,7 @@ torch = pytest.importorskip("torch", reason="training-only dependency")
 from app.ingestion import grid_fields as gf                       # noqa: E402
 from app.ingestion.grid_fields import GridBundle                  # noqa: E402
 from app.ml import train_cnn                                      # noqa: E402
+from app.ml.cnn import BustCNN                                    # noqa: E402
 from app.utils.india_districts import load_registry               # noqa: E402
 
 
@@ -220,3 +223,75 @@ def test_streamed_train_reaches_a_scored_report(tmp_path, region_ids, monkeypatc
     assert (rep.train_cycles, rep.val_cycles, rep.test_cycles) == (4, 2, 2)
     assert rep.n_train_samples == 8, "4 cycles x 2 lead days"
     assert set(rep.metrics["test"]) >= {"roc_auc", "brier"}
+
+
+# --- device selection --------------------------------------------------------------------
+# The CNN was CPU-only. `DistrictPooling` holds its area weights as a sparse buffer, which
+# is the one part of the model most likely to be left stranded on the wrong device.
+
+def test_resolve_device_defaults_to_cuda_when_available():
+    dev = train_cnn.resolve_device(None)
+    assert dev.type == ("cuda" if torch.cuda.is_available() else "cpu")
+
+
+def test_resolve_device_honours_an_explicit_override():
+    assert train_cnn.resolve_device("cpu").type == "cpu"
+
+
+def test_resolve_device_refuses_cuda_by_name_when_absent(monkeypatch):
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    with pytest.raises(RuntimeError, match="cuda"):
+        train_cnn.resolve_device("cuda")
+
+
+def test_streaming_predictions_agree_between_cpu_and_cuda(region_ids):
+    """The GPU path must not silently change a single number. Same weights, same real
+    bundle, two devices - if the sparse pooling buffer were left on the wrong device this
+    would either crash (the good outcome) or, if it silently upcast/copied, disagree."""
+    if not torch.cuda.is_available():
+        pytest.skip("no CUDA device on this machine")
+    grid_dir = Path(__file__).resolve().parents[1] / "data" / "samples" / "grids"
+    bundle_paths = sorted(grid_dir.glob("*.npz"))[:2]
+    if len(bundle_paths) < 2:
+        pytest.skip("real grid bundles are not on disk")
+    inits = [p.stem for p in bundle_paths]
+    ev = _events(inits, region_ids[:8], leads=(1, 2))
+    idx = train_cnn.build_index(grid_dir, ev, region_ids)
+    idx.fit_normalizer(np.arange(len(idx.samples)))
+
+    torch.manual_seed(0)
+    state = {k: v.clone() for k, v in
+             BustCNN(in_channels=idx.n_channels, region_ids=region_ids).state_dict().items()}
+
+    cpu_model = BustCNN(in_channels=idx.n_channels, region_ids=region_ids).eval()
+    cpu_model.load_state_dict(state)
+    cpu_ps, _ = train_cnn.predict_streaming(cpu_model, idx, np.arange(len(idx.samples)),
+                                            device=torch.device("cpu"))
+
+    cuda_model = BustCNN(in_channels=idx.n_channels, region_ids=region_ids).eval().to("cuda")
+    cuda_model.load_state_dict(state)
+    cuda_ps, _ = train_cnn.predict_streaming(cuda_model, idx, np.arange(len(idx.samples)),
+                                             device=torch.device("cuda"))
+
+    assert np.allclose(cpu_ps, cuda_ps, atol=1e-4), \
+        f"max diff {np.nanmax(np.abs(cpu_ps - cuda_ps)):.2e}"
+
+
+def test_fit_streaming_trains_on_cuda_without_error(tmp_path, region_ids):
+    """A full training step, not just a forward pass - the optimiser, the loss and the
+    validation loop all have to agree to run on the same device as the model."""
+    if not torch.cuda.is_available():
+        pytest.skip("no CUDA device on this machine")
+    inits = [f"2019-03-{d:02d}" for d in range(1, 4)]
+    for i in inits:
+        gf.save_bundle(tmp_path / f"{i}.npz", _bundle(i))
+    ev = _events(inits, region_ids[:5])
+    idx = train_cnn.build_index(tmp_path, ev, region_ids)
+    idx.fit_normalizer(np.arange(len(idx.samples)))
+    tr_idx = va_idx = np.arange(len(idx.samples))
+
+    model, best = train_cnn.fit_streaming(0, idx, tr_idx, va_idx, epochs=1, patience=1,
+                                          region_ids=region_ids, log=False,
+                                          device=torch.device("cuda"))
+    assert next(model.parameters()).device.type == "cuda"
+    assert np.isfinite(best)
