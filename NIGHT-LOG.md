@@ -250,13 +250,17 @@ stride 2; `srcmsg_soilw_bgrnd` 1,5,9,… stride 4). Days 6–10 have no wind fea
 4–10 no soil features. Whether that is the archive's limit or the fetch's selection is
 **not yet established** — do not write it up until it is.
 
-**Five district ids each carry two different polygons.** 666 polygons resolve to 661
-`region_id`s: Valsad, Senapati, Ukhrul, Karbi Anglong and Sambalpur each appear twice in
-GADM under one name, and the id derives from the name. Senapati's two polygons differ by
-2.1 °C at lead 1; Karbi Anglong's by 1.3 °C — comparable to a bust threshold. `_DEDUPE_KEY`
-holds `region_id` but not lat/lon, so `groupby(keys).tail(1)` keeps whichever landed last
-and silently drops the other. Five districts get an arbitrary one of two values; five real
-districts are absent. Left for a schema decision rather than patched mid-run.
+**Five districts were placed onto a neighbour. (Corrected 2026-09-11 morning - the first
+explanation, two GADM polygons sharing a name, was wrong.)** The registry, the weight table
+and the CDS observation file each carry 666 distinct ids. The fault was in ingest: the
+schema mapper did not recognise `region_id` as the region column ("region id" scored 0
+against single-word synonyms), so every row was placed by latitude/longitude. Five
+districts' representative points fall just inside a neighbour - Imphal East in Senapati,
+Dadra and Nagar Haveli in Valsad, Nagaon in Karbi Anglong, Phek in Ukhrul, Sundargarh in
+Sambalpur. Their rows were re-keyed, the dedupe kept the last, and in the 2017 store Karbi
+Anglong, Ukhrul and Sambalpur hold the neighbour's forecasts *and* observations while the
+five are absent. Fixed in the mapper; 2017 still carries it until those districts are
+re-ingested.
 
 ## The plan for the next year, and why it stopped
 
