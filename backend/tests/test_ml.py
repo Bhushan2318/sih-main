@@ -386,3 +386,23 @@ def test_event_frame_survives_a_categorical_variable_column(_ingested_slice):
     ev = pv.build_event_frame(tr, pd.Series(1.0, index=tr.index), p90, thr)
     conf = [c for c in ev.columns if c.startswith("conf_")]
     assert conf and all(ev[c].dtype.kind == "f" for c in conf)
+
+
+def test_paired_frame_can_be_bounded_to_a_last_init_date(_ingested_slice):
+    """A retrain must be able to say which cycles it is about. full_retrain read every
+    forecast cycle in the store, so a year being ingested alongside it - or a stray
+    observation file reaching a few days into the next year - put a partial, sparsely
+    labelled month at the end of the time-ordered split, i.e. into the test set, and made
+    the held-out set depend on how far an ingest had got. Fixture: the real slice."""
+    from app.ml.train_pipeline import _build_paired_in_chunks
+
+    everything, _ = _build_paired_in_chunks()
+    cycles = sorted(pd.to_datetime(everything["init_date"]).dt.normalize().unique())
+    assert len(cycles) >= 3
+    bound = pd.Timestamp(cycles[len(cycles) // 2]).date()
+
+    bounded, _ = _build_paired_in_chunks(init_date_max=bound)
+    got = pd.to_datetime(bounded["init_date"]).dt.date
+    assert not bounded.empty
+    assert got.max() <= bound
+    assert got.nunique() < len(cycles)
