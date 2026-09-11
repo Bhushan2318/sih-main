@@ -103,6 +103,31 @@ here rather than discovered live.
   not being changed for this - the fix is in how these numbers get read, not in the gate.
   A cross-year `--test-year` run's ROC-AUC should be compared to another cross-year run's,
   not to a within-year run's. Measured/found 2026-09-11.
+- **The classifier's easiest two months are November and December, in both years
+  measured, and that is why validation scores above training.** run_20260911T201511Z
+  reported train ROC-AUC 0.8400, val 0.8796, test 0.8348 - val scoring above train looks
+  backwards until the calendar is checked. `_split_by_cycle`'s val slice is always the
+  chronological tail before test, which for a year trained start-to-finish is Nov-Dec; per
+  calendar month on the same run's eval frame:
+
+  | month | 01 | 02 | 03 | 04 | 05 | 06 | 07 | 08 | 09 | 10 | 11 | 12 |
+  |---|---|---|---|---|---|---|---|---|---|---|---|---|
+  | 2017 (train/val) | .865 | .863 | .838 | .843 | .842 | .843 | .814 | **.802** | .810 | .855 | **.876** | **.882** |
+  | 2018 (test)       | .847 | .843 | .848 | .831 | .823 | .824 | .813 | **.741** | .805 | .829 | **.870** | **.866** |
+
+  Nov-Dec are the top two or three months of the year in both 2017 and 2018 - training on
+  Jan-Oct and validating on Nov-Dec means the validation set is drawn from the model's
+  easiest season, not a representative one. The low point is consistently the monsoon
+  window (Jul-Sep, worst August both years - 0.802 in 2017, 0.741 in 2018), matching the
+  documented fact that rainfall is the hardest, most zero-inflated variable and the driver
+  of most busts. This also explains why the within-year test split (Nov-Dec 2017, ROC-AUC
+  0.8466) scored higher than the cross-year test (all of 2018, 0.8348, see the entry
+  above): the within-year test set was, again, the easiest two months, and the cross-year
+  test averages over an entire monsoon it had to face. Not a defect in the model or the
+  gate - a property of Indian monsoon seasonality that the current within-year split
+  happens to validate and test on its easiest months. Measured 2026-09-11 from
+  run_20260911T201511Z's own eval_events frame (`model_proba` vs `y_bust` grouped by
+  calendar month); no retrain required to reproduce.
 
 ## Data
 
