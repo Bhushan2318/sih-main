@@ -53,6 +53,14 @@ here rather than discovered live.
   run. Nothing is wrong when this happens and no cycle is corrupted; it is simply slow.
   A death from memory pressure costs the cycle in flight rather than the run, because a
   cycle already carrying its full district set is skipped on the next start.
+- **A district-scale retrain needs far more memory than the documented ~2.3 GB.** That
+  figure was measured at 36 districts. The 2017 retrain at 666 districts
+  (run_20260911T041126Z, 75,208,857 paired rows) measured a maximum resident set of
+  11.07 GB and a peak memory footprint of 42.9 GB including swap, and ran 10,425 s on a
+  16 GB laptop before failing at the event-frame step - so the classifier and SHAP stages,
+  which it never reached, may raise the true peak further. A 16 GB CI runner has no swap
+  to absorb that; district-scale training in CI is not assumed to fit until it has been
+  measured there. Measured 2026-09-11.
 
 ## Data
 
