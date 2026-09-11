@@ -100,6 +100,16 @@ here rather than discovered live.
   request loses its final day unless it also pulls the first hour of the month after. The
   fetch does, and drops the spillover.
 
+- **EMOS's standing on the baseline ladder flips with scale.** At the earlier
+  17-cycle store it placed favourably; at district scale (2017 full year, 337,950
+  held-out events, run_20260911T163128Z) it has the best discrimination of the
+  baselines (ROC-AUC 0.5973) but a *negative* Brier skill score (-0.0264) - worse
+  than predicting climatology. The cheapest baseline (ensemble spread alone) beats
+  it on Brier (BSS 0.0130). Sanket's classifier clears every baseline by a wide
+  margin regardless (BSS 0.3713, ROC-AUC 0.8466). Re-check EMOS's ranking after any
+  future change in scale; do not assume the 17-cycle ordering still holds.
+  Measured 2026-09-11.
+
 - **A cycle too incomplete to publish is refused, not partially ingested.** A short
   rainfall *sum* is roughly half the real accumulation, and rainfall drives most busts, so
   publishing a thin cycle would be worse than publishing nothing.
