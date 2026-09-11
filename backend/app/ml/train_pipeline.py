@@ -152,12 +152,22 @@ def _build_paired_in_chunks(init_date_max=None) -> "tuple[pd.DataFrame, int]":
     categorical = [c for c in frames[0].columns
                    if str(frames[0][c].dtype) == "category"]
     out = pd.concat(frames, ignore_index=True)
+    # The chunk list is now fully duplicated inside `out`. At district scale across two
+    # years (152M rows) holding both cost the run a MemoryError before a single model
+    # trained - measured 2026-09-11, run_20260911T193709Z, 1948s in. Freeing it here is
+    # the difference between the peak being one copy of the frame and two.
+    frames.clear()
     for col in categorical:
         if str(out[col].dtype) != "category":
             out[col] = out[col].astype("category")
+    # `ignore_index=True` resets the index as part of the sort. A separate
+    # `.reset_index(drop=True)` afterward calls DataFrame.copy(), which consolidates
+    # mixed-dtype blocks into one contiguous array per dtype - an extra ~9 GiB allocation
+    # at this size, for no result the sort had not already produced. Same measured
+    # failure as above; this is the line it happened on.
     return (out.sort_values(fe.MEMBER_KEYS[:-1] + ["variable", "ensemble_member_id",
-                                                   "lead_time_days"])
-               .reset_index(drop=True), rows_read)
+                                                   "lead_time_days"], ignore_index=True),
+            rows_read)
 
 
 def _split_by_cycle(paired: pd.DataFrame):
@@ -168,6 +178,40 @@ def _split_by_cycle(paired: pd.DataFrame):
     a = max(1, int(round(n * TRAIN_FRAC)))
     b = max(a + 1, int(round(n * (TRAIN_FRAC + VAL_FRAC))))
     return set(cycles[:a]), set(cycles[a:b]), set(cycles[b:])
+
+
+def _split_by_year(paired: pd.DataFrame, test_year: int):
+    """Hold out a whole calendar year, rather than the tail of whatever range was loaded.
+
+    One year is one monsoon: the default `_split_by_cycle` tests on the last ~15% of
+    cycles, which for a single ingested year means Nov-Dec - so monsoon busts have never
+    been a held-out case. Splitting by year instead asks "has this model ever seen this
+    year's weather at all", holding every cycle of `test_year` out entire. The years
+    before it still get their own train/val split, at the same TRAIN_FRAC:VAL_FRAC ratio
+    `_split_by_cycle` uses, so a validation set still exists for early stopping and
+    threshold review without leaking anything from the held-out year.
+    """
+    cycles = sorted(paired["init_date"].dropna().unique())
+    test_c = {c for c in cycles if pd.Timestamp(c).year == test_year}
+    pre = [c for c in cycles if pd.Timestamp(c).year < test_year]
+    n = len(pre)
+    if n < 2:
+        return set(pre), set(), test_c
+    a = max(1, int(round(n * TRAIN_FRAC / (TRAIN_FRAC + VAL_FRAC))))
+    a = min(a, n - 1)
+    return set(pre[:a]), set(pre[a:]), test_c
+
+
+def _choose_split(paired: pd.DataFrame, test_year: int | None = None):
+    """Whether to hold out a whole calendar year or the usual chronological tail.
+
+    A dedicated dispatch function so it can be pinned by a test on its own, without
+    dragging in the rest of full_retrain - which needs a fully realistic paired frame to
+    run at all.
+    """
+    if test_year is not None:
+        return _split_by_year(paired, test_year)
+    return _split_by_cycle(paired)
 
 
 # A run may score this much worse than the current one and still ship. Deliberately
@@ -235,7 +279,8 @@ def _promotion_decision(new_metrics: dict | None) -> tuple[bool, str]:
 
 
 def full_retrain(triggered_by_batch_id: str | None = None, make_current: bool = True,
-                 *, emit_eval: bool = False, init_date_max=None) -> TrainReport:
+                 *, emit_eval: bool = False, init_date_max=None,
+                 test_year: int | None = None) -> TrainReport:
     t0 = time.time()
     run_id = registry.new_run_id()
     report = TrainReport(run_id=run_id, status="failed")
@@ -260,11 +305,12 @@ def full_retrain(triggered_by_batch_id: str | None = None, make_current: bool = 
             report.status = "no_data"
             return report
 
-        train_c, val_c, test_c = _split_by_cycle(paired)
+        train_c, val_c, test_c = _choose_split(paired, test_year=test_year)
         report.split_cycles = {
             "train": len(train_c), "val": len(val_c), "test": len(test_c),
             "train_dates": [str(pd.Timestamp(c).date()) for c in sorted(train_c)],
             "init_date_max": str(init_date_max) if init_date_max is not None else None,
+            "test_year": str(test_year) if test_year is not None else None,
         }
         tr = paired[paired["init_date"].isin(train_c)].copy()
         va = paired[paired["init_date"].isin(val_c)].copy()
@@ -499,13 +545,16 @@ def _main() -> int:
                          "(input for scripts/run_baselines.py)")
     ap.add_argument("--init-date-max", default=None, metavar="YYYY-MM-DD",
                     help="train only on forecast cycles initialised on or before this date")
+    ap.add_argument("--test-year", type=int, default=None, metavar="YYYY",
+                    help="hold out this whole calendar year as test, instead of the "
+                         "usual chronological tail of whatever range was loaded")
     args = ap.parse_args()
 
     from app.db.base import init_db
     init_db()
 
     r = full_retrain(make_current=not args.dry_run, emit_eval=args.emit_eval,
-                     init_date_max=args.init_date_max)
+                     init_date_max=args.init_date_max, test_year=args.test_year)
     _print_report(r)
     if args.json:
         from dataclasses import asdict

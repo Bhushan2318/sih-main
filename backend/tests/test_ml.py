@@ -112,6 +112,63 @@ def test_split_by_cycle_is_time_ordered_and_disjoint():
     assert max(tr) < min(va) < max(va) < min(te)
 
 
+def test_split_by_year_holds_out_the_whole_test_year():
+    """A cross-year split: everything in `test_year` is held out entire, and the years
+    before it still produce a train/val split - so training on 2017 and testing on 2018
+    can ask 'has this model ever seen this year's weather' rather than 'has it seen the
+    last few weeks of the year it trained on'."""
+    from app.ml.train_pipeline import _split_by_year
+
+    cycles = pd.to_datetime(
+        [f"2017-{m:02d}-01" for m in range(1, 13)] +
+        [f"2018-{m:02d}-01" for m in range(1, 13)])
+    paired = pd.DataFrame({"init_date": cycles})
+    tr, va, te = _split_by_year(paired, test_year=2018)
+
+    assert te == {c for c in cycles if c.year == 2018}
+    assert tr and va, "2017 must still produce a non-empty train and a non-empty val split"
+    assert not (tr & va) and not (tr & te) and not (va & te)
+    assert set(tr | va | te) == set(cycles)
+    assert max(tr) < min(va), "train must precede val within the pre-test-year cycles"
+    assert max(va) < min(te), "val must precede every cycle of the held-out year"
+
+
+def test_split_by_year_with_nothing_before_it_leaves_train_and_val_empty():
+    """If the only data on disk is the test year itself, there is nothing to train on -
+    that must come back as an empty train/val, not raise or silently reuse test cycles."""
+    from app.ml.train_pipeline import _split_by_year
+
+    cycles = pd.to_datetime([f"2018-{m:02d}-01" for m in range(1, 13)])
+    paired = pd.DataFrame({"init_date": cycles})
+    tr, va, te = _split_by_year(paired, test_year=2018)
+    assert not tr and not va
+    assert te == set(cycles)
+
+
+def test_choose_split_dispatches_to_the_year_split_when_given_one(monkeypatch):
+    """Plumbing only: full_retrain must reach for _split_by_year, not the default
+    fractional _split_by_cycle, whenever a caller asks for a specific held-out year -
+    tested against the small dispatch function full_retrain calls, not the whole
+    pipeline, so this cannot fail for a reason unrelated to which split was chosen."""
+    from app.ml import train_pipeline as tp
+
+    paired = pd.DataFrame({"init_date": pd.to_datetime(["2017-01-01"])})
+    monkeypatch.setattr(tp, "_split_by_year", lambda p, test_year: ("year-split", test_year))
+    monkeypatch.setattr(tp, "_split_by_cycle",
+                        lambda p: (_ for _ in ()).throw(
+                            AssertionError("used the fractional split, not the year split")))
+
+    assert tp._choose_split(paired, test_year=2018) == ("year-split", 2018)
+
+
+def test_choose_split_defaults_to_the_fractional_split():
+    from app.ml.train_pipeline import _choose_split, _split_by_cycle
+
+    paired = pd.DataFrame({"init_date": pd.to_datetime(
+        [f"2019-{m:02d}-01" for m in range(1, 13)])})
+    assert _choose_split(paired, test_year=None) == _split_by_cycle(paired)
+
+
 def test_oof_folds_never_split_a_forecast_cycle(_ingested_slice):
     """The classifier trains on out-of-fold regressor predictions. Cycles 24 h apart are
     heavily autocorrelated, so a random KFold would put near-duplicate rows on both sides
@@ -390,6 +447,26 @@ def test_event_frame_survives_a_categorical_variable_column(_ingested_slice):
     ev = pv.build_event_frame(tr, pd.Series(1.0, index=tr.index), p90, thr)
     conf = [c for c in ev.columns if c.startswith("conf_")]
     assert conf and all(ev[c].dtype.kind == "f" for c in conf)
+
+
+def test_sort_ignore_index_matches_sort_then_reset_index():
+    """_build_paired_in_chunks used to sort, then call a separate .reset_index(drop=True)
+    - which internally calls .copy(), consolidating every mixed-dtype block into one
+    contiguous array. At district scale across two years that consolidation tried to
+    allocate ~9 GiB it did not need and the run died with a MemoryError before a single
+    model trained (measured 2026-09-11, run_20260911T193709Z). `ignore_index=True` folds
+    the reset into the sort itself, skipping that copy - this pins that the two produce
+    an identical frame, so the memory fix cannot have silently changed the result."""
+    rng = np.random.default_rng(0)
+    n = 500
+    df = pd.DataFrame({
+        "region_id": pd.Categorical(rng.choice(["a", "b", "c"], n)),
+        "variable": pd.Categorical(rng.choice(["t", "u"], n)),
+        "value": rng.normal(size=n).astype("float32"),
+    })
+    old = df.sort_values(["region_id", "variable"]).reset_index(drop=True)
+    new = df.sort_values(["region_id", "variable"], ignore_index=True)
+    pd.testing.assert_frame_equal(old, new)
 
 
 def test_paired_frame_can_be_bounded_to_a_last_init_date(_ingested_slice):
