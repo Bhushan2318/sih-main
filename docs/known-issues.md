@@ -123,3 +123,11 @@ here rather than discovered live.
   60 values short (four districts × 3 leads × 5 members), starting 2017-11-16 and
   recurring after; in 2018 the year is 6,240 values short per lead. The ingest propagates
   the gap rather than filling it. Which districts, and why, is not yet established.
+- **Observed soil moisture dips fractionally below zero in the two island districts.**
+  Nicobar Islands and Lakshadweep, and only those, carry negative values in the CDS
+  district observations: 400 of 243,090 district-days in 2017 and 364 in 2018. The most
+  negative are −0.00045 and −0.00049 percentage points. Both districts are almost all sea
+  at 0.25°, so their area-weighted soil moisture sits near zero and the negatives are
+  float-noise sized. The observation files keep them as delivered, unclipped; whether the
+  ingest preserves them has not been checked. A physical-range check that assumes ≥ 0 will
+  flag them. Measured 2026-09-11.
