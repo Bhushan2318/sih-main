@@ -72,5 +72,8 @@ backend/data/samples/*_labelled.parquet
 # Gridded fields for the convolutional model: ~3.9 MB per cycle, ~1.5 GB for a year.
 # Rebuilt by the fetch; shipped as a Release asset, never through git.
 backend/data/samples/grids/
+# Later years land as per-day artifacts before they are assembled or ingested.
+backend/data/samples/grids-*/
+backend/data/samples/parts-*/
 backend/data/samples/_era5_cells/
 *.db-journal
