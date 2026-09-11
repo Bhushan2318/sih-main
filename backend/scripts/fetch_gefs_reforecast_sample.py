@@ -733,31 +733,88 @@ def _finalise(part_dir: Path, years: list) -> None:
                 + (f"\n  ... and {len(stale) - 5} more" if len(stale) > 5 else "")
                 + "\nDelete them and re-fetch those initialisations."
             )
-        _write_year(pd.concat((pd.read_parquet(q) for q in parts), ignore_index=True), year)
+        _write_year(parts, year)
 
 
-def _write_year(full: pd.DataFrame, year: int) -> None:
+def _write_year(parts: list, year: int) -> None:
+    """Stream a year's parts into one Parquet and one CSV, a part at a time.
+
+    This used to pd.concat every part first. A district part is ~71 MB in pandas (the
+    src_* provenance strings dominate), so a year at daily density is ~26 GB before
+    concat's own copy - measured 2026-09-11, and it cannot be held on a 16 GB machine.
+    Each part becomes one row group, which also lets the ingest's init_date filter skip
+    straight to the cycle it wants.
+
+    Both files are written under a .partial name and renamed only when every part is in:
+    a year file that stopped at part 200 would otherwise look like a finished, shorter
+    year to the next step.
+    """
+    import pyarrow as pa
+    import pyarrow.csv as pacsv
+
     csv_path = OUT_DIR / f"gefs_reforecast_india_{year}.csv"
     pq_path = OUT_DIR / f"gefs_reforecast_india_{year}.parquet"
-    full.to_csv(csv_path, index=False)
-    full.to_parquet(pq_path, index=False)
+    csv_tmp = csv_path.with_name(csv_path.name + ".partial")
+    pq_tmp = pq_path.with_name(pq_path.name + ".partial")
+
+    value_cols = ["t2m_c", "rh2m_pct", "apcp_mm", "mslp_hpa", "psfc_hpa",
+                  "pwat_kgm2", "wspd10m_ms", "wdir10m_deg", "soilw_vol_pct"]
+    stat_cols = ["region_id", "state_id", "init_date", "member", "valid_date", "lead_day"]
+    rows, districts, states, inits, members = 0, set(), set(), set(), set()
+    vmin = vmax = None
+    cov = None
+
+    schema = None
+    pq_writer = csv_writer = None
+    try:
+        for q in parts:
+            table = pq.read_table(q)
+            if schema is None:
+                schema = table.schema
+                pq_writer = pq.ParquetWriter(pq_tmp, schema)
+                csv_writer = pacsv.CSVWriter(csv_tmp, schema.remove_metadata())
+            elif not table.schema.equals(schema, check_metadata=False):
+                try:
+                    table = table.cast(schema)
+                except (pa.ArrowInvalid, ValueError) as exc:
+                    raise SystemExit(f"{q.name} does not match the schema of {parts[0].name}: "
+                                     f"{exc}") from exc
+            pq_writer.write_table(table)
+            csv_writer.write_table(table.replace_schema_metadata(None))
+
+            s = table.select([c for c in stat_cols + value_cols
+                              if c in table.column_names]).to_pandas()
+            rows += len(s)
+            districts.update(s["region_id"].unique())
+            states.update(s["state_id"].unique())
+            inits.update(s["init_date"].unique())
+            members.update(s["member"].unique())
+            lo, hi = s["valid_date"].min(), s["valid_date"].max()
+            vmin = lo if vmin is None else min(vmin, lo)
+            vmax = hi if vmax is None else max(vmax, hi)
+            vc = [c for c in value_cols if c in s.columns]
+            c = s.groupby("lead_day")[vc].count()
+            cov = c if cov is None else cov.add(c, fill_value=0).astype(int)
+    finally:
+        if pq_writer is not None:
+            pq_writer.close()
+        if csv_writer is not None:
+            csv_writer.close()
+
+    pq_tmp.replace(pq_path)
+    csv_tmp.replace(csv_path)
 
     print("\n" + "=" * 78)
     print(f"FORECAST SAMPLE  ->  {csv_path.relative_to(BACKEND_DIR)}")
     print(f"                     {pq_path.relative_to(BACKEND_DIR)}")
     print("=" * 78)
-    print(f"rows            : {len(full):,}")
-    print(f"districts       : {full['region_id'].nunique()}")
-    print(f"states/UTs      : {full['state_id'].nunique()}")
-    print(f"init cycles      : {full['init_date'].nunique()}  "
-          f"({full['init_date'].min()} .. {full['init_date'].max()})")
-    print(f"members         : {sorted(full['member'].unique())}")
-    print(f"valid dates      : {full['valid_date'].min()} .. {full['valid_date'].max()}")
+    print(f"rows            : {rows:,}")
+    print(f"districts       : {len(districts)}")
+    print(f"states/UTs      : {len(states)}")
+    print(f"init cycles      : {len(inits)}  ({min(inits)} .. {max(inits)})")
+    print(f"members         : {sorted(members)}")
+    print(f"valid dates      : {vmin} .. {vmax}")
     print("\nnon-null value counts by canonical variable and lead day:")
-    value_cols = [c for c in ["t2m_c", "rh2m_pct", "apcp_mm", "mslp_hpa", "psfc_hpa",
-                              "pwat_kgm2", "wspd10m_ms", "wdir10m_deg", "soilw_vol_pct"]
-                  if c in full.columns]
-    cov = full.groupby("lead_day")[value_cols].count()
     with pd.option_context("display.width", 160, "display.max_columns", 30):
         print(cov.to_string())
     print("\nEvery row's values are reproducible from the src_<var> / srcmsg_<var> columns.")
