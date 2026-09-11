@@ -105,13 +105,21 @@ def _downcast_paired(df: "pd.DataFrame") -> "pd.DataFrame":
     return df
 
 
-def _build_paired_in_chunks() -> "tuple[pd.DataFrame, int]":
+def _build_paired_in_chunks(init_date_max=None) -> "tuple[pd.DataFrame, int]":
+    """init_date_max bounds which forecast cycles are read. Without it, a year still being
+    ingested - or an observation file running a few days into the next year - lands a
+    partial, sparsely labelled month at the end of the time-ordered split, i.e. in test."""
     inits = parquet_store.read_dataset(
         value_types=["forecast"], columns=["init_date"], dedupe=False,
     )["init_date"].dropna().unique()
     if len(inits) == 0:
         return pd.DataFrame(), 0
     inits = sorted(pd.to_datetime(pd.Series(inits)).dt.normalize().unique())
+    if init_date_max is not None:
+        bound = pd.Timestamp(init_date_max).normalize()
+        inits = [c for c in inits if pd.Timestamp(c) <= bound]
+        if not inits:
+            return pd.DataFrame(), 0
 
     frames, rows_read = [], 0
     for i in range(0, len(inits), _CHUNK_CYCLES):
@@ -227,7 +235,7 @@ def _promotion_decision(new_metrics: dict | None) -> tuple[bool, str]:
 
 
 def full_retrain(triggered_by_batch_id: str | None = None, make_current: bool = True,
-                 *, emit_eval: bool = False) -> TrainReport:
+                 *, emit_eval: bool = False, init_date_max=None) -> TrainReport:
     t0 = time.time()
     run_id = registry.new_run_id()
     report = TrainReport(run_id=run_id, status="failed")
@@ -243,7 +251,7 @@ def full_retrain(triggered_by_batch_id: str | None = None, make_current: bool = 
         return report
 
     try:
-        paired, report.data_rows = _build_paired_in_chunks()
+        paired, report.data_rows = _build_paired_in_chunks(init_date_max=init_date_max)
         if paired.empty:
             report.status = "no_data"
             return report
@@ -256,6 +264,7 @@ def full_retrain(triggered_by_batch_id: str | None = None, make_current: bool = 
         report.split_cycles = {
             "train": len(train_c), "val": len(val_c), "test": len(test_c),
             "train_dates": [str(pd.Timestamp(c).date()) for c in sorted(train_c)],
+            "init_date_max": str(init_date_max) if init_date_max is not None else None,
         }
         tr = paired[paired["init_date"].isin(train_c)].copy()
         va = paired[paired["init_date"].isin(val_c)].copy()
@@ -480,12 +489,15 @@ def _main() -> int:
     ap.add_argument("--emit-eval", action="store_true",
                     help="also write the scored event frames to data/analysis/eval_events "
                          "(input for scripts/run_baselines.py)")
+    ap.add_argument("--init-date-max", default=None, metavar="YYYY-MM-DD",
+                    help="train only on forecast cycles initialised on or before this date")
     args = ap.parse_args()
 
     from app.db.base import init_db
     init_db()
 
-    r = full_retrain(make_current=not args.dry_run, emit_eval=args.emit_eval)
+    r = full_retrain(make_current=not args.dry_run, emit_eval=args.emit_eval,
+                     init_date_max=args.init_date_max)
     _print_report(r)
     if args.json:
         from dataclasses import asdict
