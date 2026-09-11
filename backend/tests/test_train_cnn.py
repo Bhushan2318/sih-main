@@ -182,3 +182,41 @@ def test_a_cycle_in_two_splits_is_refused():
                     _eval_frame({"2017-01-01": "test"})], ignore_index=True)
     with pytest.raises(ValueError, match="2017-01-01"):
         train_cnn.splits_from_eval(ev)
+
+
+# --- train() must stream --------------------------------------------------------------
+# Plumbing tests on small random bundles, clearly not weather and never a metric. What they
+# pin is structural: the CLI's train() used load_bundles + build_arrays, which decode every
+# bundle up front - 196 MB each, ~71 GB for 365 cycles - although the streaming path
+# (build_index / fit_streaming / predict_streaming) already existed and was tested.
+
+def _forbid_materialising(monkeypatch):
+    def boom(*a, **k):
+        raise AssertionError("train() materialised the year instead of streaming it")
+    monkeypatch.setattr(train_cnn, "load_bundles", boom)
+    monkeypatch.setattr(train_cnn, "build_arrays", boom)
+
+
+def test_train_never_loads_every_bundle(tmp_path, region_ids, monkeypatch):
+    _forbid_materialising(monkeypatch)
+    inits = [f"2019-01-{d:02d}" for d in range(1, 11)]
+    for i in inits:
+        gf.save_bundle(tmp_path / f"{i}.npz", _bundle(i))
+    rep = train_cnn.train(tmp_path, _events(inits, region_ids[:5]),
+                          {"train": inits, "val": [], "test": []}, region_ids)
+    assert rep.status == "refused" and rep.train_cycles == len(inits)
+
+
+def test_streamed_train_reaches_a_scored_report(tmp_path, region_ids, monkeypatch):
+    _forbid_materialising(monkeypatch)
+    monkeypatch.setattr(train_cnn, "MIN_TRAIN_CYCLES", 4)
+    inits = [f"2019-02-{d:02d}" for d in range(1, 9)]
+    for i in inits:
+        gf.save_bundle(tmp_path / f"{i}.npz", _bundle(i))
+    splits = {"train": inits[:4], "val": inits[4:6], "test": inits[6:]}
+    rep = train_cnn.train(tmp_path, _events(inits, region_ids[:6]), splits, region_ids,
+                          seeds=1, epochs=1, patience=1)
+    assert rep.status == "success", rep.error
+    assert (rep.train_cycles, rep.val_cycles, rep.test_cycles) == (4, 2, 2)
+    assert rep.n_train_samples == 8, "4 cycles x 2 lead days"
+    assert set(rep.metrics["test"]) >= {"roc_auc", "brier"}

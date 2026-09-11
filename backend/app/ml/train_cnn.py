@@ -428,19 +428,19 @@ def train(grid_dir: Path, events, splits: dict, region_ids: list[str],
         return CNNReport(status="skipped",
                          error="torch is not installed; pip install -r requirements-train.txt")
 
-    from app.ml.cnn import Normalizer
-
-    bundles = load_bundles(grid_dir)
-    if not bundles:
+    if not any(Path(grid_dir).glob("*.npz")):
         return CNNReport(status="skipped",
                          error=f"no grid bundles in {grid_dir}; the fetch must run first")
 
-    built = build_arrays(bundles, events, region_ids)
-    if built is None:
+    # Index, do not load. A decoded bundle is ~196 MB (12 variables x 10 leads x 2 stats on
+    # 145x141 float32), so load_bundles + build_arrays held ~71 GB for one year before a
+    # single epoch. The index holds paths and labels; each batch reads one cycle.
+    index = build_index(grid_dir, events, region_ids)
+    if not index.samples:
         return CNNReport(status="skipped",
                          error="no bundle matched a scored event; check init_date alignment")
-    X, EX, Y, AUX, CYC = built
 
+    CYC = np.asarray(index.cycles)
     tr = np.isin(CYC, [str(c) for c in splits.get("train", [])])
     va = np.isin(CYC, [str(c) for c in splits.get("val", [])])
     te = np.isin(CYC, [str(c) for c in splits.get("test", [])])
@@ -454,29 +454,30 @@ def train(grid_dir: Path, events, splits: dict, region_ids: list[str],
                    f"if it measured the model. Refusing rather than publishing it."),
             seconds=time.time() - t0)
 
+    tr_idx, va_idx, te_idx = (np.flatnonzero(m) for m in (tr, va, te))
+
     # Normaliser fit on training cycles only - whole-archive statistics leak the test
     # period's climate into training.
-    norm = Normalizer.fit(X[tr])
-    Xn, M = norm.apply(X)
-    Xn = np.nan_to_num(Xn)
+    index.fit_normalizer(tr_idx)
 
-    models, val_briers = [], []
+    models = []
     for s in range(seeds):
-        m, vb = _fit_one(s, Xn[tr], M[tr], EX[tr], Y[tr], AUX[tr],
-                         Xn[va], M[va], EX[va], Y[va], epochs, patience, lr, region_ids)
+        m, _ = fit_streaming(s, index, tr_idx, va_idx, epochs=epochs, patience=patience,
+                             lr=lr, region_ids=region_ids)
         models.append(m)
-        val_briers.append(vb)
 
-    def scored(mask):
-        if not mask.any():
+    def scored(idx):
+        if len(idx) == 0:
             return {}
         # Seed ensemble: averaging probabilities cuts variance and improves calibration,
         # which is nearly free at this model size.
-        proba = np.mean([_predict(m, Xn[mask], M[mask], EX[mask]) for m in models], axis=0)
-        keep = ~np.isnan(Y[mask])
-        return clf_mod._evaluate(Y[mask][keep], proba[keep])
+        runs = [predict_streaming(m, index, idx) for m in models]
+        proba = np.mean([p for p, _ in runs], axis=0)
+        y = runs[0][1]
+        keep = ~np.isnan(y)
+        return clf_mod._evaluate(y[keep], proba[keep])
 
-    metrics = {k: scored(m) for k, m in (("train", tr), ("val", va), ("test", te))}
+    metrics = {k: scored(i) for k, i in (("train", tr_idx), ("val", va_idx), ("test", te_idx))}
     n_params = sum(p.numel() for p in models[0].parameters())
     return CNNReport(
         status="success", seeds=seeds,
