@@ -46,6 +46,27 @@ def test_a_failed_write_leaves_nothing_discoverable(fresh_store, monkeypatch):
     assert parquet_store.read_dataset().empty
 
 
+def test_a_reader_that_lists_the_store_mid_write_can_still_read_it(fresh_store, monkeypatch):
+    # The first fix wrote part-0.parquet.partial beside the final file. The glob could not
+    # match it, but pyarrow's discovery lists every file not starting with "." or "_", so a
+    # reader that listed the store mid-write held the temp path, the writer renamed it away,
+    # and to_table failed with FileNotFoundError. That killed the 2017 retrain at 43 min on
+    # 2026-09-11 while the 2018 ingest wrote beside it.
+    parquet_store.append_batch("b-old", _rows())
+    real_replace = parquet_store.os.replace
+    listed = {}
+
+    def list_then_rename(src, dst):
+        listed["dataset"] = parquet_store._dataset()
+        real_replace(src, dst)
+
+    monkeypatch.setattr(parquet_store.os, "replace", list_then_rename)
+    parquet_store.append_batch("b-new", _rows())
+    monkeypatch.setattr(parquet_store.os, "replace", real_replace)
+
+    assert listed["dataset"].to_table().num_rows == 3
+
+
 def test_a_successful_write_is_readable_at_its_final_name(fresh_store):
     n = parquet_store.append_batch("b-ok", _rows())
     files = list(parquet_store.CANONICAL_DIR.glob("batch_id=b-ok/*.parquet"))
