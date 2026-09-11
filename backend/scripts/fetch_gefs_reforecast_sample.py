@@ -703,6 +703,34 @@ def _canonicalise(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def _refuse_if_git_tracked(path: Path) -> None:
+    """A finalise target that git already tracks is, twice now, a committed test fixture
+    of the same name rather than a stray leftover - and overwriting it produced no error
+    of its own, just a fixture that was silently wrong until `git status` caught it after
+    the fact. Refuse before a single part is read rather than rely on catching this again.
+
+    Deliberately a refusal, not a silent rename: someone finalising into a tracked path
+    needs to choose the real target themselves (see --no-csv's sibling, `--source` on
+    the ingest side), not have it renamed for them without asking.
+
+    Degrades to "allow" outside a git repo (a fresh clone's temp dir, CI's own scratch
+    space) - there is nothing to check against, so nothing to refuse.
+    """
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["git", "ls-files", "--error-unmatch", str(path)],
+            cwd=path.parent, capture_output=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return
+    if result.returncode == 0:
+        raise SystemExit(
+            f"{path} is tracked by git - finalising here would silently overwrite a "
+            f"committed file (most likely a test fixture of the same name, as happened "
+            f"with 2019's legacy 36-city sample). Pass an explicit output path instead "
+            f"of letting this land on a tracked file.")
+
+
 def _replace_with_retry(tmp: Path, dest: Path, tries: int = 8, delay: float = 0.5) -> None:
     """`Path.replace()` raised `PermissionError: [WinError 32]` renaming a freshly-written
     year file into place on Windows - twice in a row, with the write itself already
@@ -785,6 +813,10 @@ def _write_year(parts: list, year: int, no_csv: bool = False) -> None:
     pq_path = OUT_DIR / f"gefs_reforecast_india_{year}.parquet"
     csv_tmp = csv_path.with_name(csv_path.name + ".partial")
     pq_tmp = pq_path.with_name(pq_path.name + ".partial")
+
+    _refuse_if_git_tracked(pq_path)
+    if not no_csv:
+        _refuse_if_git_tracked(csv_path)
 
     value_cols = ["t2m_c", "rh2m_pct", "apcp_mm", "mslp_hpa", "psfc_hpa",
                   "pwat_kgm2", "wspd10m_ms", "wdir10m_deg", "soilw_vol_pct"]

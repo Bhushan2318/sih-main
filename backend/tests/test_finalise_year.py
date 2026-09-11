@@ -73,6 +73,76 @@ def test_no_csv_skips_it_but_still_writes_the_parquet(tmp_path, monkeypatch):
     assert not list(out.glob("*.csv.partial")), "no CSV temp file should be left behind either"
 
 
+# --- refusing to overwrite a git-tracked path -------------------------------------------
+# `git restore` undid two near-misses tonight where `_finalise` wrote the real
+# district-scale 2019 archive straight over a tracked 1.6 MB legacy test fixture of the
+# same name. It worked because the fixture happened to be tracked and the working tree
+# happened to be clean for that path - neither is guaranteed. Refusing up front, before a
+# single part is read, closes the whole class rather than relying on catching it after.
+
+def _tiny_git_repo(tmp_path) -> Path:
+    import subprocess
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=repo, check=True)
+    return repo
+
+
+def _one_part(parts_dir: Path, name: str = "2019-01-01.parquet") -> None:
+    pd.DataFrame({"region_id": ["IN-KL-IDUKKI"], "state_id": ["IN-KL"],
+                 "init_date": ["2019-01-01"], "member": ["c00"],
+                 "valid_date": ["2019-01-02"], "lead_day": [1]}
+                ).to_parquet(parts_dir / name, index=False)
+
+
+def test_finalise_refuses_to_overwrite_a_tracked_parquet(tmp_path, monkeypatch):
+    repo = _tiny_git_repo(tmp_path)
+    out = repo  # OUT_DIR == the repo root, so the target path is inside it
+    tracked = out / "gefs_reforecast_india_2019.parquet"
+    tracked.write_bytes(b"pretend this is someone else's committed fixture")
+    import subprocess
+    subprocess.run(["git", "add", "gefs_reforecast_india_2019.parquet"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "fixture"], cwd=repo, check=True)
+
+    parts = tmp_path / "parts"; parts.mkdir()
+    _one_part(parts)
+    monkeypatch.setattr(fetch, "OUT_DIR", out)
+    monkeypatch.setattr(fetch, "BACKEND_DIR", tmp_path)
+
+    before = tracked.read_bytes()
+    with pytest.raises(SystemExit, match="tracked by git"):
+        fetch._finalise(parts, [2019], no_csv=True)
+    assert tracked.read_bytes() == before, "a refused finalise must not touch the file at all"
+
+
+def test_finalise_writes_normally_when_the_path_is_not_tracked(tmp_path, monkeypatch):
+    """The guard must not block the ordinary case - an untracked target in a real repo,
+    which is every year except the one that collides with the legacy fixture."""
+    repo = _tiny_git_repo(tmp_path)
+    parts = tmp_path / "parts"; parts.mkdir()
+    _one_part(parts, "2018-01-01.parquet")
+    monkeypatch.setattr(fetch, "OUT_DIR", repo)
+    monkeypatch.setattr(fetch, "BACKEND_DIR", tmp_path)
+
+    fetch._finalise(parts, [2018], no_csv=True)
+    assert (repo / "gefs_reforecast_india_2018.parquet").exists()
+
+
+def test_finalise_writes_normally_outside_any_git_repo(tmp_path, monkeypatch):
+    """CI and a fresh clone's temp dirs are not always inside a git worktree - the guard
+    must degrade to "allow", not crash, when there is no repo to check against."""
+    out = tmp_path / "no_git_here"; out.mkdir()
+    parts = tmp_path / "parts"; parts.mkdir()
+    _one_part(parts, "2018-01-01.parquet")
+    monkeypatch.setattr(fetch, "OUT_DIR", out)
+    monkeypatch.setattr(fetch, "BACKEND_DIR", tmp_path)
+
+    fetch._finalise(parts, [2018], no_csv=True)
+    assert (out / "gefs_reforecast_india_2018.parquet").exists()
+
+
 def test_only_the_requested_year_is_written(tmp_path, monkeypatch):
     parts = tmp_path / "parts"; parts.mkdir()
     out = tmp_path / "out"; out.mkdir()
