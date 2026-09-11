@@ -396,6 +396,28 @@ def _predict(model, X, M, EX, chunk=8) -> np.ndarray:
     return np.concatenate(out)
 
 
+def splits_from_eval(ev) -> dict:
+    """Cycle lists per split, read from the tabular run's own scored events.
+
+    The two families are only comparable on identical rows, so the CNN does not choose its
+    own split - it takes the one `train_pipeline --emit-eval` scored. Dates come back as
+    'YYYY-MM-DD' because that is how grid bundles are keyed (path.stem); str() of a pandas
+    Timestamp would carry a time and match nothing. A cycle in two splits is leakage and is
+    refused rather than silently assigned to one.
+    """
+    import pandas as pd
+
+    days = pd.to_datetime(ev["init_date"]).dt.strftime("%Y-%m-%d")
+    per_cycle = pd.DataFrame({"day": days, "split": ev["split"].astype(str)})
+    counts = per_cycle.drop_duplicates().groupby("day")["split"].nunique()
+    shared = sorted(counts[counts > 1].index)
+    if shared:
+        raise ValueError(f"{len(shared)} cycles appear in more than one split, e.g. "
+                         f"{', '.join(shared[:5])}")
+    return {name: sorted(set(days[per_cycle["split"] == name]))
+            for name in ("train", "val", "test")}
+
+
 def train(grid_dir: Path, events, splits: dict, region_ids: list[str],
           seeds: int = DEFAULT_SEEDS, epochs: int = DEFAULT_EPOCHS,
           patience: int = DEFAULT_PATIENCE, lr: float = DEFAULT_LR) -> CNNReport:
@@ -493,29 +515,50 @@ def main() -> int:
     ap.add_argument("--seeds", type=int, default=DEFAULT_SEEDS)
     ap.add_argument("--epochs", type=int, default=DEFAULT_EPOCHS)
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--run-id", help="tabular run whose eval events to train against "
+                    "(default: the most recent in data/analysis/eval_events)")
     args = ap.parse_args()
 
     from dataclasses import asdict
 
-    from app.ml import inference, registry
+    import pandas as pd
+
+    from app.config import settings
+    from app.db.base import resolve_path
+    from app.ml import registry
     from app.utils.india_districts import load_registry
 
-    state = inference.load_state() if hasattr(inference, "load_state") else None
-    events = getattr(state, "events", None)
-    if events is None:
-        print("No scored events available - train the tabular pipeline first "
-              "(python -m app.ml.train_pipeline).")
+    # Events and splits come from the file the tabular run published with --emit-eval.
+    # This used to call inference.load_state(), which does not exist, and pass {} as the
+    # splits - so the CLI could not have produced a result.
+    eval_dir = resolve_path(settings.data_dir) / "analysis" / "eval_events"
+    if args.run_id:
+        path = eval_dir / f"{args.run_id}.parquet"
+    else:
+        found = sorted(eval_dir.glob("run_*.parquet"))
+        path = found[-1] if found else eval_dir / "<none>"
+    if not path.exists():
+        print(f"No eval events at {path} - run "
+              "python -m app.ml.train_pipeline --emit-eval first.")
         return 1
+    run_id = path.stem
+    events = pd.read_parquet(path)
+    splits = splits_from_eval(events)
+    print(f"events: {path.name}  {len(events):,} rows  cycles train/val/test = "
+          f"{len(splits['train'])}/{len(splits['val'])}/{len(splits['test'])}")
 
-    rep = train(args.grid_dir, events, {}, [d.region_id for d in load_registry()],
+    rep = train(args.grid_dir, events, splits, [d.region_id for d in load_registry()],
                 seeds=args.seeds, epochs=args.epochs)
     print(f"CNN: status={rep.status} {rep.error or ''}")
     if rep.status == "success":
         print(f"  {rep.train_cycles} train cycles, {rep.n_train_samples} samples, "
               f"{rep.parameters:,} parameters, {rep.seeds} seeds, {rep.seconds:.0f}s")
-        cur = registry.current_run_id()
-        xgb = (registry.load_metrics(cur) or {}).get("classifier", {}) if cur else {}
+        # Compared against the run that scored these rows, not whichever run is current:
+        # if the gate refused that run, current is a different model on different rows.
+        xgb = (registry.load_metrics(run_id) or {}).get("classifier", {})
         print(format_comparison(rep, xgb))
+    (registry.run_dir(run_id) / "cnn.json").write_text(
+        json.dumps(asdict(rep), indent=2, default=str))
     if args.json:
         print(json.dumps(asdict(rep), indent=2, default=str))
     return 0 if rep.status in ("success", "skipped") else 1

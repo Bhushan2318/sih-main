@@ -141,3 +141,44 @@ def test_fit_one_builds_an_encoder_that_accepts_its_own_input(region_ids):
                                   epochs=1, patience=1, lr=1e-3, region_ids=region_ids)
     assert model.encoder[0].in_channels == n_data * 2, \
         "the encoder must accept data and mask concatenated"
+
+
+# --- where the CLI gets its splits ------------------------------------------------------
+# Plumbing tests: the frames below are hand-built rows, not weather. They check that the
+# cycle lists handed to train() are the ones the tabular run scored, in the exact string
+# form the grid bundles are keyed by.
+
+def _eval_frame(split_of: dict) -> pd.DataFrame:
+    return pd.DataFrame([
+        {"region_id": "IN-KL-IDUKKI", "init_date": pd.Timestamp(d), "lead_time_days": 1,
+         "y_bust": 0, "split": s}
+        for d, s in split_of.items()
+    ])
+
+
+def test_splits_come_from_the_tabular_runs_own_split():
+    """The CLI used to pass {} as splits, so every run found 0 training cycles and was
+    refused. The splits must be the cycles the tabular model was scored on, or the two
+    families are not being compared on identical rows."""
+    ev = _eval_frame({"2017-01-01": "train", "2017-01-02": "train",
+                      "2017-06-01": "val", "2017-11-29": "test"})
+    s = train_cnn.splits_from_eval(ev)
+    assert s == {"train": ["2017-01-01", "2017-01-02"], "val": ["2017-06-01"],
+                 "test": ["2017-11-29"]}
+
+
+def test_split_dates_match_the_bundle_key_not_a_timestamp_string():
+    """Bundles are keyed by path.stem, '2017-01-01'. str() of a pandas Timestamp is
+    '2017-01-01 00:00:00', which matches nothing - and train() would refuse for too few
+    cycles rather than say the keys never lined up."""
+    s = train_cnn.splits_from_eval(_eval_frame({"2017-03-04": "test"}))
+    assert s["test"] == ["2017-03-04"]
+
+
+def test_a_cycle_in_two_splits_is_refused():
+    """The tabular split is by cycle. A cycle in both train and test is leakage, and a
+    score computed across it is not a held-out score."""
+    ev = pd.concat([_eval_frame({"2017-01-01": "train"}),
+                    _eval_frame({"2017-01-01": "test"})], ignore_index=True)
+    with pytest.raises(ValueError, match="2017-01-01"):
+        train_cnn.splits_from_eval(ev)
