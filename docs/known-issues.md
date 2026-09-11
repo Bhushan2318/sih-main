@@ -123,6 +123,19 @@ here rather than discovered live.
   60 values short (four districts × 3 leads × 5 members), starting 2017-11-16 and
   recurring after; in 2018 the year is 6,240 values short per lead. The ingest propagates
   the gap rather than filling it. Which districts, and why, is not yet established.
+- **The parser test's collected count is not portable across machines.**
+  `tests/test_parsers.py` runs one test per real file `conftest.iter_sample_files()`
+  finds, which scans two roots: `backend/data/samples/` (repo, real fetch output) and,
+  if it exists, `~/Desktop/data` - a personal, non-repo folder specific to whichever
+  account is running the suite. On this Mac that adds 51 files no other machine, and no
+  CI runner, will ever have. Moving work to a second laptop (2026-09-11) also excluded
+  `backend/data/samples/parts-2018/` from the copy - 365 real per-day fetch parts,
+  deliberately left out of the transfer as redundant with the single assembled
+  `gefs_reforecast_india_2018.parquet` they already produced, but still counted by this
+  test's directory scan on the source machine. Net effect: the Mac collected 826 tests at
+  commit f36795a; the second laptop collected 384 at the same commit, and both are
+  correct for what each machine actually holds. Neither figure is "the" real count - use
+  pass/fail/skip ratios and diagnose any gap in the total before assuming a real problem.
 - **Observed soil moisture dips fractionally below zero in the two island districts.**
   Nicobar Islands and Lakshadweep, and only those, carry negative values in the CDS
   district observations: 400 of 243,090 district-days in 2017 and 364 in 2018. The most
