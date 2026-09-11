@@ -230,6 +230,10 @@ def test_full_retrain_end_to_end(_retrain):
     import json
     manifest = json.loads((registry.run_dir(rid) / "manifest.json").read_text())
     assert manifest["shap_method"] in {"shap", "feature_importance_fallback", "none"}
+    # The served explanation must actually be SHAP. _shap_values swallows errors, so without
+    # this a fallback to feature importance would pass every other assertion here.
+    assert manifest["shap_methods"].get("classifier") == "shap", manifest["shap_methods"]
+    assert manifest["shap_method"] == manifest["shap_methods"]["classifier"]
 
 
 def test_regressors_beat_mean_baseline_on_temperature(_retrain):

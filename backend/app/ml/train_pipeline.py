@@ -353,7 +353,8 @@ def full_retrain(triggered_by_batch_id: str | None = None, make_current: bool = 
             if len(sub) >= 20:
                 shap_frames.append(explain_mod.explain_model(
                     art.model, sub, art.feature_columns, _REG_CATEGORICAL,
-                    model_name=f"regressor::{var}"))
+                    model_name=f"regressor::{var}",
+                    max_rows_per_group=explain_mod.SHAP_ROWS_PER_GROUP))
         if len(event_va) >= 20:
             shap_frames.append(explain_mod.explain_model(
                 clf_art.model, event_va, clf_art.feature_columns, _CLF_CATEGORICAL,
@@ -372,6 +373,8 @@ def full_retrain(triggered_by_batch_id: str | None = None, make_current: bool = 
             "regressors": report.regressor_metrics,
             "classifier": report.classifier_metrics,
         })
+        shap_methods = (shap_summary.groupby("model")["method"].first().to_dict()
+                        if not shap_summary.empty else {})
         registry.save_manifest(run_id, {
             "run_id": run_id,
             "triggered_by_batch_id": triggered_by_batch_id,
@@ -380,7 +383,12 @@ def full_retrain(triggered_by_batch_id: str | None = None, make_current: bool = 
             "split_cycles": report.split_cycles,
             "modelled_variables": report.modelled_variables,
             "skipped_variables": report.skipped_variables,
-            "shap_method": (shap_summary["method"].iloc[0] if not shap_summary.empty else "none"),
+            # The classifier's method, because that is the explanation the region panel
+            # serves and /api/model/status reports; it used to be whichever model came first.
+            "shap_method": shap_methods.get("classifier",
+                                            next(iter(shap_methods.values()), "none")),
+            "shap_methods": shap_methods,
+            "shap_regressor_rows_per_group": explain_mod.SHAP_ROWS_PER_GROUP,
         })
 
         report.status = "success"
