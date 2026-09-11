@@ -70,6 +70,39 @@ here rather than discovered live.
   `.part-0.parquet.partial`, and `test_store_atomic_write` reproduces the listing race.
   Concurrency is safe for reads now, but the two still compete for memory: that run's
   footprint was 13.4 GB beside the ingest's 4.9 GB. On a 16 GB box, run them in sequence.
+- **A two-year retrain (2017+2018, 152.3M paired rows) died with a MemoryError before a
+  single model trained** (run_20260911T193709Z, 1948 s in, on a 23.7 GB Windows box).
+  `_build_paired_in_chunks` builds each chunk, appends it to a list, then at the end
+  concatenates the whole list and calls `.sort_values(...).reset_index(drop=True)`. Two
+  wasteful copies stacked at exactly that point: the per-chunk `frames` list stayed alive
+  after being concatenated into `out` (both copies resident at once), and the separate
+  `.reset_index(drop=True)` call triggers pandas' block consolidation - a `np.vstack` of
+  every same-dtype column into one contiguous array - which tried to allocate 9.08 GiB it
+  did not need, since the sort had already produced the row order. Fixed by clearing
+  `frames` right after the concat and using `sort_values(..., ignore_index=True)` instead
+  of the separate reset (`test_sort_ignore_index_matches_sort_then_reset_index` pins the
+  two produce an identical frame). Removing one redundant copy is unlikely to be enough
+  headroom for three or more years pooled the same way - 152M rows x 16 float32 columns is
+  9 GiB for one array alone - so a third year repeating this failure is the signal to
+  change the structure (feed the model per year/chunk rather than materialising one pooled
+  frame), not to hunt for the next copy to delete. The fixed retry (run_20260911T201511Z)
+  succeeded; its own peak was not measured - only a >=12.7 GB reading at ~20 minutes in,
+  taken before other work intervened and the process finished unwatched. Measured
+  2026-09-11.
+- **A promotion string comparing two runs is only a like-for-like regression check when
+  both used the same kind of split.** `_choose_split` added a second split shape,
+  `_split_by_year`, alongside the original chronological `_split_by_cycle` - and
+  `_promotion_decision` compares held-out ROC-AUC across whichever two runs are current
+  and previous, with no awareness of which shape produced either number. run_20260911T163128Z
+  was scored on the chronological tail of 2017 (55 cycles, Nov-Dec); run_20260911T201511Z,
+  trained on 2017 and holding out all of 2018 (365 cycles), reported "held-out ROC-AUC
+  0.8348, 0.0117 below the previous run (0.8466)" - true as arithmetic, but the two 0.05-
+  tolerance numbers describe different test sets, not the same 55-cycle question asked
+  twice. Reading a sequence of promotion strings as if each were graded on the prior run's
+  own held-out set would be a mistake. The gate's behaviour is correct as designed and is
+  not being changed for this - the fix is in how these numbers get read, not in the gate.
+  A cross-year `--test-year` run's ROC-AUC should be compared to another cross-year run's,
+  not to a within-year run's. Measured/found 2026-09-11.
 
 ## Data
 
