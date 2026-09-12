@@ -487,3 +487,37 @@ def test_paired_frame_can_be_bounded_to_a_last_init_date(_ingested_slice):
     assert not bounded.empty
     assert got.max() <= bound
     assert got.nunique() < len(cycles)
+
+
+def test_paired_frame_can_be_bounded_to_a_first_init_date(_ingested_slice):
+    """A retrain must also be able to say a training window starts somewhere - not just
+    where it ends. With four calendar years now sitting in the same store (2016-2019),
+    `--init-date-max 2019-12-31` alone would silently pull every earlier year in as
+    training data too; a cross-year run needs to name both ends of its training window."""
+    from app.ml.train_pipeline import _build_paired_in_chunks
+
+    everything, _ = _build_paired_in_chunks()
+    cycles = sorted(pd.to_datetime(everything["init_date"]).dt.normalize().unique())
+    assert len(cycles) >= 3
+    bound = pd.Timestamp(cycles[len(cycles) // 2]).date()
+
+    bounded, _ = _build_paired_in_chunks(init_date_min=bound)
+    got = pd.to_datetime(bounded["init_date"]).dt.date
+    assert not bounded.empty
+    assert got.min() >= bound
+    assert got.nunique() < len(cycles)
+
+
+def test_paired_frame_min_and_max_combine_to_a_window(_ingested_slice):
+    from app.ml.train_pipeline import _build_paired_in_chunks
+
+    everything, _ = _build_paired_in_chunks()
+    cycles = sorted(pd.to_datetime(everything["init_date"]).dt.normalize().unique())
+    assert len(cycles) >= 4
+    lo = pd.Timestamp(cycles[1]).date()
+    hi = pd.Timestamp(cycles[-2]).date()
+
+    windowed, _ = _build_paired_in_chunks(init_date_min=lo, init_date_max=hi)
+    got = pd.to_datetime(windowed["init_date"]).dt.date
+    assert not windowed.empty
+    assert got.min() >= lo and got.max() <= hi

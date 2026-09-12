@@ -105,10 +105,17 @@ def _downcast_paired(df: "pd.DataFrame") -> "pd.DataFrame":
     return df
 
 
-def _build_paired_in_chunks(init_date_max=None) -> "tuple[pd.DataFrame, int]":
+def _build_paired_in_chunks(init_date_max=None, init_date_min=None) -> "tuple[pd.DataFrame, int]":
     """init_date_max bounds which forecast cycles are read. Without it, a year still being
     ingested - or an observation file running a few days into the next year - lands a
-    partial, sparsely labelled month at the end of the time-ordered split, i.e. in test."""
+    partial, sparsely labelled month at the end of the time-ordered split, i.e. in test.
+
+    init_date_min bounds the other end. With one calendar year in the store, "everything
+    up to X" and "the training window" were the same thing, so nothing needed a lower
+    bound. That stopped being true the moment a second year not meant for training landed
+    in the same store: --init-date-max alone would silently pull every earlier year in as
+    training data too. A cross-year run needs to name both ends of its training window.
+    """
     inits = parquet_store.read_dataset(
         value_types=["forecast"], columns=["init_date"], dedupe=False,
     )["init_date"].dropna().unique()
@@ -118,6 +125,11 @@ def _build_paired_in_chunks(init_date_max=None) -> "tuple[pd.DataFrame, int]":
     if init_date_max is not None:
         bound = pd.Timestamp(init_date_max).normalize()
         inits = [c for c in inits if pd.Timestamp(c) <= bound]
+        if not inits:
+            return pd.DataFrame(), 0
+    if init_date_min is not None:
+        bound = pd.Timestamp(init_date_min).normalize()
+        inits = [c for c in inits if pd.Timestamp(c) >= bound]
         if not inits:
             return pd.DataFrame(), 0
 
@@ -279,7 +291,7 @@ def _promotion_decision(new_metrics: dict | None) -> tuple[bool, str]:
 
 
 def full_retrain(triggered_by_batch_id: str | None = None, make_current: bool = True,
-                 *, emit_eval: bool = False, init_date_max=None,
+                 *, emit_eval: bool = False, init_date_max=None, init_date_min=None,
                  test_year: int | None = None) -> TrainReport:
     t0 = time.time()
     run_id = registry.new_run_id()
@@ -296,7 +308,8 @@ def full_retrain(triggered_by_batch_id: str | None = None, make_current: bool = 
         return report
 
     try:
-        paired, report.data_rows = _build_paired_in_chunks(init_date_max=init_date_max)
+        paired, report.data_rows = _build_paired_in_chunks(
+            init_date_max=init_date_max, init_date_min=init_date_min)
         if paired.empty:
             report.status = "no_data"
             return report
@@ -310,6 +323,7 @@ def full_retrain(triggered_by_batch_id: str | None = None, make_current: bool = 
             "train": len(train_c), "val": len(val_c), "test": len(test_c),
             "train_dates": [str(pd.Timestamp(c).date()) for c in sorted(train_c)],
             "init_date_max": str(init_date_max) if init_date_max is not None else None,
+            "init_date_min": str(init_date_min) if init_date_min is not None else None,
             "test_year": str(test_year) if test_year is not None else None,
         }
         tr = paired[paired["init_date"].isin(train_c)].copy()
@@ -545,6 +559,10 @@ def _main() -> int:
                          "(input for scripts/run_baselines.py)")
     ap.add_argument("--init-date-max", default=None, metavar="YYYY-MM-DD",
                     help="train only on forecast cycles initialised on or before this date")
+    ap.add_argument("--init-date-min", default=None, metavar="YYYY-MM-DD",
+                    help="train only on forecast cycles initialised on or after this date "
+                         "- needed once more than one year's worth of cycles the run "
+                         "should NOT train on shares the store with the ones it should")
     ap.add_argument("--test-year", type=int, default=None, metavar="YYYY",
                     help="hold out this whole calendar year as test, instead of the "
                          "usual chronological tail of whatever range was loaded")
@@ -554,7 +572,8 @@ def _main() -> int:
     init_db()
 
     r = full_retrain(make_current=not args.dry_run, emit_eval=args.emit_eval,
-                     init_date_max=args.init_date_max, test_year=args.test_year)
+                     init_date_max=args.init_date_max, init_date_min=args.init_date_min,
+                     test_year=args.test_year)
     _print_report(r)
     if args.json:
         from dataclasses import asdict
