@@ -192,6 +192,18 @@ here rather than discovered live.
   model or about which year got picked": a model trained on one year loses only ~0.2-0.25
   percentage points of ROC-AUC on the very next year, consistently, not by chance of
   pairing. Measured 2026-09-12.
+- **More training years measurably help, scored the same way.** Four models, each scored
+  on the identical 2019 (n=2,400,930, via `scripts/score_run_on_year.py`, never trained on
+  2019): train-2016 (run_20260912T030448Z) 0.8302, train-2017 (run_20260911T163128Z)
+  0.8231, train-2018 (run_20260912T005532Z) 0.8327, train-2017+2018
+  (run_20260912T042847Z) 0.8418. Pooling two years beats every single-year model by
+  0.009-0.019 ROC-AUC. This required scoring, not a single `full_retrain` call: training
+  on 2017+2018 and testing on 2019 in one call would materialise all three years'
+  paired frame at once (the frame is built whole before the train/val/test split ever
+  divides it), which does not fit in 23.7 GB. The fix is two bounded processes - train
+  with `--init-date-min 2017-01-01 --init-date-max 2018-12-31 --dry-run` (2 years, fits),
+  then score the saved run separately with `score_run_on_year.py --year 2019` (1 year,
+  fits) - never more than 2 years resident in either process. Measured 2026-09-12.
 
 ## Data
 
