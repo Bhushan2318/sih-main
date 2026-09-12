@@ -184,6 +184,14 @@ here rather than discovered live.
   the parquet - so it is skipped for district years now rather than written and then
   fought over. Renaming the legacy fixture properly, so 2019 does not need a special-
   cased filename at all, is a real fix and is the user's call to make; not done tonight.
+- **The cross-year generalisation gap is stable across two independent year-pairs, not a
+  property of one pair.** Train-2017/test-2018 (run_20260911T201511Z): held-out ROC-AUC
+  0.8348. Train-2018/test-2019 (run_20260912T005532Z): held-out ROC-AUC 0.8327 - each
+  scored on a full calendar year it never trained on (n=2,400,930 events, 365 cycles).
+  0.0021 apart. That answers "does more data help, and is what we're seeing about the
+  model or about which year got picked": a model trained on one year loses only ~0.2-0.25
+  percentage points of ROC-AUC on the very next year, consistently, not by chance of
+  pairing. Measured 2026-09-12.
 
 ## Data
 
