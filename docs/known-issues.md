@@ -85,8 +85,26 @@ here rather than discovered live.
   headroom for three or more years pooled the same way - 152M rows x 16 float32 columns is
   9 GiB for one array alone - so a third year repeating this failure is the signal to
   change the structure (feed the model per year/chunk rather than materialising one pooled
-  frame), not to hunt for the next copy to delete. The fixed retry (run_20260911T201511Z)
-  succeeded; its own peak was not measured - only a >=12.7 GB reading at ~20 minutes in,
+  frame), not to hunt for the next copy to delete.
+
+  **This is not only a "training on three years" limit - it bounds any two-train/one-test
+  evaluation too.** `_build_paired_in_chunks` reads and materialises the whole frame
+  spanning `[init_date_min, init_date_max]` *before* `_choose_split`/`_split_by_year` ever
+  divides it into train/val/test. So "train on 2018, test on 2019" and "train on
+  2017+2018+2019 pooled" cost the same memory during the build - the frame spans three
+  years either way, whichever rows the split later assigns to train versus test. Measured
+  bytes/row on the downcast training frame: 99.31 (built from a real 2018-07-15 slice;
+  the schema has no object-dtype columns left after downcasting, all category/numeric, so
+  a reorder has no cheap pointer-only path either). Three years spanned = ~228.4M rows x
+  99.31 bytes ~= 22.7 GB resident for one copy of the frame alone, on a 23.7 GB box -
+  attempted 2026-09-12 (train 2017+2018, test 2019, `--init-date-min 2017-01-01
+  --init-date-max 2019-12-31 --test-year 2019`) and killed within seconds of launch once
+  this was worked out, before it could reach the point the first 2-year attempt died at.
+  Evaluating "does another year of training help" therefore needs the same structural fix
+  as pooling three years for training - an external-memory/QuantileDMatrix iterator fed
+  per chunk, not a full materialised frame - not merely a workaround for a bigger pool.
+  The fixed retry (run_20260911T201511Z) succeeded; its own peak was not measured - only
+  a >=12.7 GB reading at ~20 minutes in,
   taken before other work intervened and the process finished unwatched. Measured
   2026-09-11.
 - **A promotion string comparing two runs is only a like-for-like regression check when
