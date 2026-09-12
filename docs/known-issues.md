@@ -232,6 +232,16 @@ here rather than discovered live.
   regressor's own error, or SHAP attribution on rainfall-driven busts specifically - is
   unmeasured and would need its own before/after, not read off this number. Measured
   2026-09-13.
+- **The CNN loses to XGBoost by a wide, consistent margin, on two independent years.**
+  Same held-out cycles both models saw (run_20260912T193709Z, 2018, IMD rainfall
+  version), 3-seed CNN ensemble vs the tabular classifier: train 0.7721 vs 0.8505, val
+  0.7023 vs 0.8247, test 0.7454 vs 0.8711 - XGBoost ahead by 0.08-0.13 ROC-AUC on every
+  split. A separate one-off run on 2017 (run_20260911T163128Z, 1 seed) showed the same
+  pattern more sharply: 0.8466 vs 0.6840. Plausible cause: ~2,550 training samples against
+  43,969 parameters is little sample efficiency margin for a CNN relative to a tree
+  ensemble on effectively tabular-shaped inputs. The CNN remains a challenger per
+  CLAUDE.md, not a regression to fix - but two years now agree it is not currently
+  winning the ladder. Measured 2026-09-13.
 
 ## Data
 
