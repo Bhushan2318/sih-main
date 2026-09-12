@@ -45,6 +45,7 @@ SAMPLES = BACKEND_DIR / "data" / "samples"
 # `..._2017_m11-11.parquet`, and ingesting that as the year would train on one month
 # while reporting twelve.
 OBSERVATION_STEMS = (
+    "imd_merged_district_observations_india_{year}", # CDS + IMD gauge rainfall in precip_mm
     "era5_cds_district_observations_india_{year}",   # CDS, ERA5 native 0.25 deg grid
     "era5_district_observations_india_{year}",       # Open-Meteo, districts
     "era5_observations_india_{year}",                # city points

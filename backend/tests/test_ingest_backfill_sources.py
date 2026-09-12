@@ -31,6 +31,16 @@ def _touch(d: Path, name: str) -> Path:
     return p
 
 
+def test_imd_merged_file_wins_over_plain_cds(tmp_path):
+    """IMD replaces only precip_mm inside an already-fetched CDS file (see
+    fetch_imd_district_rainfall.py) - when it exists it is strictly better coverage for
+    the hardest variable, so it must be preferred the same way the CDS district file beat
+    Open-Meteo."""
+    _touch(tmp_path, "era5_cds_district_observations_india_2017.parquet")
+    want = _touch(tmp_path, "imd_merged_district_observations_india_2017.parquet")
+    assert ib.observation_file(2017, tmp_path) == want
+
+
 def test_cds_district_file_wins_over_open_meteo_and_city(tmp_path):
     _touch(tmp_path, "era5_observations_india_2017.parquet")
     _touch(tmp_path, "era5_district_observations_india_2017.parquet")
