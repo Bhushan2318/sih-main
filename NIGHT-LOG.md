@@ -276,3 +276,106 @@ start while someone sleeps.
 volume. That held again tonight. Nothing here was found by reading code — the truncated
 leads, the duplicate ids and the 5.8 GB chunk all came out of the actual bytes on disk.
 
+
+# Overnight log — 2026-09-12
+
+Training and ingestion moved off the 16 GB Mac onto an RTX 4060 Windows laptop, which ran
+its own Claude session over Remote Control. This Mac kept the observation fetches, served
+the hand-offs and held a verified second copy of every result.
+
+## What the night produced
+
+**Four complete observation years now exist**: 2016, 2017, 2018, 2019, each verified to
+the row before being handed over — 243,090 rows for a normal year, **243,756 for 2016**
+(leap, with 29 February present at exactly 666 rows). Forecasts are ingested for all four:
+the store holds **366/365/365/365 cycles for 2016/2017/2018/2019**. Zero refusals in any
+ingest. The 2015 and 2014 fetches are still running.
+
+**The 2017 retrain promoted**: held-out ROC-AUC **0.8466**, and it clears every baseline by
+a wide margin — Brier skill **0.3713** against **0.0130** for the best cheap baseline
+(ensemble spread). EMOS, which looked competitive on the old 17-cycle store, has *negative*
+Brier skill at district scale (**−0.0264**) while still discriminating reasonably
+(ROC-AUC 0.5973). Written up; do not assume the old ladder ordering still holds.
+
+**XGBoost beat the CNN decisively, and it is not a seed fluke.** Five seeds, identical
+held-out rows: ROC-AUC **0.8466 vs 0.7230**, per-seed spread 0.0137, so the gap is about
+nine times the noise. The CNN now trains on CUDA (added test-first, ~0.5 s/cycle against
+1.52 s on the Mac's CPU, 387 MB VRAM).
+
+**The result that matters most**: trained on 2017 alone, tested against all 365 days of
+2018 it had never seen — **ROC-AUC 0.8348** against 0.8466 on its own year. Losing ~1.4%
+relative on an entirely unseen year is evidence it learned how forecasts fail, not what
+2017's weather did.
+
+## The seasonality finding, which explains two earlier puzzles
+
+Per-month ROC-AUC, measured on both years:
+
+| | Jan | Feb | Mar | Apr | May | Jun | Jul | **Aug** | Sep | Oct | **Nov** | **Dec** |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 2017 | .865 | .863 | .838 | .843 | .842 | .843 | .814 | **.802** | .810 | .855 | **.876** | **.882** |
+| 2018 | .847 | .843 | .848 | .831 | .823 | .824 | .813 | **.741** | .805 | .829 | **.870** | **.866** |
+
+August is the hardest month in both years; November–December the easiest. `_split_by_cycle`
+always takes the chronological tail as validation, so **the standard split validates and
+tests on the model's easiest season**. That single mechanism explains both why validation
+scored above training (0.8796 vs 0.8400) and why the within-year test (0.8466) sat above
+the cross-year one (0.8348). Neither was sample-size noise. It also sharpens "one year is
+one monsoon".
+
+## Three years will not fit, and it is worse than a pooling problem
+
+Measured, not guessed: **99.31 bytes per paired row**, from a real single-cycle frame built
+through the actual pipeline functions. Three years is ~228.4M paired rows = **22.68 GB
+resident on a 23.7 GB box**, before XGBoost's own structures. It does not fit.
+
+**My own error, caught before it cost anything.** I authorised "train 2017+2018, test 2019"
+as the same proven two-year shape as the run that succeeded. It is not.
+`_build_paired_in_chunks` builds the whole frame *before* splitting, so the frame spans the
+test year too: that run would have been a three-year, 22.68 GB frame, not a two-year one,
+and would very likely have died forty minutes in. Killed within seconds of realising.
+
+The consequence is the important part: **under the current architecture, any
+two-years-train/one-year-test evaluation needs a three-year frame.** So the external-memory
+iterator is not an optimisation for pooling — it is a prerequisite for answering "does more
+data help?" at all.
+
+## Things that nearly went wrong
+
+**`gefs_reforecast_india_2019.parquet` means two different things.** It is the git-tracked
+36-city legacy fixture (30,600 rows, 36 columns) that the whole test suite depends on, and
+it is also the natural name for a district-scale 2019 year (12,154,500 rows, 37 columns).
+It was overwritten twice during `_finalise` and recovered with `git restore` both times —
+verified afterwards that no pushed commit ever touched it and the remote blob is still
+1,645,896 bytes. Renaming the fixture is the correct fix, but `.github/workflows/setup.yml`
+ingests that exact path, so it waits for a decision. Meanwhile the district file is
+`gefs_reforecast_india_2019_district.parquet`, `_finalise` now **refuses to write onto any
+path git tracks**, and `--no-csv` skips the 12 GB CSV twin nothing reads.
+
+**A bare upper bound would have silently trained on 2016.** `--init-date-max` existed;
+`--init-date-min` did not, because until tonight no excluded year shared the store. Added
+test-first. Data appearing in the store does not ask permission before a loose bound scoops
+it up.
+
+**Git Bash mangles Windows paths.** `python pull.py ... C:\Users\...` produced a nested
+junk directory. Checksums had already passed, so nothing was in doubt, but every hand-off
+now says: run it from PowerShell.
+
+## Boundary depiction and licensing — research, nothing changed
+
+`docs/boundary-review.md`. One script derives both the internal weight table and the
+published map file from GADM 4.1, and **GADM forbids redistribution without prior
+permission regardless of commercial use** — so shipping the 383,146-byte derived TopoJSON
+publicly is a licence problem today, separate from whether the depiction is correct. Using
+GADM to compute the weight table is use, not redistribution, and is unaffected. India's
+2021 guidelines removed prior approval and made compliance self-certified while keeping
+Survey of India as the standard for political boundaries; SoI lists district data at "0/-"
+but gates it to registered Government Users. Best replacement licence is GODL
+(data.gov.in), whose file could not be verified automatically; datameet is CC-BY 2.5 but
+pre-2019. **Not legal advice, and two findings need a person.**
+
+**Opinion:** the useful discipline tonight was refusing to accept a number without knowing
+which instrument produced it. A 1.5 GB "working set" and a 6,014 MB logged peak were the
+same process; a 0.8466 and a 0.8348 were different test sets; a 12.7 GB sample was not a
+peak at all. Every one of those looked like a finding until it was measured properly, and
+none of them were.
