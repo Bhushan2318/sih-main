@@ -379,3 +379,31 @@ which instrument produced it. A 1.5 GB "working set" and a 6,014 MB logged peak 
 same process; a 0.8466 and a 0.8348 were different test sets; a 12.7 GB sample was not a
 peak at all. Every one of those looked like a finding until it was measured properly, and
 none of them were.
+
+## Added after the above was written — the second year-pair landed
+
+`run_20260912T005532Z`: trained on 2018 (301 train, 64 validation cycles), tested on **all
+365 days of 2019**, n=2,400,930. **ROC-AUC 0.8327.** Promotion string, verbatim:
+*"promoted: held-out ROC-AUC 0.8327, 0.0021 below the previous run run_20260911T201511Z
+(0.8348)"*. 152,280,812 paired rows, 94.9 minutes, SHAP clean on the classifier and all
+eight regressors.
+
+**This is the night's headline.** Two independent year-pairs — 2017→2018 at 0.8348 and
+2018→2019 at 0.8327 — sit **0.0021 apart**. The cross-year generalisation gap is therefore
+a property of the model and the problem, not an accident of which pair was chosen. That is
+the direct answer to the question that prompted the multi-year work.
+
+The seasonality mechanism showed up a third time, unprompted: validation 0.8678 against
+training 0.8498, because validation is again the chronological tail — Nov–Dec, the easy
+season.
+
+Two corrections belong with it. **Peak memory for this run was not measured**, and was
+reported as absent rather than estimated: `train_pipeline` has no internal peak logging
+(that belongs to the ingest script), and no sampler was attached. `_handoff_4060/run_measured.py`
+exists for exactly this and should wrap the next run of that scale. And **my own
+known-issues entry on EMOS is now wrong**: I wrote that EMOS "flips negative at district
+scale" (−0.0264) on the strength of a single run; this run puts EMOS at **+0.0653** at the
+same scale. The honest statement is that EMOS is unstable across splits and years —
+negative on the Nov–Dec 2017 within-year test, positive on the full-2019 cross-year test —
+not that district scale sinks it. Generalising a ladder position from one split was the
+same mistake in miniature that the seasonality finding exposed in the headline numbers.
