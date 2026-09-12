@@ -100,15 +100,22 @@ here rather than discovered live.
   request loses its final day unless it also pulls the first hour of the month after. The
   fetch does, and drops the spillover.
 
-- **EMOS's standing on the baseline ladder flips with scale.** At the earlier
-  17-cycle store it placed favourably; at district scale (2017 full year, 337,950
-  held-out events, run_20260911T163128Z) it has the best discrimination of the
-  baselines (ROC-AUC 0.5973) but a *negative* Brier skill score (-0.0264) - worse
-  than predicting climatology. The cheapest baseline (ensemble spread alone) beats
-  it on Brier (BSS 0.0130). Sanket's classifier clears every baseline by a wide
-  margin regardless (BSS 0.3713, ROC-AUC 0.8466). Re-check EMOS's ranking after any
-  future change in scale; do not assume the 17-cycle ordering still holds.
-  Measured 2026-09-11.
+- **EMOS's ladder position is unstable - never carry it across runs.** This entry
+  first claimed EMOS "flips negative at district scale", generalised from a single
+  run. A second run at the same scale contradicted it, so the claim is now narrower:
+
+  | scored on | EMOS BSS | EMOS ROC-AUC | Sanket |
+  |---|---|---|---|
+  | Nov-Dec 2017, within-year, 337,950 events (`run_20260911T163128Z`) | **-0.0264** | 0.5973 | BSS 0.3713, AUC 0.8466 |
+  | all of 2019, cross-year, 2,400,930 events (`run_20260912T005532Z`) | **+0.0653** | 0.6431 | BSS 0.3288, AUC 0.8327 |
+
+  Negative in one, positive in the other, at the same district scale. The two tests
+  differ in *both* the split type and the year, so neither can be credited as the
+  cause - claiming either would repeat the very mistake this entry is correcting.
+  What is safe to say: EMOS moves between splits; the cheapest baseline (ensemble
+  spread alone) beat it on Brier in the first (BSS 0.0130); and Sanket's classifier
+  clears every baseline in both by a wide margin. Re-score the whole ladder per run.
+  Measured 2026-09-11 and 2026-09-12.
 
 - **A cycle too incomplete to publish is refused, not partially ingested.** A short
   rainfall *sum* is roughly half the real accumulation, and rainfall drives most busts, so
