@@ -214,6 +214,24 @@ here rather than discovered live.
   job rather than refusing the one cycle. Fixed 2026-09-12 to catch it the same way. Any
   other year may hit the same pattern; it will now cost one refused cycle, not a failed
   month.
+- **Swapping IMD gauge rainfall in for ERA5 did not move the pooled classifier ROC-AUC.**
+  `scripts/fetch_imd_district_rainfall.py` replaces precip_mm with IMD's gauge-based
+  product for 2016-2019 (mean |IMD - ERA5| = 3.3-4.0 mm/day, real and verified against the
+  live archive). A model trained on 2018 with IMD rainfall, scored on 2019 with IMD
+  rainfall (run_20260912T193709Z): 0.8328. The original all-ERA5 pairing
+  (run_20260912T005532Z): 0.8327. Indistinguishable. This is not the fetch or the merge
+  failing quietly - the store was spot-checked row for row against the IMD source file and
+  matches exactly - it is that the bust label is defined self-referentially: a variable
+  busts when its error exceeds *that variable's own* p90, computed on training data.
+  Swapping the ground truth moves the regressor's error, the p90 threshold, and the label
+  together, so a genuinely more accurate rainfall product does not automatically make the
+  classification problem more separable - it can relabel which days bust without changing
+  how separable busts are from non-busts. "More accurate ground truth" and "an easier
+  classification problem" are different claims; this measured that they can diverge.
+  Whether IMD rainfall improves anything downstream of the pooled AUC - the rainfall
+  regressor's own error, or SHAP attribution on rainfall-driven busts specifically - is
+  unmeasured and would need its own before/after, not read off this number. Measured
+  2026-09-13.
 
 ## Data
 
