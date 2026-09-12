@@ -88,11 +88,15 @@ here rather than discovered live.
   frame), not to hunt for the next copy to delete.
 
   **This is not only a "training on three years" limit - it bounds any two-train/one-test
-  evaluation too.** `_build_paired_in_chunks` reads and materialises the whole frame
-  spanning `[init_date_min, init_date_max]` *before* `_choose_split`/`_split_by_year` ever
-  divides it into train/val/test. So "train on 2018, test on 2019" and "train on
-  2017+2018+2019 pooled" cost the same memory during the build - the frame spans three
-  years either way, whichever rows the split later assigns to train versus test. Measured
+  evaluation too, once the training window is itself two years.** `_build_paired_in_chunks`
+  reads and materialises the whole frame spanning `[init_date_min, init_date_max]`
+  *before* `_choose_split`/`_split_by_year` ever divides it into train/val/test. So "train
+  on 2017+2018, test on 2019" and "train on 2017+2018+2019 pooled" cost the same memory
+  during the build - both span three years, whichever rows the split later assigns to
+  train versus test. "Train on 2018, test on 2019" is a different case and does fit: that
+  frame spans only two years (~152.6M rows, ~15.2 GB), the same proven scale as the
+  successful 2017+2018 run - which is exactly why it was chosen once the three-year
+  version was caught and killed. Measured
   bytes/row on the downcast training frame: 99.31 (built from a real 2018-07-15 slice;
   the schema has no object-dtype columns left after downcasting, all category/numeric, so
   a reorder has no cheap pointer-only path either). Three years spanned = ~228.4M rows x
