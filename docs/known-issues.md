@@ -204,6 +204,16 @@ here rather than discovered live.
   with `--init-date-min 2017-01-01 --init-date-max 2018-12-31 --dry-run` (2 years, fits),
   then score the saved run separately with `score_run_on_year.py --year 2019` (1 year,
   fits) - never more than 2 years resident in either process. Measured 2026-09-12.
+- **NOAA's public bucket has at least one file where the `.idx` sidecar is live but the
+  `.grib2` body 404s.** `soilw_bgrnd_2008112100_p01.grib2.idx` returns 200 and lists real
+  messages; the body 404s after 5 retries, while `p02`-`p04` the same cycle and `p01` the
+  day before/after are all fine - a genuine gap in the archive, not a transient fault. The
+  fetch script had a path for a missing idx (treat the file as absent, let
+  `cycle_is_complete` refuse just that cycle) but not for a missing body despite a live
+  idx, which propagated out of `pull_one_file` uncaught and crashed the whole month's CI
+  job rather than refusing the one cycle. Fixed 2026-09-12 to catch it the same way. Any
+  other year may hit the same pattern; it will now cost one refused cycle, not a failed
+  month.
 
 ## Data
 
