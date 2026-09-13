@@ -123,7 +123,18 @@ def pooled_stats(cached_paths: dict, train_years: list, train_cycles: set):
         df = df[df["init_date"].isin(train_cycles)]
         if df.empty:
             continue
-        thin_frames.append(df[_THIN_STATS_COLUMNS])
+        thin = df[_THIN_STATS_COLUMNS].copy()
+        # Cast per year, on the smaller frame, not after concatenation. Real crash
+        # 2026-09-14: two years' region_id/season categoricals whose category sets or
+        # order did not align exactly (e.g. 2019's, cached separately from 2016/2017's)
+        # made pd.concat silently fall back to plain object dtype for the combined
+        # column, and compute_historical_bust_frequency's own `.astype(str)` then had to
+        # materialise a fresh ~190M-row string array in one shot - 20.5 GiB, over the
+        # ceiling. Every year's own category set converts to str safely on its own; the
+        # concat below then only ever joins already-plain string columns.
+        thin["region_id"] = thin["region_id"].astype(str)
+        thin["season"] = thin["season"].astype(str)
+        thin_frames.append(thin)
         event_frames.append(_event_mean_error(df))
     if not thin_frames:
         return {}, {}, {}
@@ -399,8 +410,16 @@ def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
     # alongside everything else.
     val_years = sorted({y for y in train_years
                         for c in val_c if pd.Timestamp(c).year == y}) or train_years
-    va = pd.concat([pd.read_parquet(cached[y], columns=sorted(needed)) for y in val_years],
-                  ignore_index=True)
+    _va_parts = []
+    for y in val_years:
+        part = pd.read_parquet(cached[y], columns=sorted(needed))
+        # Cast per year before concatenating - see pooled_stats for why: categoricals
+        # from different cached years are not guaranteed to share category sets/order,
+        # and pd.concat silently degrades a mismatch to plain object dtype.
+        part["region_id"] = part["region_id"].astype(str)
+        part["season"] = part["season"].astype(str)
+        _va_parts.append(part)
+    va = pd.concat(_va_parts, ignore_index=True)
     va = va[va["init_date"].isin(val_c)]
     if not va.empty:
         key = list(zip(va["region_id"].astype(str), va["season"].astype(str)))
