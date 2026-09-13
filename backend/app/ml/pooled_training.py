@@ -206,9 +206,24 @@ def _booster_to_sklearn(booster: "xgb.Booster", cls) -> "xgb.XGBModel":
     return model
 
 
+def _xgb_train_params(device: str) -> dict:
+    """`reg_mod.XGB_PARAMS`, minus the sklearn-only keys `xgb.train`'s Learning API does
+    not take, plus the device to train on. `device="cuda"` needs no other change: a
+    `QuantileDMatrix` built from a `DataIter` supports GPU training directly, verified
+    against a real fit before this was wired in here - the batches XGBoost pulls off the
+    iterator stay ordinary pandas/numpy on the host side either way."""
+    params = {k: v for k, v in reg_mod.XGB_PARAMS.items()
+             if k not in ("n_estimators", "enable_categorical", "n_jobs", "random_state")}
+    params["nthread"] = 0
+    params["seed"] = reg_mod.XGB_PARAMS["random_state"]
+    params["device"] = device
+    return params
+
+
 def train_variable_regressor_pooled(cached_paths: dict, train_years: list, variable: str,
                                     train_cycles: set, val_df: "pd.DataFrame",
-                                    hbf: dict, cache_dir: Path) -> "reg_mod.RegressorArtifact | None":
+                                    hbf: dict, cache_dir: Path,
+                                    device: str = "cpu") -> "reg_mod.RegressorArtifact | None":
     """The pooled-training equivalent of `regressors.train_variable_regressor`: same
     params, same features, fit via an external-memory `QuantileDMatrix` instead of a
     single in-memory `.fit()` so `train_years` is never all resident at once."""
@@ -218,10 +233,7 @@ def train_variable_regressor_pooled(cached_paths: dict, train_years: list, varia
     if dtrain.num_row() < reg_mod.MIN_ROWS:
         return None
 
-    params = {k: v for k, v in reg_mod.XGB_PARAMS.items()
-             if k not in ("n_estimators", "enable_categorical", "n_jobs", "random_state")}
-    params["nthread"] = 0
-    params["seed"] = reg_mod.XGB_PARAMS["random_state"]
+    params = _xgb_train_params(device)
     booster = xgb.train(params, dtrain, num_boost_round=reg_mod.XGB_PARAMS["n_estimators"])
     model = _booster_to_sklearn(booster, xgb.XGBRegressor)
 
@@ -252,7 +264,8 @@ def assign_folds(train_cycles: set, n_splits: int = 3) -> dict:
 
 
 def oof_fold_models(cached_paths: dict, train_years: list, variable: str,
-                    train_cycles: set, hbf: dict, fold_of: dict, cache_dir: Path):
+                    train_cycles: set, hbf: dict, fold_of: dict, cache_dir: Path,
+                    device: str = "cpu"):
     """fold id -> (fitted, sklearn-wrapped booster, feature columns), each excluding its
     own fold's cycles. Used only to compute out-of-fold predictions for the training
     events the classifier trains on - never saved as an artifact."""
@@ -267,10 +280,7 @@ def oof_fold_models(cached_paths: dict, train_years: list, variable: str,
         dtrain = xgb.QuantileDMatrix(it, enable_categorical=True)
         if dtrain.num_row() < reg_mod.MIN_ROWS:
             continue
-        params = {k: v for k, v in reg_mod.XGB_PARAMS.items()
-                 if k not in ("n_estimators", "enable_categorical", "n_jobs", "random_state")}
-        params["nthread"] = 0
-        params["seed"] = reg_mod.XGB_PARAMS["random_state"]
+        params = _xgb_train_params(device)
         booster = xgb.train(params, dtrain, num_boost_round=reg_mod.XGB_PARAMS["n_estimators"])
         models[fold] = (_booster_to_sklearn(booster, xgb.XGBRegressor), cols)
     return models
@@ -396,26 +406,61 @@ def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
         key = list(zip(va["region_id"].astype(str), va["season"].astype(str)))
         va["historical_bust_frequency_region_season"] = [hbf.get(k, np.nan) for k in key]
 
-    artifacts: dict = {}
-    val_pred = pd.Series(np.nan, index=va.index, dtype=float)
     variables = sorted(pd.read_parquet(cached[train_years[0]], columns=["variable"])
                        ["variable"].unique())
-
     fold_of = assign_folds(train_c)
+
+    # Split the variables across a GPU thread and a CPU thread, both running against the
+    # same `va` and `hbf`. XGBoost's training call is a C++ extension that releases the
+    # GIL while it runs, so this is genuine concurrent use of both the GPU and the CPU
+    # cores, not two halves of one resource taking turns - verified with a real GPU fit
+    # via QuantileDMatrix+DataIter before this was wired in. Each half returns its own
+    # partial results; the halves touch disjoint variables and disjoint rows of `va` (via
+    # vmask), so merging afterward rather than writing into shared dicts/Series from both
+    # threads avoids relying on pandas' assignment being thread-safe.
+    def _train_group(var_subset: list, device: str):
+        g_artifacts, g_skipped, g_fold_models = {}, {}, {}
+        g_val_pred = pd.Series(np.nan, index=va.index, dtype=float)
+        for var in var_subset:
+            art = train_variable_regressor_pooled(
+                cached, train_years, var, train_c, va, hbf, cache_dir, device=device)
+            if art is None:
+                g_skipped[var] = "regressor training returned None or too few rows"
+                continue
+            g_artifacts[var] = art
+            vmask = va["variable"] == var
+            if vmask.any():
+                g_val_pred.loc[vmask] = reg_mod.predict_variable_error(art, va[vmask])
+            g_fold_models[var] = oof_fold_models(
+                cached, train_years, var, train_c, hbf, fold_of, cache_dir, device=device)
+        return g_artifacts, g_skipped, g_val_pred, g_fold_models
+
+    half = max(1, len(variables) // 2)
+    gpu_vars, cpu_vars = variables[:half], variables[half:]
+
+    import torch
+    gpu_available = torch.cuda.is_available()
+
+    artifacts: dict = {}
+    val_pred = pd.Series(np.nan, index=va.index, dtype=float)
     fold_models: dict = {}
-    for var in variables:
-        art = train_variable_regressor_pooled(
-            cached, train_years, var, train_c, va, hbf, cache_dir)
-        if art is None:
-            report.skipped_variables[var] = "regressor training returned None or too few rows"
-            continue
-        artifacts[var] = art
-        report.regressor_metrics[var] = art.metrics
-        vmask = va["variable"] == var
-        if vmask.any():
-            val_pred.loc[vmask] = reg_mod.predict_variable_error(art, va[vmask])
-        fold_models[var] = oof_fold_models(
-            cached, train_years, var, train_c, hbf, fold_of, cache_dir)
+    if gpu_available and cpu_vars:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=2) as ex:
+            fut_gpu = ex.submit(_train_group, gpu_vars, "cuda")
+            fut_cpu = ex.submit(_train_group, cpu_vars, "cpu")
+            results = [fut_gpu.result(), fut_cpu.result()]
+    else:
+        # No GPU (or nothing left for a second group) - everything on CPU, one group.
+        results = [_train_group(variables, "cpu")]
+
+    for g_artifacts, g_skipped, g_val_pred, g_fold_models in results:
+        artifacts.update(g_artifacts)
+        report.skipped_variables.update(g_skipped)
+        val_pred = val_pred.combine_first(g_val_pred)
+        fold_models.update(g_fold_models)
+        for var, art in g_artifacts.items():
+            report.regressor_metrics[var] = art.metrics
 
     report.modelled_variables = sorted(artifacts)
     if not artifacts:
