@@ -179,7 +179,11 @@ class _YearDataIter(xgb.DataIter):
         if df.empty:
             return 1
         key = list(zip(df["region_id"].astype(str), df["season"].astype(str)))
-        df = df.copy()
+        # No .copy() before this assignment: boolean-mask filtering above already
+        # produced a new frame, and an extra .copy() here forces pandas to consolidate
+        # its blocks into one contiguous array per dtype - a second full-sized allocation
+        # on top of the filtered frame already in memory. Measured real crash 2026-09-13,
+        # ArrayMemoryError on a single cached year's own frame.
         df["historical_bust_frequency_region_season"] = [self._hbf.get(k, np.nan) for k in key]
         X = reg_mod._prep_X(df, self._feature_cols)
         input_data(data=X, label=df["abs_error"].to_numpy())
@@ -230,8 +234,7 @@ def train_variable_regressor_pooled(cached_paths: dict, train_years: list, varia
     metrics = {}
     if len(va):
         key = list(zip(va["region_id"].astype(str), va["season"].astype(str)))
-        va = va.copy()
-        va["historical_bust_frequency_region_season"] = [hbf.get(k, np.nan) for k in key]
+        va = va.assign(historical_bust_frequency_region_season=[hbf.get(k, np.nan) for k in key])
         Xva = reg_mod._prep_X(va, cols)
         if len(va) >= 5:
             metrics["val"] = reg_mod._evaluate(va["abs_error"], model.predict(Xva))
@@ -288,9 +291,12 @@ def build_pooled_train_events(cached_paths: dict, train_years: list, train_cycle
         if df.empty:
             continue
         key = list(zip(df["region_id"].astype(str), df["season"].astype(str)))
-        df = df.copy()
+        # No .copy() before these assignments - see _YearDataIter.next() for why this
+        # exact line is where the real 2026-09-13 crash happened: an extra .copy() here
+        # forces pandas to consolidate a freshly-filtered, still nearly-year-sized frame's
+        # blocks into one contiguous array per dtype, a second full allocation on top of
+        # the one already resident.
         df["historical_bust_frequency_region_season"] = [hbf.get(k, np.nan) for k in key]
-
         df["_fold"] = df["init_date"].map(fold_of)
         oof = pd.Series(np.nan, index=df.index, dtype=float)
         for variable in sorted(df["variable"].unique()):
@@ -346,13 +352,26 @@ def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
         return report
 
     # Validation and test are each a single bounded slice - the pool's own chronological
-    # tail, and one whole held-out year - so both are read fully into memory once, exactly
-    # as full_retrain already does for them.
+    # tail, and one whole held-out year - so both are read into memory once, exactly as
+    # full_retrain already does for them. `test_c` is the WHOLE test year (that is the
+    # point of holding a year out entirely), so filtering rows does not shrink `te` the
+    # way it shrinks `va` - reading only the columns anything downstream actually touches
+    # is what keeps it from being a second full-year frame resident for the rest of this
+    # function, on top of whichever training year build_pooled_train_events is streaming
+    # at the same time. Real crash 2026-09-13: te (2019, full year) plus one training
+    # year plus one redundant .copy() exceeded 23.7 GB; the .copy() is fixed above, this
+    # narrows the other big contributor.
+    needed = set(_feature_columns_for(cached, train_years)) | set(fe.EVENT_KEYS) | {
+        "variable", "forecast_value", "observed_value", "ensemble_spread",
+        "abs_error", "region_id", "season"}
+    needed.discard("historical_bust_frequency_region_season")  # attached below, not cached
+
     val_years = sorted({y for y in train_years
                         for c in val_c if pd.Timestamp(c).year == y}) or train_years
-    va = pd.concat([pd.read_parquet(cached[y]) for y in val_years], ignore_index=True)
+    va = pd.concat([pd.read_parquet(cached[y], columns=sorted(needed)) for y in val_years],
+                  ignore_index=True)
     va = va[va["init_date"].isin(val_c)]
-    te = pd.read_parquet(cached[test_year])
+    te = pd.read_parquet(cached[test_year], columns=sorted(needed))
     te = te[te["init_date"].isin(test_c)]
     for frame in (va, te):
         if frame.empty:
