@@ -38,6 +38,7 @@ A regressor trained via `xgb.train()` on a `QuantileDMatrix` is a `Booster`, not
 """
 from __future__ import annotations
 
+import gc
 import tempfile
 from pathlib import Path
 
@@ -250,6 +251,8 @@ def train_variable_regressor_pooled(cached_paths: dict, train_years: list, varia
 
     va = val_df[val_df["variable"] == variable]
     n_train = int(dtrain.num_row())
+    del it, dtrain, booster  # see oof_fold_models for why: real fragmentation crashes
+    gc.collect()
     # No train-split metric here, unlike the single-frame path: recomputing it would mean
     # a second full external-memory pass over every pooled year just to score rows the
     # model already fit on. Held-out val/test - what the promotion gate actually reads -
@@ -290,10 +293,20 @@ def oof_fold_models(cached_paths: dict, train_years: list, variable: str,
         it = _YearDataIter(cached_paths, train_years, variable, fold_cycles, cols, hbf, cache_dir)
         dtrain = xgb.QuantileDMatrix(it, enable_categorical=True)
         if dtrain.num_row() < reg_mod.MIN_ROWS:
+            del it, dtrain
+            gc.collect()
             continue
         params = _xgb_train_params(device)
         booster = xgb.train(params, dtrain, num_boost_round=reg_mod.XGB_PARAMS["n_estimators"])
         models[fold] = (_booster_to_sklearn(booster, xgb.XGBRegressor), cols)
+        # Explicit cleanup, not left to Python's own GC timing: real repeated crashes
+        # 2026-09-14, a small (~900 MB) pyarrow malloc failing after ~1.5-2 hours of a
+        # process that had been running fine - the signature of fragmentation, not a
+        # leak, from many short-lived DataIter/QuantileDMatrix/Booster objects (each
+        # wrapping native pyarrow/XGBoost C++ allocations Python's cyclic GC does not
+        # prioritise) accumulating across dozens of fits without being freed promptly.
+        del it, dtrain, booster
+        gc.collect()
     return models
 
 
