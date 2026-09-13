@@ -242,6 +242,33 @@ here rather than discovered live.
   ensemble on effectively tabular-shaped inputs. The CNN remains a challenger per
   CLAUDE.md, not a regression to fix - but two years now agree it is not currently
   winning the ladder. Measured 2026-09-13.
+- **Pooling three years beats the best two-year pool, not just single years.**
+  `scripts/train_pooled.py` (app.ml.pooled_training) trains any number of years through
+  an XGBoost external-memory `DataIter`, never materialising more than one year at once -
+  built after three real crashes on this exact code path (see the entries above and
+  below) finding every remaining spot a redundant allocation could still exceed 23.7 GB.
+  Train-2016+2017+2018/test-2019 (run_20260913T162755Z): held-out ROC-AUC 0.8487, cross-
+  checked with `score_run_on_year.py` independently of the training run's own number.
+  Beats the best two-year pool (2017+2018, 0.8418) by 0.0069, and every single-year model
+  by 0.016-0.026. More data keeps helping past two years, at least up to three - whether
+  it keeps helping past three is unmeasured. Training ran in 7,511 s (2h5m) by splitting
+  the 8 variables across a GPU thread and a CPU thread (XGBoost's `train()` releases the
+  GIL, so this is genuine concurrent hardware use, not time-slicing) - measured 2.2x
+  faster per fit on GPU before wiring it in, and this run finished faster than the
+  CPU-only attempts even reached their crash point. Measured 2026-09-14.
+- **Getting here cost three real OOM crashes on the identical code path, each a different
+  allocation at the same ceiling.** In order: (1) a redundant `.copy()` after a boolean-
+  mask filter, in the new event-building pass, forcing pandas to consolidate blocks into
+  a second full-sized contiguous array; (2) an equally expensive `.drop(columns=...)`
+  a few lines later, doing the same block-reindex internally; (3) `pv.build_event_frame`'s
+  own internal `.copy()` (shared, unmodified code, safe for a single year alone) having
+  nowhere to allocate because the held-out test year was staying resident for the whole
+  function on top of whichever training year was being streamed. Each was found only by
+  running at real multi-year scale - none reproduced in the unit tests, which use frames
+  too small for a block-consolidation copy to be expensive. Fixed by removing the first
+  two outright and deferring the test year's load until after the event-building pass
+  that needed the headroom. Cost: roughly 9 hours of wall-clock across the failed
+  attempts before the working run above. Measured 2026-09-13/14.
 
 ## Data
 
