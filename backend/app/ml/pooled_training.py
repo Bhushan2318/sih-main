@@ -379,22 +379,25 @@ def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
         "abs_error", "region_id", "season"}
     needed.discard("historical_bust_frequency_region_season")  # attached below, not cached
 
+    # `te` (the whole held-out year) is deliberately NOT loaded yet. Real crash
+    # 2026-09-13: with te resident for the rest of this function, build_event_frame's own
+    # internal `paired.copy()` on the training year build_pooled_train_events is
+    # streaming had nowhere left to allocate, even after narrowing columns and removing
+    # every redundant .copy()/.drop() this file added. Loading te only after event_tr is
+    # built frees exactly that headroom for the step that needs it; te's own
+    # predict-and-build-event work below is no more expensive alone than it was
+    # alongside everything else.
     val_years = sorted({y for y in train_years
                         for c in val_c if pd.Timestamp(c).year == y}) or train_years
     va = pd.concat([pd.read_parquet(cached[y], columns=sorted(needed)) for y in val_years],
                   ignore_index=True)
     va = va[va["init_date"].isin(val_c)]
-    te = pd.read_parquet(cached[test_year], columns=sorted(needed))
-    te = te[te["init_date"].isin(test_c)]
-    for frame in (va, te):
-        if frame.empty:
-            continue
-        key = list(zip(frame["region_id"].astype(str), frame["season"].astype(str)))
-        frame["historical_bust_frequency_region_season"] = [hbf.get(k, np.nan) for k in key]
+    if not va.empty:
+        key = list(zip(va["region_id"].astype(str), va["season"].astype(str)))
+        va["historical_bust_frequency_region_season"] = [hbf.get(k, np.nan) for k in key]
 
     artifacts: dict = {}
     val_pred = pd.Series(np.nan, index=va.index, dtype=float)
-    test_pred = pd.Series(np.nan, index=te.index, dtype=float)
     variables = sorted(pd.read_parquet(cached[train_years[0]], columns=["variable"])
                        ["variable"].unique())
 
@@ -411,12 +414,6 @@ def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
         vmask = va["variable"] == var
         if vmask.any():
             val_pred.loc[vmask] = reg_mod.predict_variable_error(art, va[vmask])
-        tmask = te["variable"] == var
-        if tmask.any():
-            test_pred.loc[tmask] = reg_mod.predict_variable_error(art, te[tmask])
-            if tmask.sum() >= 5:
-                art.metrics["test"] = reg_mod._evaluate(
-                    te.loc[tmask, "abs_error"], test_pred[tmask])
         fold_models[var] = oof_fold_models(
             cached, train_years, var, train_c, hbf, fold_of, cache_dir)
 
@@ -429,7 +426,25 @@ def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
     event_tr = build_pooled_train_events(
         cached, train_years, train_c, hbf, p90_error, bust_threshold, fold_models, fold_of,
         columns=needed)
+    del fold_models  # only needed for event_tr's out-of-fold predictions, above
     event_va = pv.build_event_frame(va, val_pred, p90_error, bust_threshold, hbf)
+
+    # Now safe to load: event_tr is built, fold_models is gone, and only the small saved
+    # regressor artifacts (not the pooled training data) are still needed to score te.
+    te = pd.read_parquet(cached[test_year], columns=sorted(needed))
+    te = te[te["init_date"].isin(test_c)]
+    test_pred = pd.Series(np.nan, index=te.index, dtype=float)
+    if not te.empty:
+        key = list(zip(te["region_id"].astype(str), te["season"].astype(str)))
+        te["historical_bust_frequency_region_season"] = [hbf.get(k, np.nan) for k in key]
+        for var, art in artifacts.items():
+            tmask = te["variable"] == var
+            if not tmask.any():
+                continue
+            test_pred.loc[tmask] = reg_mod.predict_variable_error(art, te[tmask])
+            if tmask.sum() >= 5:
+                art.metrics["test"] = reg_mod._evaluate(
+                    te.loc[tmask, "abs_error"], test_pred[tmask])
     event_te = (pv.build_event_frame(te, test_pred, p90_error, bust_threshold, hbf)
                if not te.empty else pd.DataFrame())
 
