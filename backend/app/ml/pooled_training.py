@@ -278,15 +278,23 @@ def oof_fold_models(cached_paths: dict, train_years: list, variable: str,
 
 def build_pooled_train_events(cached_paths: dict, train_years: list, train_cycles: set,
                               hbf: dict, p90_error: dict, bust_threshold: dict,
-                              fold_models: dict, fold_of: dict) -> "pd.DataFrame":
+                              fold_models: dict, fold_of: dict,
+                              columns: "set | None" = None) -> "pd.DataFrame":
     """`event_tr`, assembled one cached year at a time: load that year's train rows,
     attach out-of-fold predictions via the fold each row's cycle belongs to, reduce to
     event grain, discard the year, move on. Concatenating the (small) per-year event
     frames afterward is exactly `pv.build_event_frame` on the full multi-year `tr` would
-    produce, since EVENT_KEYS never crosses a year boundary."""
+    produce, since EVENT_KEYS never crosses a year boundary.
+
+    `columns` should be the same narrowed set `full_retrain_pooled` reads `va`/`te` with:
+    `build_event_frame` (unchanged, shared with the single-frame path) does its own
+    `paired.copy()` internally, and that is only affordable per year, not per pooled
+    train set, if `df` going in is narrow - the full ~90-column frame made this crash for
+    real on 2026-09-13, one call after the `.copy()`/`.drop()` calls in this file were
+    already fixed."""
     frames = []
     for year in train_years:
-        df = pd.read_parquet(cached_paths[year])
+        df = pd.read_parquet(cached_paths[year], columns=sorted(columns) if columns else None)
         df = df[df["init_date"].isin(train_cycles)]
         if df.empty:
             continue
@@ -309,7 +317,12 @@ def build_pooled_train_events(cached_paths: dict, train_years: list, train_cycle
                 if not fmask.any():
                     continue
                 oof.loc[fmask] = model.predict(reg_mod._prep_X(df.loc[fmask], cols))
-        df = df.drop(columns=["_fold"])
+        # No .drop(columns=["_fold"]) here: real crash 2026-09-13, ArrayMemoryError on a
+        # full year's frame. .drop() reindexes every remaining column's block through the
+        # same take_nd path .copy() does - just as expensive on a frame this size, for a
+        # column build_event_frame below never looks at (it names its own group keys and
+        # aggregation columns explicitly, so an extra unused column costs one int64
+        # column's worth of memory, not a second full-frame allocation).
         frames.append(pv.build_event_frame(df, oof, p90_error, bust_threshold, hbf))
         del df
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
@@ -414,7 +427,8 @@ def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
         return report
 
     event_tr = build_pooled_train_events(
-        cached, train_years, train_c, hbf, p90_error, bust_threshold, fold_models, fold_of)
+        cached, train_years, train_c, hbf, p90_error, bust_threshold, fold_models, fold_of,
+        columns=needed)
     event_va = pv.build_event_frame(va, val_pred, p90_error, bust_threshold, hbf)
     event_te = (pv.build_event_frame(te, test_pred, p90_error, bust_threshold, hbf)
                if not te.empty else pd.DataFrame())
