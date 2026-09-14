@@ -327,6 +327,8 @@ def build_pooled_train_events(cached_paths: dict, train_years: list, train_cycle
     real on 2026-09-13, one call after the `.copy()`/`.drop()` calls in this file were
     already fixed."""
     frames = []
+    gc.collect()  # reclaim whatever the training loop above left fragmented, before
+                  # this loop's own first big read competes with it for free space
     for year in train_years:
         df = pd.read_parquet(cached_paths[year], columns=sorted(columns) if columns else None)
         df = df[df["init_date"].isin(train_cycles)]
@@ -358,7 +360,8 @@ def build_pooled_train_events(cached_paths: dict, train_years: list, train_cycle
         # aggregation columns explicitly, so an extra unused column costs one int64
         # column's worth of memory, not a second full-frame allocation).
         frames.append(pv.build_event_frame(df, oof, p90_error, bust_threshold, hbf))
-        del df
+        del df, oof
+        gc.collect()
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
 
@@ -504,10 +507,12 @@ def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
         cached, train_years, train_c, hbf, p90_error, bust_threshold, fold_models, fold_of,
         columns=needed)
     del fold_models  # only needed for event_tr's out-of-fold predictions, above
+    gc.collect()
     event_va = pv.build_event_frame(va, val_pred, p90_error, bust_threshold, hbf)
 
     # Now safe to load: event_tr is built, fold_models is gone, and only the small saved
     # regressor artifacts (not the pooled training data) are still needed to score te.
+    gc.collect()
     te = pd.read_parquet(cached[test_year], columns=sorted(needed))
     te = te[te["init_date"].isin(test_c)]
     test_pred = pd.Series(np.nan, index=te.index, dtype=float)
