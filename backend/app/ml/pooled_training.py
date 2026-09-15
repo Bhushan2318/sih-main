@@ -478,6 +478,25 @@ def _run_variable_subprocess(cached: dict, train_years: list, variable: str,
     return result
 
 
+_EVENT_FRAME_WORKER_SCRIPT = (Path(__file__).resolve().parents[2] / "scripts"
+                              / "_build_event_frame_worker.py")
+
+
+def _run_event_frame_subprocess(paired: "pd.DataFrame", pred_err: "pd.Series",
+                                p90_error: dict, bust_threshold: dict,
+                                hbf: dict) -> "pd.DataFrame":
+    """`pv.build_event_frame`, in a fresh process - see _build_event_frame_worker.py's
+    docstring: real incident 2026-09-16 (v15), the parent process grew to ~35 GB private
+    memory during training, before this call was even reached; isolating it closes the
+    one remaining un-isolated build_event_frame call regardless of the exact mechanism."""
+    job = {"paired": paired, "pred_err": pred_err, "p90_error": p90_error,
+          "bust_threshold": bust_threshold, "hbf": hbf}
+    result = _run_worker_subprocess(_EVENT_FRAME_WORKER_SCRIPT, job)
+    if result.get("error"):
+        raise RuntimeError(f"event-frame worker failed:\n{result['error']}")
+    return result["event_frame"]
+
+
 _TEST_EVENTS_WORKER_SCRIPT = (Path(__file__).resolve().parents[2] / "scripts"
                               / "_build_pooled_test_events_worker.py")
 
@@ -571,6 +590,8 @@ def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
         part["season"] = part["season"].astype(str)
         _va_parts.append(part)
     va = pd.concat(_va_parts, ignore_index=True)
+    del _va_parts
+    gc.collect()
     va = va[va["init_date"].isin(val_c)]
     if not va.empty:
         va = attach_hbf_column(va, hbf)
@@ -607,6 +628,13 @@ def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
             if result["val_pred"] is not None:
                 g_val_pred.loc[result["val_pred"].index] = result["val_pred"]
             g_fold_models[var] = result["fold_models"]
+            # Real incident 2026-09-16 (v15): the parent grew to ~35 GB private memory
+            # during this exact loop. `result` (a freshly-unpickled dict, potentially
+            # holding a large val_pred Series) going out of scope should be enough for
+            # Python's own GC, but every other per-fit boundary in this file collects
+            # explicitly rather than trusting GC timing under this much subprocess churn.
+            del result
+            gc.collect()
         return g_artifacts, g_skipped, g_val_pred, g_fold_models
 
     half = max(1, len(variables) // 2)
@@ -647,7 +675,9 @@ def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
         columns=needed)
     del fold_models  # only needed for event_tr's out-of-fold predictions, above
     gc.collect()
-    event_va = pv.build_event_frame(va, val_pred, p90_error, bust_threshold, hbf)
+    event_va = _run_event_frame_subprocess(va, val_pred, p90_error, bust_threshold, hbf)
+    del va, val_pred
+    gc.collect()
 
     # Now safe to build: event_tr is built, fold_models is gone, and only the small
     # saved regressor artifacts (not the pooled training data) are needed to score the
