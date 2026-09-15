@@ -70,6 +70,19 @@ from app.ml.train_pipeline import (
 _THIN_STATS_COLUMNS = ["region_id", "season", "variable", "abs_error"]
 
 
+def categorical_to_str(s: "pd.Series") -> "pd.Series":
+    """Cheap categorical -> str conversion. `.astype(str)` on a `Categorical` goes
+    through pandas' fixed-width-numpy-unicode path internally (`<U29` for a 29-char
+    district name) - it materialises one dense fixed-width array sized for every ROW,
+    not just the (few) unique categories. Real crash 2026-09-16 (v17): 8.27 GiB to
+    convert a 76.5M-row region_id column this way, inside an already-isolated
+    subprocess, 5.5 minutes in. `.astype("object")` produces the exact same string
+    values (this project's categories are always object-dtype Python `str` already,
+    confirmed against a real cached year) via one 8-byte pointer per row referencing
+    the existing category objects - no new string data is allocated at all."""
+    return s.astype("object") if str(s.dtype) == "category" else s.astype(str)
+
+
 def _log_mem(label: str) -> None:
     """Print this process's own RSS/VMS at a named checkpoint. Diagnostic only, added
     2026-09-16 after v15/v16 both grew the PARENT process to ~35 GB private memory
@@ -184,8 +197,8 @@ def pooled_stats(cached_paths: dict, train_years: list, train_cycles: set):
         # materialise a fresh ~190M-row string array in one shot - 20.5 GiB, over the
         # ceiling. Every year's own category set converts to str safely on its own; the
         # concat below then only ever joins already-plain string columns.
-        thin["region_id"] = thin["region_id"].astype(str)
-        thin["season"] = thin["season"].astype(str)
+        thin["region_id"] = categorical_to_str(thin["region_id"])
+        thin["season"] = categorical_to_str(thin["season"])
         thin_frames.append(thin)
         event_frames.append(_event_mean_error(df))
     if not thin_frames:
@@ -231,8 +244,8 @@ def attach_hbf_column(df: "pd.DataFrame", hbf: dict,
         return df
     hbf_df = pd.DataFrame(
         [(r, s, v) for (r, s), v in hbf.items()], columns=["region_id", "season", out_col])
-    key = pd.DataFrame({"region_id": df["region_id"].astype(str).to_numpy(),
-                        "season": df["season"].astype(str).to_numpy()})
+    key = pd.DataFrame({"region_id": categorical_to_str(df["region_id"]).to_numpy(),
+                        "season": categorical_to_str(df["season"]).to_numpy()})
     merged = key.merge(hbf_df, on=["region_id", "season"], how="left")
     df[out_col] = merged[out_col].to_numpy()
     return df
@@ -605,8 +618,8 @@ def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
         # Cast per year before concatenating - see pooled_stats for why: categoricals
         # from different cached years are not guaranteed to share category sets/order,
         # and pd.concat silently degrades a mismatch to plain object dtype.
-        part["region_id"] = part["region_id"].astype(str)
-        part["season"] = part["season"].astype(str)
+        part["region_id"] = categorical_to_str(part["region_id"])
+        part["season"] = categorical_to_str(part["season"])
         _va_parts.append(part)
     va = pd.concat(_va_parts, ignore_index=True)
     del _va_parts
