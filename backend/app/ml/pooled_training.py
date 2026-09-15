@@ -407,6 +407,25 @@ def _run_worker_subprocess(script: Path, job: dict) -> dict:
             return pickle.load(f)
 
 
+_POOLED_STATS_WORKER_SCRIPT = (Path(__file__).resolve().parents[2] / "scripts"
+                              / "_pooled_stats_worker.py")
+
+
+def _run_pooled_stats_subprocess(cached: dict, train_years: list, train_cycles: set) -> tuple:
+    """`pooled_stats`, in a fresh process - real crash 2026-09-16 (v13): the parent
+    process concatenates every training year's thin frame (189M rows for a real 3-year
+    pool of densely-covered years) and `compute_historical_bust_frequency`'s own
+    internal groupby needed a 1.41 GiB contiguous array for its sort index and could
+    not get one, 3 minutes into the run - before any of the already-isolated
+    per-variable/per-year stages even start. Only the three small result dicts need to
+    survive back into the parent."""
+    job = {"cached": cached, "train_years": train_years, "train_cycles": train_cycles}
+    result = _run_worker_subprocess(_POOLED_STATS_WORKER_SCRIPT, job)
+    if result.get("error"):
+        raise RuntimeError(f"pooled-stats worker failed:\n{result['error']}")
+    return result["hbf"], result["p90_error"], result["bust_threshold"]
+
+
 _WORKER_SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "_train_pooled_variable_worker.py"
 
 
@@ -480,7 +499,7 @@ def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
         report.status = "no_data"
         return report
 
-    hbf, p90_error, bust_threshold = pooled_stats(cached, train_years, train_c)
+    hbf, p90_error, bust_threshold = _run_pooled_stats_subprocess(cached, train_years, train_c)
     if not hbf and not p90_error:
         report.status = "no_data"
         report.error = "no training rows survived the pooled stats pass"
