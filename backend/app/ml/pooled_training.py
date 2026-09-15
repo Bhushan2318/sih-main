@@ -313,58 +313,57 @@ def oof_fold_models(cached_paths: dict, train_years: list, variable: str,
     return models
 
 
+_YEAR_EVENTS_WORKER_SCRIPT = (Path(__file__).resolve().parents[2] / "scripts"
+                              / "_build_pooled_year_events_worker.py")
+
+
+def _run_year_events_subprocess(cached_path: Path, train_cycles: set, hbf: dict,
+                                p90_error: dict, bust_threshold: dict,
+                                fold_models: dict, fold_of: dict, columns) -> "pd.DataFrame":
+    """One year's raw-frame load + OOF-predict + `build_event_frame` in a fresh process -
+    see _build_pooled_year_events_worker.py's docstring for why: real crash 2026-09-15
+    (v9), ArrayMemoryError inside pandas' own groupby machinery on a 76.7M-row year,
+    the same fragmentation signature the per-variable training subprocess fix (below)
+    already solved for the training phase. Only the small, event-reduced result needs
+    to survive back into the parent."""
+    job = {"cached_path": cached_path, "train_cycles": train_cycles, "hbf": hbf,
+          "p90_error": p90_error, "bust_threshold": bust_threshold,
+          "fold_models": fold_models, "fold_of": fold_of, "columns": columns}
+    with tempfile.TemporaryDirectory() as td:
+        job_path, out_path = Path(td) / "job.pkl", Path(td) / "out.pkl"
+        with open(job_path, "wb") as f:
+            pickle.dump(job, f)
+        proc = subprocess.run(
+            [sys.executable, str(_YEAR_EVENTS_WORKER_SCRIPT),
+             "--job", str(job_path), "--out", str(out_path)],
+            capture_output=True, text=True)
+        if not out_path.exists():
+            raise RuntimeError(
+                f"year-events worker produced no output, rc={proc.returncode}: "
+                f"{(proc.stderr or '')[-4000:]}")
+        with open(out_path, "rb") as f:
+            result = pickle.load(f)
+        if result.get("error"):
+            raise RuntimeError(f"year-events worker failed:\n{result['error']}")
+        return result["event_frame"]
+
+
 def build_pooled_train_events(cached_paths: dict, train_years: list, train_cycles: set,
                               hbf: dict, p90_error: dict, bust_threshold: dict,
                               fold_models: dict, fold_of: dict,
                               columns: "set | None" = None) -> "pd.DataFrame":
-    """`event_tr`, assembled one cached year at a time: load that year's train rows,
-    attach out-of-fold predictions via the fold each row's cycle belongs to, reduce to
-    event grain, discard the year, move on. Concatenating the (small) per-year event
-    frames afterward is exactly `pv.build_event_frame` on the full multi-year `tr` would
-    produce, since EVENT_KEYS never crosses a year boundary.
-
-    `columns` should be the same narrowed set `full_retrain_pooled` reads `va`/`te` with:
-    `build_event_frame` (unchanged, shared with the single-frame path) does its own
-    `paired.copy()` internally, and that is only affordable per year, not per pooled
-    train set, if `df` going in is narrow - the full ~90-column frame made this crash for
-    real on 2026-09-13, one call after the `.copy()`/`.drop()` calls in this file were
-    already fixed."""
+    """`event_tr`, assembled one cached year at a time, each year's own raw-frame work
+    (load, attach OOF predictions, reduce to event grain) run in a fresh subprocess -
+    see _run_year_events_subprocess. Concatenating the (small) per-year event frames
+    afterward is exactly `pv.build_event_frame` on the full multi-year `tr` would
+    produce, since EVENT_KEYS never crosses a year boundary."""
     frames = []
-    gc.collect()  # reclaim whatever the training loop above left fragmented, before
-                  # this loop's own first big read competes with it for free space
     for year in train_years:
-        df = pd.read_parquet(cached_paths[year], columns=sorted(columns) if columns else None)
-        df = df[df["init_date"].isin(train_cycles)]
-        if df.empty:
-            continue
-        key = list(zip(df["region_id"].astype(str), df["season"].astype(str)))
-        # No .copy() before these assignments - see _YearDataIter.next() for why this
-        # exact line is where the real 2026-09-13 crash happened: an extra .copy() here
-        # forces pandas to consolidate a freshly-filtered, still nearly-year-sized frame's
-        # blocks into one contiguous array per dtype, a second full allocation on top of
-        # the one already resident.
-        df["historical_bust_frequency_region_season"] = [hbf.get(k, np.nan) for k in key]
-        df["_fold"] = df["init_date"].map(fold_of)
-        oof = pd.Series(np.nan, index=df.index, dtype=float)
-        for variable in sorted(df["variable"].unique()):
-            models_for_var = fold_models.get(variable, {})
-            if not models_for_var:
-                continue
-            vmask = df["variable"] == variable
-            for fold, (model, cols) in models_for_var.items():
-                fmask = vmask & (df["_fold"] == fold)
-                if not fmask.any():
-                    continue
-                oof.loc[fmask] = model.predict(reg_mod._prep_X(df.loc[fmask], cols))
-        # No .drop(columns=["_fold"]) here: real crash 2026-09-13, ArrayMemoryError on a
-        # full year's frame. .drop() reindexes every remaining column's block through the
-        # same take_nd path .copy() does - just as expensive on a frame this size, for a
-        # column build_event_frame below never looks at (it names its own group keys and
-        # aggregation columns explicitly, so an extra unused column costs one int64
-        # column's worth of memory, not a second full-frame allocation).
-        frames.append(pv.build_event_frame(df, oof, p90_error, bust_threshold, hbf))
-        del df, oof
-        gc.collect()
+        frame = _run_year_events_subprocess(
+            cached_paths[year], train_cycles, hbf, p90_error, bust_threshold,
+            fold_models, fold_of, columns)
+        if frame is not None and not frame.empty:
+            frames.append(frame)
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
 
