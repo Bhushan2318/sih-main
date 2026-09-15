@@ -92,7 +92,8 @@ def build_training_frame(
     paired = _add_concurrent_variable_forecasts(paired)
 
     if historical_bust_freq is not None:
-        key = list(zip(paired["region_id"].astype(str), paired["season"].astype(str)))
+        key = list(zip(_categorical_to_str(paired["region_id"]),
+                       _categorical_to_str(paired["season"])))
         paired["historical_bust_frequency_region_season"] = [
             historical_bust_freq.get(k, np.nan) for k in key
         ]
@@ -137,6 +138,17 @@ def _add_concurrent_variable_forecasts(paired: pd.DataFrame) -> pd.DataFrame:
     return merged
 
 
+def _categorical_to_str(s: pd.Series) -> pd.Series:
+    """Cheap categorical -> str conversion. `.astype(str)` on a `Categorical` goes
+    through pandas' fixed-width-numpy-unicode path internally (`<U29` for a 29-char
+    district name) - it materialises one dense fixed-width array sized for every ROW,
+    not just the (few) unique categories. Real crash 2026-09-16, pooled training:
+    8.27 GiB to convert a 76.5M-row region_id column this way. `.astype("object")`
+    produces the exact same string values (categories here are always object-dtype
+    Python `str` already) via one 8-byte pointer per row - no new string data at all."""
+    return s.astype("object") if str(s.dtype) == "category" else s.astype(str)
+
+
 def compute_historical_bust_frequency(
     paired_train: pd.DataFrame, large_error_pct: float = 75.0
 ) -> dict:
@@ -148,5 +160,5 @@ def compute_historical_bust_frequency(
     p["is_large"] = [
         row.abs_error > thr.get(row.variable, np.inf) for row in p.itertuples()
     ]
-    rate = p.groupby([p["region_id"].astype(str), p["season"].astype(str)])["is_large"].mean()
+    rate = p.groupby([_categorical_to_str(p["region_id"]), _categorical_to_str(p["season"])])["is_large"].mean()
     return {tuple(k): float(v) for k, v in rate.items()}
