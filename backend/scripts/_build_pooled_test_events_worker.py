@@ -1,13 +1,21 @@
-"""Worker invoked once for the held-out test year by
-`app.ml.pooled_training._run_test_events_subprocess`.
+"""Worker invoked for the held-out test year AND the validation slice by
+`app.ml.pooled_training._run_final_model_events_subprocess`.
 
-Same rationale as `_build_pooled_year_events_worker.py`: the held-out test year is
-read in full (it is deliberately never filtered down, per `full_retrain_pooled`'s own
-comment - holding a year out entirely is the point), so it carries exactly the same
-row-count risk that made a training year's event-frame build crash on 2026-09-15 (v9).
-`test_year` was never actually reached in any attempt before that fix, so this is a
-preemptive application of the same pattern rather than a fix for an observed crash -
-cheaper than losing another multi-hour run to find out the hard way.
+Same rationale as `_build_pooled_year_events_worker.py`, generalized to accept
+multiple cached years (validation can span more than one pooled year) instead of one:
+each year is read in full then reduced to event grain, never held alongside another
+year, and never held in the PARENT at all.
+
+Real incident 2026-09-16 (v18): with `[MEM]` checkpoints finally in place, the parent
+process's own memory was traced directly (not guessed) - `va` alone, loaded once and
+held resident for the whole run, was 39.65M rows and cost 11.7 GB RSS the moment it was
+built, before training even started. That single un-isolated load explains the
+"parent grows to ~35 GB" mystery from v15/v16 far better than the va/event_va-isolation
+guesses tried first: those isolated the *build* of event_va, but the parent still had
+to hold the full `va` frame for the entire training loop to slice per variable. This
+worker removes that need entirely - the parent now passes only `cached_paths` +
+`cycles` + `artifacts` (small), and reads/predicts/reduces to event grain here,
+returning only the small event-level frame and each variable's metric.
 """
 from __future__ import annotations
 
@@ -31,18 +39,33 @@ def main() -> int:
     with open(args.job, "rb") as f:
         job = pickle.load(f)
 
-    result = {"event_frame": None, "test_metrics": {}, "error": None}
+    result = {"event_frame": None, "metrics": {}, "error": None}
     try:
         import numpy as np
         import pandas as pd
 
         from app.features import pivot as pv
         from app.ml import regressors as reg_mod
-        from app.ml.pooled_training import attach_hbf_column, read_parquet_retrying
+        from app.ml.pooled_training import (
+            attach_hbf_column, categorical_to_str, read_parquet_retrying,
+        )
 
         columns = job["columns"]
-        df = read_parquet_retrying(job["cached_path"], columns=sorted(columns) if columns else None)
-        df = df[df["init_date"].isin(job["test_cycles"])]
+        cols = sorted(columns) if columns else None
+        parts = []
+        for path in job["cached_paths"]:
+            part = read_parquet_retrying(path, columns=cols)
+            part = part[part["init_date"].isin(job["cycles"])]
+            if part.empty:
+                continue
+            # Cast per year before concatenating - categories are not guaranteed to
+            # align across cached years (see pooled_stats for the real crash this
+            # caused once already).
+            part["region_id"] = categorical_to_str(part["region_id"])
+            part["season"] = categorical_to_str(part["season"])
+            parts.append(part)
+        df = pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
+
         if df.empty:
             result["event_frame"] = pd.DataFrame()
         else:
@@ -56,8 +79,7 @@ def main() -> int:
                 p = reg_mod.predict_variable_error(art, df[tmask])
                 pred.loc[tmask] = p
                 if tmask.sum() >= 5:
-                    result["test_metrics"][var] = reg_mod._evaluate(
-                        df.loc[tmask, "abs_error"], p)
+                    result["metrics"][var] = reg_mod._evaluate(df.loc[tmask, "abs_error"], p)
             result["event_frame"] = pv.build_event_frame(
                 df, pred, job["p90_error"], job["bust_threshold"], hbf)
     except Exception:

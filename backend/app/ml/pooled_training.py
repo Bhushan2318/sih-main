@@ -491,62 +491,55 @@ _WORKER_SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "_train_poole
 
 
 def _run_variable_subprocess(cached: dict, train_years: list, variable: str,
-                             train_cycles: set, va_var: "pd.DataFrame", hbf: dict,
-                             cache_dir: Path, device: str, fold_of: dict) -> dict:
+                             train_cycles: set, val_cached_paths: list, val_cycles: set,
+                             val_columns, hbf: dict, cache_dir: Path, device: str,
+                             fold_of: dict) -> dict:
     """Train one variable's regressor + its OOF fold models in a brand-new process, and
     return the result as a plain dict. See _train_pooled_variable_worker.py's docstring
     for why this is a subprocess and not a function call: the process exit is what
     actually reclaims the native (pyarrow/XGBoost) memory this does, which repeated
-    `gc.collect()` calls in a long-lived process could not - real crashes 2026-09-14."""
+    `gc.collect()` calls in a long-lived process could not - real crashes 2026-09-14.
+
+    `val_cached_paths`/`val_cycles`/`val_columns` (small - paths and cycle sets, not
+    data) let the worker read only its own variable's validation rows itself; the
+    parent never loads the validation slice at all - see this worker script's
+    docstring for the real incident (v18) that made holding it in the parent the
+    actual explanation for the "parent grows to ~35 GB" mystery."""
     job = {"cached": cached, "train_years": train_years, "variable": variable,
-          "train_cycles": train_cycles, "va_var": va_var, "hbf": hbf,
+          "train_cycles": train_cycles, "val_cached_paths": val_cached_paths,
+          "val_cycles": val_cycles, "val_columns": val_columns, "hbf": hbf,
           "cache_dir": cache_dir, "device": device, "fold_of": fold_of}
     result = _run_worker_subprocess(_WORKER_SCRIPT, job)
     if "artifact" not in result:  # the no-output/no-result-file case
-        result = {"artifact": None, "val_pred": None, "fold_models": {},
+        result = {"artifact": None, "fold_models": {},
                   "skipped": result.get("error"), "error": result.get("error")}
     return result
 
 
-_EVENT_FRAME_WORKER_SCRIPT = (Path(__file__).resolve().parents[2] / "scripts"
-                              / "_build_event_frame_worker.py")
+_FINAL_MODEL_EVENTS_WORKER_SCRIPT = (Path(__file__).resolve().parents[2] / "scripts"
+                                    / "_build_pooled_test_events_worker.py")
 
 
-def _run_event_frame_subprocess(paired: "pd.DataFrame", pred_err: "pd.Series",
-                                p90_error: dict, bust_threshold: dict,
-                                hbf: dict) -> "pd.DataFrame":
-    """`pv.build_event_frame`, in a fresh process - see _build_event_frame_worker.py's
-    docstring: real incident 2026-09-16 (v15), the parent process grew to ~35 GB private
-    memory during training, before this call was even reached; isolating it closes the
-    one remaining un-isolated build_event_frame call regardless of the exact mechanism."""
-    job = {"paired": paired, "pred_err": pred_err, "p90_error": p90_error,
-          "bust_threshold": bust_threshold, "hbf": hbf}
-    result = _run_worker_subprocess(_EVENT_FRAME_WORKER_SCRIPT, job)
-    if result.get("error"):
-        raise RuntimeError(f"event-frame worker failed:\n{result['error']}")
-    return result["event_frame"]
-
-
-_TEST_EVENTS_WORKER_SCRIPT = (Path(__file__).resolve().parents[2] / "scripts"
-                              / "_build_pooled_test_events_worker.py")
-
-
-def _run_test_events_subprocess(cached_path: Path, test_cycles: set, hbf: dict,
-                                p90_error: dict, bust_threshold: dict, artifacts: dict,
-                                columns) -> tuple:
-    """The held-out test year's raw-frame load + predict + `build_event_frame`, in a
-    fresh process - same reasoning as _run_year_events_subprocess, applied preemptively
-    since the test year carries the identical full-year row-count risk. Returns
-    `(event_frame, test_metrics)`; `test_metrics` is `{variable: metrics_dict}`, merged
-    into each artifact's own `.metrics["test"]` by the caller since the artifact objects
+def _run_final_model_events_subprocess(cached_paths: list, cycles: set, hbf: dict,
+                                       p90_error: dict, bust_threshold: dict,
+                                       artifacts: dict, columns) -> tuple:
+    """Read one or more cached years (validation can span more than one pooled year;
+    the held-out test year is always exactly one), predict via the final fitted
+    `artifacts`, and reduce to event grain - all in a fresh process. Same reasoning as
+    `_run_year_events_subprocess`, generalized to a list of years and reused for both
+    `event_va` and `event_te` since the parent must never hold either raw slice - see
+    _build_pooled_test_events_worker.py's docstring for the real incident (v18) that
+    made this the actual fix, not the earlier va/event_va-build-only isolation.
+    Returns `(event_frame, metrics)`; `metrics` is `{variable: metrics_dict}`, merged
+    into each artifact's own `.metrics[...]` by the caller since the artifact objects
     living in the parent are not the same objects the subprocess touched."""
-    job = {"cached_path": cached_path, "test_cycles": test_cycles, "hbf": hbf,
+    job = {"cached_paths": cached_paths, "cycles": cycles, "hbf": hbf,
           "p90_error": p90_error, "bust_threshold": bust_threshold,
           "artifacts": artifacts, "columns": columns}
-    result = _run_worker_subprocess(_TEST_EVENTS_WORKER_SCRIPT, job)
+    result = _run_worker_subprocess(_FINAL_MODEL_EVENTS_WORKER_SCRIPT, job)
     if result.get("error"):
-        raise RuntimeError(f"test-events worker failed:\n{result['error']}")
-    return result["event_frame"], result["test_metrics"]
+        raise RuntimeError(f"final-model-events worker failed:\n{result['error']}")
+    return result["event_frame"], result["metrics"]
 
 
 def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
@@ -610,37 +603,31 @@ def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
     # built frees exactly that headroom for the step that needs it; te's own
     # predict-and-build-event work below is no more expensive alone than it was
     # alongside everything else.
+    # `va` is deliberately never loaded here at all. Real incident 2026-09-16 (v18):
+    # `[MEM]` checkpoints showed a full, all-variables validation slice was 39.65M rows
+    # and cost 11.7 GB RSS the instant it was built, held resident for the entire run
+    # to slice per variable - the real explanation for the "parent grows to ~35 GB"
+    # mystery, which the earlier va/event_va-build-only isolation fix did not catch
+    # because it isolated the *build* of event_va while the parent still held `va`
+    # itself throughout training. Each variable's worker now reads its own slice
+    # directly (see _train_pooled_variable_worker.py); the final event_va build reads
+    # its own copy too (see _run_final_model_events_subprocess) - the parent passes
+    # only paths and cycle sets, never row data.
     val_years = sorted({y for y in train_years
                         for c in val_c if pd.Timestamp(c).year == y}) or train_years
-    _va_parts = []
-    for y in val_years:
-        part = read_parquet_retrying(cached[y], columns=sorted(needed))
-        # Cast per year before concatenating - see pooled_stats for why: categoricals
-        # from different cached years are not guaranteed to share category sets/order,
-        # and pd.concat silently degrades a mismatch to plain object dtype.
-        part["region_id"] = categorical_to_str(part["region_id"])
-        part["season"] = categorical_to_str(part["season"])
-        _va_parts.append(part)
-    va = pd.concat(_va_parts, ignore_index=True)
-    del _va_parts
-    gc.collect()
-    va = va[va["init_date"].isin(val_c)]
-    if not va.empty:
-        va = attach_hbf_column(va, hbf)
-    _log_mem(f"after va built ({len(va)} rows)")
+    val_cached_paths = [cached[y] for y in val_years]
 
     variables = sorted(pd.read_parquet(cached[train_years[0]], columns=["variable"])
                        ["variable"].unique())
     fold_of = assign_folds(train_c)
 
-    # Split the variables across a GPU thread and a CPU thread, both running against the
-    # same `va` and `hbf`. XGBoost's training call is a C++ extension that releases the
-    # GIL while it runs, so this is genuine concurrent use of both the GPU and the CPU
-    # cores, not two halves of one resource taking turns - verified with a real GPU fit
-    # via QuantileDMatrix+DataIter before this was wired in. Each half returns its own
-    # partial results; the halves touch disjoint variables and disjoint rows of `va` (via
-    # vmask), so merging afterward rather than writing into shared dicts/Series from both
-    # threads avoids relying on pandas' assignment being thread-safe.
+    # Split the variables across a GPU thread and a CPU thread. XGBoost's training call
+    # is a C++ extension that releases the GIL while it runs, so this is genuine
+    # concurrent use of both the GPU and the CPU cores, not two halves of one resource
+    # taking turns - verified with a real GPU fit via QuantileDMatrix+DataIter before
+    # this was wired in. Each half returns its own partial results; the halves touch
+    # disjoint variables, so merging afterward rather than writing into shared dicts
+    # from both threads avoids relying on pandas' assignment being thread-safe.
     def _train_group(var_subset: list, device: str):
         # Each variable trains in its own subprocess (see _run_variable_subprocess) so
         # fragmentation from one variable's fits can never carry over into the next -
@@ -648,28 +635,20 @@ def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
         # 2026-09-14 after 1-3 hours, always at a later point as smaller fixes landed,
         # never fixed by them because the real cause was cross-variable accumulation.
         g_artifacts, g_skipped, g_fold_models = {}, {}, {}
-        g_val_pred = pd.Series(np.nan, index=va.index, dtype=float)
         for var in var_subset:
-            va_var = va[va["variable"] == var]
             result = _run_variable_subprocess(
-                cached, train_years, var, train_c, va_var, hbf, cache_dir, device, fold_of)
+                cached, train_years, var, train_c, val_cached_paths, val_c, needed,
+                hbf, cache_dir, device, fold_of)
             art = result["artifact"]
             if art is None:
                 g_skipped[var] = result.get("skipped") or "regressor training returned None or too few rows"
                 continue
             g_artifacts[var] = art
-            if result["val_pred"] is not None:
-                g_val_pred.loc[result["val_pred"].index] = result["val_pred"]
             g_fold_models[var] = result["fold_models"]
             _log_mem(f"after {device}/{var}")
-            # Real incident 2026-09-16 (v15): the parent grew to ~35 GB private memory
-            # during this exact loop. `result` (a freshly-unpickled dict, potentially
-            # holding a large val_pred Series) going out of scope should be enough for
-            # Python's own GC, but every other per-fit boundary in this file collects
-            # explicitly rather than trusting GC timing under this much subprocess churn.
             del result
             gc.collect()
-        return g_artifacts, g_skipped, g_val_pred, g_fold_models
+        return g_artifacts, g_skipped, g_fold_models
 
     half = max(1, len(variables) // 2)
     gpu_vars, cpu_vars = variables[:half], variables[half:]
@@ -678,7 +657,6 @@ def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
     gpu_available = torch.cuda.is_available()
 
     artifacts: dict = {}
-    val_pred = pd.Series(np.nan, index=va.index, dtype=float)
     fold_models: dict = {}
     if gpu_available and cpu_vars:
         from concurrent.futures import ThreadPoolExecutor
@@ -690,10 +668,9 @@ def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
         # No GPU (or nothing left for a second group) - everything on CPU, one group.
         results = [_train_group(variables, "cpu")]
 
-    for g_artifacts, g_skipped, g_val_pred, g_fold_models in results:
+    for g_artifacts, g_skipped, g_fold_models in results:
         artifacts.update(g_artifacts)
         report.skipped_variables.update(g_skipped)
-        val_pred = val_pred.combine_first(g_val_pred)
         fold_models.update(g_fold_models)
         for var, art in g_artifacts.items():
             report.regressor_metrics[var] = art.metrics
@@ -711,18 +688,20 @@ def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
     del fold_models  # only needed for event_tr's out-of-fold predictions, above
     gc.collect()
     _log_mem("after event_tr")
-    event_va = _run_event_frame_subprocess(va, val_pred, p90_error, bust_threshold, hbf)
-    del va, val_pred
-    gc.collect()
+    event_va, val_metrics = _run_final_model_events_subprocess(
+        val_cached_paths, val_c, hbf, p90_error, bust_threshold, artifacts, needed)
+    for var, m in val_metrics.items():
+        if var in artifacts:
+            artifacts[var].metrics["val"] = m
     _log_mem("after event_va")
 
     # Now safe to build: event_tr is built, fold_models is gone, and only the small
     # saved regressor artifacts (not the pooled training data) are needed to score the
-    # held-out test year. Runs in its own subprocess - see _run_test_events_subprocess -
-    # since the held-out year is read in full and carries the same row-count risk that
-    # crashed the (now-fixed) training-year path.
-    event_te, test_metrics = _run_test_events_subprocess(
-        cached[test_year], test_c, hbf, p90_error, bust_threshold, artifacts, needed)
+    # held-out test year. Runs in its own subprocess - since the held-out year is read
+    # in full and carries the same row-count risk that crashed the (now-fixed)
+    # training-year path.
+    event_te, test_metrics = _run_final_model_events_subprocess(
+        [cached[test_year]], test_c, hbf, p90_error, bust_threshold, artifacts, needed)
     for var, m in test_metrics.items():
         if var in artifacts:
             artifacts[var].metrics["test"] = m
