@@ -356,23 +356,10 @@ def _run_year_events_subprocess(cached_path: Path, train_cycles: set, hbf: dict,
     job = {"cached_path": cached_path, "train_cycles": train_cycles, "hbf": hbf,
           "p90_error": p90_error, "bust_threshold": bust_threshold,
           "fold_models": fold_models, "fold_of": fold_of, "columns": columns}
-    with tempfile.TemporaryDirectory() as td:
-        job_path, out_path = Path(td) / "job.pkl", Path(td) / "out.pkl"
-        with open(job_path, "wb") as f:
-            pickle.dump(job, f)
-        proc = subprocess.run(
-            [sys.executable, str(_YEAR_EVENTS_WORKER_SCRIPT),
-             "--job", str(job_path), "--out", str(out_path)],
-            capture_output=True, text=True)
-        if not out_path.exists():
-            raise RuntimeError(
-                f"year-events worker produced no output, rc={proc.returncode}: "
-                f"{(proc.stderr or '')[-4000:]}")
-        with open(out_path, "rb") as f:
-            result = pickle.load(f)
-        if result.get("error"):
-            raise RuntimeError(f"year-events worker failed:\n{result['error']}")
-        return result["event_frame"]
+    result = _run_worker_subprocess(_YEAR_EVENTS_WORKER_SCRIPT, job)
+    if result.get("error"):
+        raise RuntimeError(f"year-events worker failed:\n{result['error']}")
+    return result["event_frame"]
 
 
 def build_pooled_train_events(cached_paths: dict, train_years: list, train_cycles: set,
@@ -394,6 +381,32 @@ def build_pooled_train_events(cached_paths: dict, train_years: list, train_cycle
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
 
+def _run_worker_subprocess(script: Path, job: dict) -> dict:
+    """Run `script` with `job` pickled as its stdin file, writing the child's stdout and
+    stderr to files on disk rather than capturing them in memory. Real crash 2026-09-15
+    (v11): `subprocess.run(..., capture_output=True)` buffers the entire child output as
+    Python strings with no upper bound, and the PARENT process's own private memory
+    ballooned to 35 GB (almost no working set - virtual, not resident) after dispatching
+    only two variables' worth of subprocess calls, driving free system memory to ~250
+    MB before it had to be killed by hand. Whatever was producing that much output, a
+    file on disk has no such ceiling; only the small pickled result dict comes back into
+    this process."""
+    with tempfile.TemporaryDirectory() as td:
+        job_path, out_path = Path(td) / "job.pkl", Path(td) / "out.pkl"
+        stdout_path, stderr_path = Path(td) / "stdout.log", Path(td) / "stderr.log"
+        with open(job_path, "wb") as f:
+            pickle.dump(job, f)
+        with open(stdout_path, "wb") as out_f, open(stderr_path, "wb") as err_f:
+            proc = subprocess.run(
+                [sys.executable, str(script), "--job", str(job_path), "--out", str(out_path)],
+                stdout=out_f, stderr=err_f)
+        if not out_path.exists():
+            tail = stderr_path.read_text(errors="replace")[-4000:] if stderr_path.exists() else ""
+            return {"error": f"worker produced no output, rc={proc.returncode}: {tail}"}
+        with open(out_path, "rb") as f:
+            return pickle.load(f)
+
+
 _WORKER_SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "_train_pooled_variable_worker.py"
 
 
@@ -408,20 +421,11 @@ def _run_variable_subprocess(cached: dict, train_years: list, variable: str,
     job = {"cached": cached, "train_years": train_years, "variable": variable,
           "train_cycles": train_cycles, "va_var": va_var, "hbf": hbf,
           "cache_dir": cache_dir, "device": device, "fold_of": fold_of}
-    with tempfile.TemporaryDirectory() as td:
-        job_path, out_path = Path(td) / "job.pkl", Path(td) / "out.pkl"
-        with open(job_path, "wb") as f:
-            pickle.dump(job, f)
-        proc = subprocess.run(
-            [sys.executable, str(_WORKER_SCRIPT), "--job", str(job_path), "--out", str(out_path)],
-            capture_output=True, text=True)
-        if not out_path.exists():
-            return {"artifact": None, "val_pred": None, "fold_models": {},
-                    "skipped": f"worker produced no output, rc={proc.returncode}: "
-                               f"{(proc.stderr or '')[-2000:]}",
-                    "error": proc.stderr}
-        with open(out_path, "rb") as f:
-            return pickle.load(f)
+    result = _run_worker_subprocess(_WORKER_SCRIPT, job)
+    if "artifact" not in result:  # the no-output/no-result-file case
+        result = {"artifact": None, "val_pred": None, "fold_models": {},
+                  "skipped": result.get("error"), "error": result.get("error")}
+    return result
 
 
 _TEST_EVENTS_WORKER_SCRIPT = (Path(__file__).resolve().parents[2] / "scripts"
@@ -440,23 +444,10 @@ def _run_test_events_subprocess(cached_path: Path, test_cycles: set, hbf: dict,
     job = {"cached_path": cached_path, "test_cycles": test_cycles, "hbf": hbf,
           "p90_error": p90_error, "bust_threshold": bust_threshold,
           "artifacts": artifacts, "columns": columns}
-    with tempfile.TemporaryDirectory() as td:
-        job_path, out_path = Path(td) / "job.pkl", Path(td) / "out.pkl"
-        with open(job_path, "wb") as f:
-            pickle.dump(job, f)
-        proc = subprocess.run(
-            [sys.executable, str(_TEST_EVENTS_WORKER_SCRIPT),
-             "--job", str(job_path), "--out", str(out_path)],
-            capture_output=True, text=True)
-        if not out_path.exists():
-            raise RuntimeError(
-                f"test-events worker produced no output, rc={proc.returncode}: "
-                f"{(proc.stderr or '')[-4000:]}")
-        with open(out_path, "rb") as f:
-            result = pickle.load(f)
-        if result.get("error"):
-            raise RuntimeError(f"test-events worker failed:\n{result['error']}")
-        return result["event_frame"], result["test_metrics"]
+    result = _run_worker_subprocess(_TEST_EVENTS_WORKER_SCRIPT, job)
+    if result.get("error"):
+        raise RuntimeError(f"test-events worker failed:\n{result['error']}")
+    return result["event_frame"], result["test_metrics"]
 
 
 def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
