@@ -38,6 +38,7 @@ def main() -> int:
 
         from app.features import pivot as pv
         from app.ml import regressors as reg_mod
+        from app.ml.pooled_training import attach_hbf_column
 
         columns = job["columns"]
         df = pd.read_parquet(job["cached_path"], columns=sorted(columns) if columns else None)
@@ -46,8 +47,7 @@ def main() -> int:
             result["event_frame"] = pd.DataFrame()
         else:
             hbf = job["hbf"]
-            key = list(zip(df["region_id"].astype(str), df["season"].astype(str)))
-            df["historical_bust_frequency_region_season"] = [hbf.get(k, np.nan) for k in key]
+            df = attach_hbf_column(df, hbf)
             pred = pd.Series(np.nan, index=df.index, dtype=float)
             for var, art in job["artifacts"].items():
                 tmask = df["variable"] == var

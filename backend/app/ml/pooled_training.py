@@ -161,6 +161,35 @@ def _feature_columns_for(cached_paths: dict, years: list) -> list:
     return reg_mod.feature_columns(pd.DataFrame(columns=sorted(names)))
 
 
+def attach_hbf_column(df: "pd.DataFrame", hbf: dict,
+                      out_col: str = "historical_bust_frequency_region_season") -> "pd.DataFrame":
+    """Attach the per-(region, season) historical bust frequency feature, vectorized -
+    the replacement for `df[out_col] = [hbf.get(k, np.nan) for k in key]`, which every
+    call site in this file used until the real crash 2026-09-15 (v10): that builds a
+    length-N Python list of boxed tuples and then a length-N list of boxed floats before
+    pandas can convert either back to an array, and on a 76.7M-row year that conversion
+    itself needs a large contiguous allocation - inside an already-isolated per-year
+    subprocess, proving process isolation alone does not fix an operation that is simply
+    too expensive within one call.
+
+    A merge on a small, separate two-column string key frame does the same lookup in
+    vectorized C code, and touches none of `df`'s other columns - unlike a `.copy()` or
+    `.assign()` on `df` itself, `how="left"` on a key frame whose right side (`hbf`,
+    built from a dict) never has duplicate keys preserves row order and row count
+    exactly, so `merged[out_col].to_numpy()` lines up positionally with `df` without
+    needing to reindex anything."""
+    if not hbf:
+        df[out_col] = np.nan
+        return df
+    hbf_df = pd.DataFrame(
+        [(r, s, v) for (r, s), v in hbf.items()], columns=["region_id", "season", out_col])
+    key = pd.DataFrame({"region_id": df["region_id"].astype(str).to_numpy(),
+                        "season": df["season"].astype(str).to_numpy()})
+    merged = key.merge(hbf_df, on=["region_id", "season"], how="left")
+    df[out_col] = merged[out_col].to_numpy()
+    return df
+
+
 class _YearDataIter(xgb.DataIter):
     """Feeds one variable's training rows to XGBoost one cached year at a time.
 
@@ -193,13 +222,12 @@ class _YearDataIter(xgb.DataIter):
         self._i += 1
         if df.empty:
             return 1
-        key = list(zip(df["region_id"].astype(str), df["season"].astype(str)))
         # No .copy() before this assignment: boolean-mask filtering above already
         # produced a new frame, and an extra .copy() here forces pandas to consolidate
         # its blocks into one contiguous array per dtype - a second full-sized allocation
         # on top of the filtered frame already in memory. Measured real crash 2026-09-13,
         # ArrayMemoryError on a single cached year's own frame.
-        df["historical_bust_frequency_region_season"] = [self._hbf.get(k, np.nan) for k in key]
+        df = attach_hbf_column(df, self._hbf)
         X = reg_mod._prep_X(df, self._feature_cols)
         input_data(data=X, label=df["abs_error"].to_numpy())
         return 1
@@ -262,8 +290,7 @@ def train_variable_regressor_pooled(cached_paths: dict, train_years: list, varia
     # are unaffected.
     metrics = {}
     if len(va):
-        key = list(zip(va["region_id"].astype(str), va["season"].astype(str)))
-        va = va.assign(historical_bust_frequency_region_season=[hbf.get(k, np.nan) for k in key])
+        va = attach_hbf_column(va.copy(), hbf)
         Xva = reg_mod._prep_X(va, cols)
         if len(va) >= 5:
             metrics["val"] = reg_mod._evaluate(va["abs_error"], model.predict(Xva))
@@ -505,8 +532,7 @@ def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
     va = pd.concat(_va_parts, ignore_index=True)
     va = va[va["init_date"].isin(val_c)]
     if not va.empty:
-        key = list(zip(va["region_id"].astype(str), va["season"].astype(str)))
-        va["historical_bust_frequency_region_season"] = [hbf.get(k, np.nan) for k in key]
+        va = attach_hbf_column(va, hbf)
 
     variables = sorted(pd.read_parquet(cached[train_years[0]], columns=["variable"])
                        ["variable"].unique())
