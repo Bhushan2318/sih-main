@@ -397,6 +397,41 @@ def _run_variable_subprocess(cached: dict, train_years: list, variable: str,
             return pickle.load(f)
 
 
+_TEST_EVENTS_WORKER_SCRIPT = (Path(__file__).resolve().parents[2] / "scripts"
+                              / "_build_pooled_test_events_worker.py")
+
+
+def _run_test_events_subprocess(cached_path: Path, test_cycles: set, hbf: dict,
+                                p90_error: dict, bust_threshold: dict, artifacts: dict,
+                                columns) -> tuple:
+    """The held-out test year's raw-frame load + predict + `build_event_frame`, in a
+    fresh process - same reasoning as _run_year_events_subprocess, applied preemptively
+    since the test year carries the identical full-year row-count risk. Returns
+    `(event_frame, test_metrics)`; `test_metrics` is `{variable: metrics_dict}`, merged
+    into each artifact's own `.metrics["test"]` by the caller since the artifact objects
+    living in the parent are not the same objects the subprocess touched."""
+    job = {"cached_path": cached_path, "test_cycles": test_cycles, "hbf": hbf,
+          "p90_error": p90_error, "bust_threshold": bust_threshold,
+          "artifacts": artifacts, "columns": columns}
+    with tempfile.TemporaryDirectory() as td:
+        job_path, out_path = Path(td) / "job.pkl", Path(td) / "out.pkl"
+        with open(job_path, "wb") as f:
+            pickle.dump(job, f)
+        proc = subprocess.run(
+            [sys.executable, str(_TEST_EVENTS_WORKER_SCRIPT),
+             "--job", str(job_path), "--out", str(out_path)],
+            capture_output=True, text=True)
+        if not out_path.exists():
+            raise RuntimeError(
+                f"test-events worker produced no output, rc={proc.returncode}: "
+                f"{(proc.stderr or '')[-4000:]}")
+        with open(out_path, "rb") as f:
+            result = pickle.load(f)
+        if result.get("error"):
+            raise RuntimeError(f"test-events worker failed:\n{result['error']}")
+        return result["event_frame"], result["test_metrics"]
+
+
 def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
                         run_id: str | None = None) -> "TrainReport":
     """The pooled-training equivalent of `train_pipeline.full_retrain`: any number of
@@ -547,25 +582,16 @@ def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
     gc.collect()
     event_va = pv.build_event_frame(va, val_pred, p90_error, bust_threshold, hbf)
 
-    # Now safe to load: event_tr is built, fold_models is gone, and only the small saved
-    # regressor artifacts (not the pooled training data) are still needed to score te.
-    gc.collect()
-    te = pd.read_parquet(cached[test_year], columns=sorted(needed))
-    te = te[te["init_date"].isin(test_c)]
-    test_pred = pd.Series(np.nan, index=te.index, dtype=float)
-    if not te.empty:
-        key = list(zip(te["region_id"].astype(str), te["season"].astype(str)))
-        te["historical_bust_frequency_region_season"] = [hbf.get(k, np.nan) for k in key]
-        for var, art in artifacts.items():
-            tmask = te["variable"] == var
-            if not tmask.any():
-                continue
-            test_pred.loc[tmask] = reg_mod.predict_variable_error(art, te[tmask])
-            if tmask.sum() >= 5:
-                art.metrics["test"] = reg_mod._evaluate(
-                    te.loc[tmask, "abs_error"], test_pred[tmask])
-    event_te = (pv.build_event_frame(te, test_pred, p90_error, bust_threshold, hbf)
-               if not te.empty else pd.DataFrame())
+    # Now safe to build: event_tr is built, fold_models is gone, and only the small
+    # saved regressor artifacts (not the pooled training data) are needed to score the
+    # held-out test year. Runs in its own subprocess - see _run_test_events_subprocess -
+    # since the held-out year is read in full and carries the same row-count risk that
+    # crashed the (now-fixed) training-year path.
+    event_te, test_metrics = _run_test_events_subprocess(
+        cached[test_year], test_c, hbf, p90_error, bust_threshold, artifacts, needed)
+    for var, m in test_metrics.items():
+        if var in artifacts:
+            artifacts[var].metrics["test"] = m
 
     clf_art = clf_mod.train_bust_classifier(event_tr, event_va)
     report.classifier_metrics = dict(clf_art.metrics)
