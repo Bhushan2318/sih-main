@@ -69,6 +69,23 @@ from app.ml.train_pipeline import (
 
 _THIN_STATS_COLUMNS = ["region_id", "season", "variable", "abs_error"]
 
+
+def _log_mem(label: str) -> None:
+    """Print this process's own RSS/VMS at a named checkpoint. Diagnostic only, added
+    2026-09-16 after v15/v16 both grew the PARENT process to ~35 GB private memory
+    without ever producing a crash traceback to pin down which line was responsible -
+    every fix up to this point (isolating va/event_va, per-fit gc.collect) was a
+    plausible guess based on the established fragmentation pattern, not a measurement.
+    This turns the next occurrence into a measurement: the log will show exactly which
+    checkpoint the growth happens between, instead of only "it happened somewhere in
+    this multi-hour run." Remove once the real mechanism is found and fixed."""
+    try:
+        import psutil
+        mi = psutil.Process().memory_info()
+        print(f"[MEM] {label}: rss={mi.rss/1e6:.0f}MB vms={mi.vms/1e6:.0f}MB", flush=True)
+    except Exception as exc:
+        print(f"[MEM] {label}: unavailable ({exc})", flush=True)
+
 _MEMORY_ERRORS = [MemoryError]
 try:
     import pyarrow.lib as _pa_lib
@@ -538,6 +555,7 @@ def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
     train_years = [y for y in train_years if y != test_year]
     all_years = sorted(set(train_years) | {test_year})
     cached = {y: cache_year(y, cache_dir) for y in all_years}
+    _log_mem("after cache_year")
 
     train_c, val_c, test_c = pooled_split(
         {y: cached[y] for y in train_years + [test_year]}, test_year)
@@ -550,6 +568,7 @@ def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
         return report
 
     hbf, p90_error, bust_threshold = _run_pooled_stats_subprocess(cached, train_years, train_c)
+    _log_mem("after pooled_stats")
     if not hbf and not p90_error:
         report.status = "no_data"
         report.error = "no training rows survived the pooled stats pass"
@@ -595,6 +614,7 @@ def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
     va = va[va["init_date"].isin(val_c)]
     if not va.empty:
         va = attach_hbf_column(va, hbf)
+    _log_mem(f"after va built ({len(va)} rows)")
 
     variables = sorted(pd.read_parquet(cached[train_years[0]], columns=["variable"])
                        ["variable"].unique())
@@ -628,6 +648,7 @@ def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
             if result["val_pred"] is not None:
                 g_val_pred.loc[result["val_pred"].index] = result["val_pred"]
             g_fold_models[var] = result["fold_models"]
+            _log_mem(f"after {device}/{var}")
             # Real incident 2026-09-16 (v15): the parent grew to ~35 GB private memory
             # during this exact loop. `result` (a freshly-unpickled dict, potentially
             # holding a large val_pred Series) going out of scope should be enough for
@@ -665,6 +686,7 @@ def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
             report.regressor_metrics[var] = art.metrics
 
     report.modelled_variables = sorted(artifacts)
+    _log_mem("after all variables trained")
     if not artifacts:
         report.status = "failed"
         report.error = "no variable had enough paired rows to train a regressor"
@@ -675,9 +697,11 @@ def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
         columns=needed)
     del fold_models  # only needed for event_tr's out-of-fold predictions, above
     gc.collect()
+    _log_mem("after event_tr")
     event_va = _run_event_frame_subprocess(va, val_pred, p90_error, bust_threshold, hbf)
     del va, val_pred
     gc.collect()
+    _log_mem("after event_va")
 
     # Now safe to build: event_tr is built, fold_models is gone, and only the small
     # saved regressor artifacts (not the pooled training data) are needed to score the
