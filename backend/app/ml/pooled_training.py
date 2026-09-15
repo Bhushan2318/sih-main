@@ -39,6 +39,9 @@ A regressor trained via `xgb.train()` on a `QuantileDMatrix` is a `Booster`, not
 from __future__ import annotations
 
 import gc
+import pickle
+import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -365,6 +368,36 @@ def build_pooled_train_events(cached_paths: dict, train_years: list, train_cycle
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
 
+_WORKER_SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "_train_pooled_variable_worker.py"
+
+
+def _run_variable_subprocess(cached: dict, train_years: list, variable: str,
+                             train_cycles: set, va_var: "pd.DataFrame", hbf: dict,
+                             cache_dir: Path, device: str, fold_of: dict) -> dict:
+    """Train one variable's regressor + its OOF fold models in a brand-new process, and
+    return the result as a plain dict. See _train_pooled_variable_worker.py's docstring
+    for why this is a subprocess and not a function call: the process exit is what
+    actually reclaims the native (pyarrow/XGBoost) memory this does, which repeated
+    `gc.collect()` calls in a long-lived process could not - real crashes 2026-09-14."""
+    job = {"cached": cached, "train_years": train_years, "variable": variable,
+          "train_cycles": train_cycles, "va_var": va_var, "hbf": hbf,
+          "cache_dir": cache_dir, "device": device, "fold_of": fold_of}
+    with tempfile.TemporaryDirectory() as td:
+        job_path, out_path = Path(td) / "job.pkl", Path(td) / "out.pkl"
+        with open(job_path, "wb") as f:
+            pickle.dump(job, f)
+        proc = subprocess.run(
+            [sys.executable, str(_WORKER_SCRIPT), "--job", str(job_path), "--out", str(out_path)],
+            capture_output=True, text=True)
+        if not out_path.exists():
+            return {"artifact": None, "val_pred": None, "fold_models": {},
+                    "skipped": f"worker produced no output, rc={proc.returncode}: "
+                               f"{(proc.stderr or '')[-2000:]}",
+                    "error": proc.stderr}
+        with open(out_path, "rb") as f:
+            return pickle.load(f)
+
+
 def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
                         run_id: str | None = None) -> "TrainReport":
     """The pooled-training equivalent of `train_pipeline.full_retrain`: any number of
@@ -454,20 +487,25 @@ def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
     # vmask), so merging afterward rather than writing into shared dicts/Series from both
     # threads avoids relying on pandas' assignment being thread-safe.
     def _train_group(var_subset: list, device: str):
+        # Each variable trains in its own subprocess (see _run_variable_subprocess) so
+        # fragmentation from one variable's fits can never carry over into the next -
+        # the previous in-process loop here is exactly what crashed repeatedly on
+        # 2026-09-14 after 1-3 hours, always at a later point as smaller fixes landed,
+        # never fixed by them because the real cause was cross-variable accumulation.
         g_artifacts, g_skipped, g_fold_models = {}, {}, {}
         g_val_pred = pd.Series(np.nan, index=va.index, dtype=float)
         for var in var_subset:
-            art = train_variable_regressor_pooled(
-                cached, train_years, var, train_c, va, hbf, cache_dir, device=device)
+            va_var = va[va["variable"] == var]
+            result = _run_variable_subprocess(
+                cached, train_years, var, train_c, va_var, hbf, cache_dir, device, fold_of)
+            art = result["artifact"]
             if art is None:
-                g_skipped[var] = "regressor training returned None or too few rows"
+                g_skipped[var] = result.get("skipped") or "regressor training returned None or too few rows"
                 continue
             g_artifacts[var] = art
-            vmask = va["variable"] == var
-            if vmask.any():
-                g_val_pred.loc[vmask] = reg_mod.predict_variable_error(art, va[vmask])
-            g_fold_models[var] = oof_fold_models(
-                cached, train_years, var, train_c, hbf, fold_of, cache_dir, device=device)
+            if result["val_pred"] is not None:
+                g_val_pred.loc[result["val_pred"].index] = result["val_pred"]
+            g_fold_models[var] = result["fold_models"]
         return g_artifacts, g_skipped, g_val_pred, g_fold_models
 
     half = max(1, len(variables) // 2)
