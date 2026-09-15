@@ -69,6 +69,37 @@ from app.ml.train_pipeline import (
 
 _THIN_STATS_COLUMNS = ["region_id", "season", "variable", "abs_error"]
 
+_MEMORY_ERRORS = [MemoryError]
+try:
+    import pyarrow.lib as _pa_lib
+    _MEMORY_ERRORS.append(_pa_lib.ArrowMemoryError)
+except Exception:
+    pass
+_MEMORY_ERRORS = tuple(_MEMORY_ERRORS)
+
+
+def read_parquet_retrying(path, columns=None, attempts: int = 4, base_delay: float = 5.0):
+    """`pd.read_parquet` with a short retry-with-backoff on an allocation failure.
+
+    Real crash 2026-09-16 (v14): a freshly-spawned, otherwise-idle subprocess failed to
+    allocate 876 MiB on its very first parquet read - nothing it had done itself could
+    have fragmented its own heap, so this was transient system-wide fragmentation left
+    behind by ~53 minutes of this run's own heavy subprocess churn (dozens of worker
+    launches/exits). Moments later the system had 20+ GiB free. `gc.collect()` plus a
+    short wait gives the OS a chance to compact/reclaim before the next attempt - there
+    is nothing else a single process can do about fragmentation it did not itself
+    cause."""
+    import time
+    last_exc = None
+    for attempt in range(attempts):
+        try:
+            return pd.read_parquet(path, columns=columns)
+        except _MEMORY_ERRORS as exc:
+            last_exc = exc
+            gc.collect()
+            time.sleep(base_delay * (attempt + 1))
+    raise last_exc
+
 
 def cache_year(year: int, cache_dir: Path) -> Path:
     """One year's downcast paired frame, written to disk and never held alongside another
@@ -122,8 +153,8 @@ def pooled_stats(cached_paths: dict, train_years: list, train_cycles: set):
         fe.EVENT_KEYS + ["variable", "forecast_value", "observed_value"]))
     thin_frames, event_frames = [], []
     for year in train_years:
-        df = pd.read_parquet(cached_paths[year],
-                             columns=list(dict.fromkeys(_THIN_STATS_COLUMNS + event_cols)))
+        df = read_parquet_retrying(cached_paths[year],
+                                   columns=list(dict.fromkeys(_THIN_STATS_COLUMNS + event_cols)))
         df = df[df["init_date"].isin(train_cycles)]
         if df.empty:
             continue
@@ -217,7 +248,7 @@ class _YearDataIter(xgb.DataIter):
     def next(self, input_data) -> int:
         if self._i == len(self._paths):
             return 0
-        df = pd.read_parquet(self._paths[self._i], columns=self._read_cols)
+        df = read_parquet_retrying(self._paths[self._i], columns=self._read_cols)
         df = df[(df["variable"] == self._variable) & (df["init_date"].isin(self._cycles))]
         self._i += 1
         if df.empty:
@@ -532,7 +563,7 @@ def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
                         for c in val_c if pd.Timestamp(c).year == y}) or train_years
     _va_parts = []
     for y in val_years:
-        part = pd.read_parquet(cached[y], columns=sorted(needed))
+        part = read_parquet_retrying(cached[y], columns=sorted(needed))
         # Cast per year before concatenating - see pooled_stats for why: categoricals
         # from different cached years are not guaranteed to share category sets/order,
         # and pd.concat silently degrades a mismatch to plain object dtype.

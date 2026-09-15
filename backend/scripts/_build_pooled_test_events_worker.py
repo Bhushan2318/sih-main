@@ -38,10 +38,10 @@ def main() -> int:
 
         from app.features import pivot as pv
         from app.ml import regressors as reg_mod
-        from app.ml.pooled_training import attach_hbf_column
+        from app.ml.pooled_training import attach_hbf_column, read_parquet_retrying
 
         columns = job["columns"]
-        df = pd.read_parquet(job["cached_path"], columns=sorted(columns) if columns else None)
+        df = read_parquet_retrying(job["cached_path"], columns=sorted(columns) if columns else None)
         df = df[df["init_date"].isin(job["test_cycles"])]
         if df.empty:
             result["event_frame"] = pd.DataFrame()
