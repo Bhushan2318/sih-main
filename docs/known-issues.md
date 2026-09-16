@@ -269,27 +269,29 @@ here rather than discovered live.
   two outright and deferring the test year's load until after the event-building pass
   that needed the headroom. Cost: roughly 9 hours of wall-clock across the failed
   attempts before the working run above. Measured 2026-09-13/14.
-- **`fit_streaming` (the CNN training loop) is not bit-reproducible on CUDA with the
-  same seed - it is on CPU.** E1 of `docs/team-brief-2026-09-15-updated.md` Section 6
+- **`fit_streaming` (the CNN training loop) was not bit-reproducible on CUDA with the
+  same seed - fixed 2026-09-17.** E1 of `docs/team-brief-2026-09-15-updated.md` Section 6
   required a test asserting two same-seed runs produce identical weights; none existed
   before 2026-09-17. Added (`tests/test_train_cnn.py::test_same_seed_gives_bit_identical_
-  weights_on_{cpu,cuda}`): the CPU version passes outright. The CUDA version does not,
-  and every learned tensor differs, starting at the first encoder layer - not late drift,
-  divergence from the first backward pass. Diagnosed, not just observed: forcing
-  `torch.use_deterministic_algorithms(True)` alone raises `RuntimeError`, naming cuBLAS's
+  weights_on_{cpu,cuda}`): the CPU version passed outright from the start. The CUDA
+  version initially did not - every learned tensor differed, starting at the first
+  encoder layer, not late drift. Diagnosed, not just observed: forcing
+  `torch.use_deterministic_algorithms(True)` alone raised `RuntimeError`, naming cuBLAS's
   GEMM algorithm selection specifically (CUDA >= 10.2 needs `CUBLAS_WORKSPACE_CONFIG` set
   before the process starts). Two other candidates were suspected first and ruled out by
   the same experiment: cuDNN convolution backward and `DistrictPooling`'s
   `torch.sparse.mm` (a scatter-add, a classic nondeterministic-on-GPU shape) - neither
-  needed a fix once cuBLAS's was applied. With `CUBLAS_WORKSPACE_CONFIG=:4096:8` plus
-  `torch.backends.cudnn.deterministic = True` set before training, the CUDA run is
-  bit-identical too (verified by hand, not yet wired into `fit_streaming` itself - that
-  would change training behaviour and is a decision for whoever owns Workstream E, not
-  something to apply unasked). The CUDA test is `xfail(strict=True)` with this diagnosis
-  as its reason, not skipped or loosened, so it fails loudly if the fix is ever applied
-  without removing the marker. This does not reopen the CNN-vs-XGBoost result (Section 0)
-  - every CNN report to date used the CUDA path's actual output, whatever it was seeded
-  to produce; reproducibility of the weights was never the same claim as correctness of
+  needed a fix once cuBLAS's was applied. **Fix applied, by the user's own instruction,
+  the same day:** `app/ml/train_cnn.py` now sets `CUBLAS_WORKSPACE_CONFIG=:4096:8` at
+  module import time (`os.environ.setdefault`, before torch initialises CUDA) and
+  `torch.backends.cudnn.deterministic = True` / `torch.use_deterministic_algorithms(True)`
+  inside `fit_streaming` (and `_fit_one`, the older CPU-only path, for consistency) right
+  after the seed is set. Both CUDA and CPU tests now pass for real, not `xfail`.
+  Deterministic algorithms cost some speed; not separately measured, and acceptable for a
+  43,969-parameter model that already trains in minutes. This does not reopen the
+  CNN-vs-XGBoost result (Section 0) - every CNN report to date used the CUDA path's
+  actual output, whatever it was seeded to produce; reproducibility of the weights was
+  never the same claim as correctness of
   the comparison. Diagnosed 2026-09-17.
 - **The ONNX-serving memory/timing claim in `app/ml/cnn.py`'s `export_encoder` docstring
   does not reproduce exactly on this machine.** Documented: "+51 MB, 490 ms for all 10
