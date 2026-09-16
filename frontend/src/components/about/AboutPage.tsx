@@ -209,6 +209,35 @@ export function AboutPage({ onReplay }: { onReplay: () => void }) {
             cost: nothing.
           </p>
         </section>
+
+        <section className="card">
+          <header className="card__head"><h3>Data &amp; attribution</h3></header>
+          <ul className="notes">
+            <li>
+              <b>Forecasts</b> — NOAA GEFSv12, the reforecast archive (2000–2019, one 00 UTC
+              cycle a day, 5 ensemble members) for training, the live operational feed for
+              today. Public domain, via NOAA&apos;s Open Data bucket on AWS S3.
+            </li>
+            <li>
+              <b>Observations</b> — ERA5 reanalysis, read via the Open-Meteo Historical
+              Weather API. Copernicus Climate Change Service (C3S), licensed CC-BY 4.0.
+            </li>
+            <li>
+              <b>District boundaries</b> — GADM 4.1, India admin-2 (gadm.org). Two corrections
+              are applied before use: Ladakh is reassigned out of Jammu &amp; Kashmir, since
+              GADM predates the 2019 reorganisation; and disputed-territory features are kept
+              and dissolved into their parent district rather than filtered out, so Jammu
+              &amp; Kashmir, Ladakh and Arunachal Pradesh still appear on the map. Used here
+              for a non-commercial hackathon prototype — formal licence review for any use
+              beyond that is not yet done.
+            </li>
+            <li>
+              <b>The project.</b> Built for Smart India Hackathon 2026, Problem Statement
+              26079, set by NCMRWF (National Centre for Medium Range Weather Forecasting),
+              Ministry of Earth Sciences.
+            </li>
+          </ul>
+        </section>
         </div>
       </div>
     </main>
