@@ -269,6 +269,45 @@ here rather than discovered live.
   two outright and deferring the test year's load until after the event-building pass
   that needed the headroom. Cost: roughly 9 hours of wall-clock across the failed
   attempts before the working run above. Measured 2026-09-13/14.
+- **`fit_streaming` (the CNN training loop) is not bit-reproducible on CUDA with the
+  same seed - it is on CPU.** E1 of `docs/team-brief-2026-09-15-updated.md` Section 6
+  required a test asserting two same-seed runs produce identical weights; none existed
+  before 2026-09-17. Added (`tests/test_train_cnn.py::test_same_seed_gives_bit_identical_
+  weights_on_{cpu,cuda}`): the CPU version passes outright. The CUDA version does not,
+  and every learned tensor differs, starting at the first encoder layer - not late drift,
+  divergence from the first backward pass. Diagnosed, not just observed: forcing
+  `torch.use_deterministic_algorithms(True)` alone raises `RuntimeError`, naming cuBLAS's
+  GEMM algorithm selection specifically (CUDA >= 10.2 needs `CUBLAS_WORKSPACE_CONFIG` set
+  before the process starts). Two other candidates were suspected first and ruled out by
+  the same experiment: cuDNN convolution backward and `DistrictPooling`'s
+  `torch.sparse.mm` (a scatter-add, a classic nondeterministic-on-GPU shape) - neither
+  needed a fix once cuBLAS's was applied. With `CUBLAS_WORKSPACE_CONFIG=:4096:8` plus
+  `torch.backends.cudnn.deterministic = True` set before training, the CUDA run is
+  bit-identical too (verified by hand, not yet wired into `fit_streaming` itself - that
+  would change training behaviour and is a decision for whoever owns Workstream E, not
+  something to apply unasked). The CUDA test is `xfail(strict=True)` with this diagnosis
+  as its reason, not skipped or loosened, so it fails loudly if the fix is ever applied
+  without removing the marker. This does not reopen the CNN-vs-XGBoost result (Section 0)
+  - every CNN report to date used the CUDA path's actual output, whatever it was seeded
+  to produce; reproducibility of the weights was never the same claim as correctness of
+  the comparison. Diagnosed 2026-09-17.
+- **The ONNX-serving memory/timing claim in `app/ml/cnn.py`'s `export_encoder` docstring
+  does not reproduce exactly on this machine.** Documented: "+51 MB, 490 ms for all 10
+  lead days". Re-measured 2026-09-17 (Windows, RTX 4060 laptop) with
+  `scripts/measure_cnn_onnx_serving_memory.py`, which - per E4 of
+  `docs/team-brief-2026-09-15-updated.md` Section 6 - exports a real-shaped model (666
+  districts, 24 data channels) and measures a genuinely separate, torch-free subprocess
+  scoring 10 lead days one at a time: **+57.1 MB, 65 ms**. Memory is close (12% higher -
+  plausibly Windows `peak_wset` accounting for RSS differently than whatever produced the
+  original number, the same caveat already on record for `measure-serving-memory.yml`'s
+  cross-platform RSS readings, not evidence of a leak). Timing is not close: 65 ms is
+  roughly 7.5x faster than 490 ms, not slower, so this is not a regression - but it is a
+  different number on different hardware, and per the brief this gets reported rather
+  than quietly adopting the original. Neither `app/ml/cnn.py`'s docstring nor CLAUDE.md's
+  measured facts have been edited to match; both are one specific run's number, on
+  whatever machine and onnxruntime build actually produced it, and this repo's own rule
+  is not to overwrite a measured fact with a different machine's reading without saying
+  so - recorded here instead. Measured 2026-09-17.
 
 ## Data
 
