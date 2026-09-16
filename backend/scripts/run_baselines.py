@@ -71,11 +71,17 @@ def _metrics(y, proba, ref, cycles) -> dict:
     D1/D2 additions, per docs/team-brief-2026-09-15-updated.md Section 6: a block
     bootstrap CI around ROC-AUC, resampled by forecast cycle (never by row - rows in
     the same cycle share the same synoptic situation), and the binormal Z-AUC estimate
-    alongside the trapezoidal one already in `_evaluate`."""
+    alongside the trapezoidal one already in `_evaluate`.
+
+    D3 addition: the CORP reliability curve and its exact Brier decomposition
+    (MCB/DSC/UNC), alongside - not replacing - the naive fixed-bin `calibration` field
+    `_evaluate` already produces."""
     m = clf_mod._evaluate(y, proba)
     m["bss"] = bl.brier_skill_score(y, proba, ref)
     m["z_auc"] = ver.binormal_auc(y, proba)
     m["roc_auc_ci"] = ver.block_bootstrap_ci(y, proba, cycles, metric_fn=ver.trapezoidal_auc)
+    m["corp_reliability"] = ver.corp_reliability_curve(y, proba)
+    m["brier_decomposition"] = ver.brier_decomposition(y, proba)
     return m
 
 
@@ -184,16 +190,26 @@ def main() -> int:
         f"`app/ml/verification.py`). Z-AUC is the binormal estimator of Shanker, Sarkar "
         f"& Mamgain (NCMRWF, QJRMS 2024, doi:10.1002/qj.4674), reported alongside the "
         f"trapezoidal ROC-AUC rather than in place of it.\n\n"
+        f"MCB/DSC are the CORP-consistent Brier decomposition of Dimitriadis, Gneiting "
+        f"& Jordan (2021, PNAS, doi:10.1073/pnas.2016191118): MCB (miscalibration, "
+        f"lower is better) is the Brier score lost to the forecast not already being "
+        f"isotonic-calibrated, DSC (discrimination, higher is better) is how much that "
+        f"calibrated forecast beats climatology. Brier = MCB - DSC + UNC exactly, where "
+        f"UNC is the bust rate's own variance - not shown per row since it does not "
+        f"depend on the forecast. The full CORP reliability curve (one row per PAV "
+        f"block) is in the run artifact, not this table.\n\n"
     )
 
     tbl = ["| model | Brier ↓ | BSS vs climatology ↑ | ROC-AUC ↑ | 95% CI (by cycle) | "
-           "Z-AUC ↑ | F1 ↑ |",
-           "|---|---|---|---|---|---|---|"]
+           "Z-AUC ↑ | F1 ↑ | MCB ↓ | DSC ↑ |",
+           "|---|---|---|---|---|---|---|---|---|"]
     for name, m in rows:
         label = f"**{name}**" if name == MODEL_ROW else name
+        bd = m["brier_decomposition"]
         tbl.append(f"| {label} | {_fmt(m['brier'])} | {_fmt(m['bss'])} | "
                    f"{_fmt(m['roc_auc'])} | {_fmt_ci(m['roc_auc_ci'])} | "
-                   f"{_fmt(m['z_auc'])} | {_fmt(m['f1'])} |")
+                   f"{_fmt(m['z_auc'])} | {_fmt(m['f1'])} | "
+                   f"{_fmt(bd['miscalibration'])} | {_fmt(bd['discrimination'])} |")
 
     all_leads = sorted({l for d in per_lead.values() for l in d})
     lead_tbl = []
@@ -231,6 +247,8 @@ def main() -> int:
                     {"name": name, "brier": m["brier"], "bss": m["bss"],
                      "roc_auc": m["roc_auc"], "roc_auc_ci": m["roc_auc_ci"],
                      "z_auc": m["z_auc"], "f1": m["f1"],
+                     "brier_decomposition": m["brier_decomposition"],
+                     "corp_reliability": m["corp_reliability"],
                      "is_model": name == MODEL_ROW}
                     for name, m in rows
                 ],
