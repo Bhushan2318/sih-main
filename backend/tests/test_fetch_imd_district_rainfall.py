@@ -122,3 +122,146 @@ def test_merge_precip_refuses_a_district_date_imd_does_not_cover_at_all():
     })
     with pytest.raises(ValueError, match="d2"):
         fir.merge_precip(base, imd_districts)
+
+
+# ---------------------------------------------------------------------------
+# The 0830 IST accumulation window.
+#
+# IMD's gauge day and Sanket's forecast day are not the same 24 hours, and until
+# now nothing said so. These tests pin the alignment so that a later "tidy-up"
+# cannot silently shift every rainfall bust label by a day - the exact class of
+# bug CLAUDE.md rule 4 already records once.
+#
+# Everything down to the event test is pure timestamp arithmetic: no rainfall
+# values, no fixtures, nothing that could be mistaken for synthetic data.
+# ---------------------------------------------------------------------------
+
+IST_OFFSET_HOURS = 5.5
+
+
+def test_imd_rain_day_starts_at_0830_ist_which_is_0300_utc():
+    start, _ = fir.imd_rain_day_window_utc("2018-08-15")
+    assert start == pd.Timestamp("2018-08-15 03:00", tz="UTC")
+    # ...and 0300 UTC really is 0830 IST, rather than a number someone typed.
+    assert (start + pd.Timedelta(hours=IST_OFFSET_HOURS)).strftime("%H:%M") == "08:30"
+
+
+def test_model_day_starts_at_midnight_utc():
+    """CLAUDE.md rule 4: day k is forecast hours ((k-1)*24, k*24], so the model day
+    is midnight-to-midnight UTC. The ERA5 observation fetch matches it deliberately -
+    see to_daily() in fetch_era5_cds_district_observations.py."""
+    start, end = fir.model_day_window_utc("2018-08-15")
+    assert start == pd.Timestamp("2018-08-15 00:00", tz="UTC")
+    assert end == pd.Timestamp("2018-08-16 00:00", tz="UTC")
+
+
+def test_both_windows_span_exactly_24_hours():
+    for fn in (fir.model_day_window_utc, fir.imd_rain_day_window_utc):
+        start, end = fn("2018-08-15")
+        assert end - start == pd.Timedelta(hours=24), fn.__name__
+
+
+def test_imd_date_d_pairs_with_model_date_d_by_a_21_hour_majority():
+    """The whole join rests on this. IMD's day D shares 21 of its 24 hours with the
+    model's day D and only 3 with the model's day D+1, so IMD[D] pairs with model[D].
+    If this ratio ever inverts, merge_precip is joining the wrong days."""
+    imd = fir.imd_rain_day_window_utc("2018-08-15")
+    assert fir.window_overlap_hours(imd, fir.model_day_window_utc("2018-08-15")) == 21.0
+    assert fir.window_overlap_hours(imd, fir.model_day_window_utc("2018-08-16")) == 3.0
+    assert fir.window_overlap_hours(imd, fir.model_day_window_utc("2018-08-14")) == 0.0
+
+
+def test_the_offset_is_exactly_three_hours_every_day_of_the_year():
+    """India is UTC+05:30 all year - no daylight saving - so this never drifts.
+    Includes a leap day, since 2016 is inside the project's scope."""
+    for day in ("2016-01-01", "2016-02-29", "2016-06-21", "2018-12-31", "2019-07-04"):
+        model_start, _ = fir.model_day_window_utc(day)
+        imd_start, _ = fir.imd_rain_day_window_utc(day)
+        assert imd_start - model_start == pd.Timedelta(hours=3), day
+
+
+def test_merge_precip_joins_imd_date_to_the_same_model_date():
+    """The behavioural half of the join rule: merge_precip must not shift dates while
+    swapping the column. A row dated D takes IMD's value for D - not D-1, not D+1.
+
+    Distinct values per day, so an off-by-one shows up as a wrong value rather than
+    an equal one. These are not rainfall measurements; they are position markers.
+    """
+    days = pd.to_datetime(["2018-08-14", "2018-08-15", "2018-08-16"]).date
+    base = pd.DataFrame({
+        "region_id": ["d1"] * 3,
+        "date": days,
+        "precip_mm": [0.0, 0.0, 0.0],
+        "source": ["ERA5"] * 3,
+    })
+    imd_districts = pd.DataFrame({
+        "region_id": ["d1"] * 3,
+        "date": days,
+        "precip_mm": [111.0, 222.0, 333.0],
+    })
+    merged = fir.merge_precip(base, imd_districts).sort_values("date")
+    assert list(merged["precip_mm"]) == [111.0, 222.0, 333.0]
+
+
+# --- The one that catches a whole-day error, not a three-hour one ------------
+#
+# Everything above assumes IMD attributes a 0830-to-0830 accumulation to the day it
+# STARTS. Some IMD products instead file the 0830 reading under the day it was TAKEN,
+# which is a full day out. No amount of timestamp arithmetic can tell the two apart -
+# only real rainfall on a date we independently know can.
+#
+# Needs a merged parquet on disk. It is skipped on a fresh clone and in CI, and is
+# NOT evidence until someone with the archive runs it and pastes the output.
+
+IMD_EVENTS = [
+    # (district name fragment, first documented day, last documented day)
+    ("Idukki", "2018-08-15", "2018-08-17"),        # Kerala floods
+    ("Wayanad", "2018-08-15", "2018-08-17"),       # Kerala floods
+    ("Kanniyakumari", "2017-11-29", "2017-12-01"),  # Cyclone Ockhi landfall rains
+]
+
+
+def _merged_parquet(year: int):
+    path = fir.OUT_DIR / f"imd_merged_district_observations_india_{year}.parquet"
+    return path if path.exists() else None
+
+
+@pytest.mark.parametrize("name_fragment,first_day,last_day", IMD_EVENTS)
+def test_documented_extreme_rain_lands_on_its_documented_date(
+        name_fragment, first_day, last_day, capsys):
+    """A day-scale attribution error moves the peak outside the documented window.
+
+    Searches a +/- 3 day margin around the event so the peak has somewhere wrong to
+    land; asserts it landed inside the documented days.
+    """
+    year = int(first_day[:4])
+    path = _merged_parquet(year)
+    if path is None:
+        pytest.skip(f"no merged IMD parquet for {year} on this machine - run "
+                    f"scripts/fetch_imd_district_rainfall.py --years {year} first")
+
+    from app.utils import india_districts as idist
+
+    matches = [d for d in idist.load_registry()
+               if name_fragment.lower() in d.region_name.lower()]
+    assert matches, f"no district whose name contains {name_fragment!r}"
+    region_ids = {d.region_id for d in matches}
+
+    df = pd.read_parquet(path)
+    df["date"] = pd.to_datetime(df["date"])
+    lo = pd.Timestamp(first_day) - pd.Timedelta(days=3)
+    hi = pd.Timestamp(last_day) + pd.Timedelta(days=3)
+    window = df[df["region_id"].isin(region_ids)
+                & df["date"].between(lo, hi)].dropna(subset=["precip_mm"])
+    assert not window.empty, f"no IMD rainfall for {name_fragment} around {first_day}"
+
+    peak = window.loc[window["precip_mm"].idxmax()]
+    with capsys.disabled():
+        print(f"\n  {name_fragment}: peak {peak['precip_mm']:.1f} mm on "
+              f"{peak['date'].date()} (documented {first_day}..{last_day})")
+
+    assert pd.Timestamp(first_day) <= peak["date"] <= pd.Timestamp(last_day), (
+        f"{name_fragment} peak rainfall landed on {peak['date'].date()}, outside the "
+        f"documented {first_day}..{last_day}. If it is consistently one day late, IMD "
+        f"is attributing to the END of its 0830-0830 window and every rainfall bust "
+        f"label is a day out.")
