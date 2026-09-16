@@ -1,10 +1,8 @@
 import type { ModelStatusResponse } from "../../api/types";
 import { LEAD_DAY_RUNG_NAME } from "../../lib/baselineLadder";
+import { formatMetric } from "../../lib/format";
 
 type Baselines = ModelStatusResponse["baselines"];
-
-const n3 = (v: unknown, dp = 4) =>
-  typeof v === "number" && Number.isFinite(v) ? v.toFixed(dp) : "—";
 
 /** The ladder of baselines every rung is scored against, shared by the About
  * page's full writeup and the dashboard's compact callout. */
@@ -33,9 +31,9 @@ export function BaselineLadderTable({ baselines, flagLeadDay = false }: {
             return (
               <tr key={m.name} className={cls}>
                 <td>{m.is_model ? <b>{m.name}</b> : m.name}</td>
-                <td className="mono">{n3(m.brier)}</td>
-                <td className="mono">{n3(m.bss)}</td>
-                <td className="mono">{n3(m.roc_auc)}</td>
+                <td className="mono">{formatMetric(m.brier, 4)}</td>
+                <td className="mono">{formatMetric(m.bss, 4)}</td>
+                <td className="mono">{formatMetric(m.roc_auc, 4)}</td>
               </tr>
             );
           })}
