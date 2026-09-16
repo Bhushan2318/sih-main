@@ -1,10 +1,14 @@
 name: Warm the box after a push deploy
 
-# Render auto-deploys on every push to main through its own git integration, which never
-# touches the refresh workflow - so the warm step that runs there does not cover pushes.
-# Caches are per-process and a deploy starts them empty; /api/replay/cycles was measured
-# at 54 s cold against ~0.2 s warm, and it is one of the four tabs. The judges are sent a
-# link rather than shown a demo, so the first *human* request must not be the cold one.
+# Render's autoDeploy is OFF (render.yaml, confirmed live in the dashboard 2026-09-16) -
+# deploys are dispatched deliberately by refresh-data.yml's hook, not fired by a push. This
+# workflow's wait-for-new-build loop below still runs against whatever is live for any
+# backend/frontend/Dockerfile push, so a push that does NOT trigger a Render deploy just
+# times out its wait (~15 min) and warms whatever was already serving - harmless, since the
+# workflow never fails either way (see below), but it is not warming a build this push
+# caused. Caches are per-process; /api/replay/cycles was measured at 54 s cold against
+# ~0.2 s warm, and it is one of the four tabs. The judges are sent a link rather than shown
+# a demo, so the first *human* request must not be the cold one.
 #
 # This workflow never fails. Nothing downstream depends on it, the data is already live
 # and correct, and a failed warm costs the next visitor some latency and nothing else.
