@@ -92,6 +92,9 @@ export function ReplayView({ topology }: { topology: Topology | null }) {
                 {c.peak_bust_probability != null
                   ? ` · peak risk ${(c.peak_bust_probability * 100).toFixed(0)}%`
                   : ""}
+                {c.peak_region_abs_error != null
+                  ? ` · actual error there: ${c.peak_region_abs_error.toFixed(1)}${c.peak_region_unit ? ` ${c.peak_region_unit}` : ""}`
+                  : ""}
               </option>
             ))}
           </select>
