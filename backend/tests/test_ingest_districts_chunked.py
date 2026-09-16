@@ -12,10 +12,15 @@ import pytest
 
 def test_module_imports_on_every_platform():
     """The historical bug: `import resource` at module level made the whole script
-    unusable on Windows before a single line of its own logic executed."""
+    unusable on Windows before a single line of its own logic executed. `resource` is
+    the correct, expected import on POSIX - only Windows must avoid it."""
     import scripts.ingest_districts_chunked as m
-    assert not hasattr(sys.modules[m.__name__], "resource"), (
-        "resource is POSIX-only; importing it unconditionally breaks Windows")
+    has_resource = hasattr(sys.modules[m.__name__], "resource")
+    if sys.platform == "win32":
+        assert not has_resource, (
+            "resource is POSIX-only; importing it unconditionally breaks Windows")
+    else:
+        assert has_resource, "POSIX platforms should take the resource-module path"
 
 
 def test_peak_rss_mb_returns_a_positive_float():
