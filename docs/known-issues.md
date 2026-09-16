@@ -298,6 +298,34 @@ here rather than discovered live.
   consequence: a complete day needs stamps `01:00..00:00` of the next day, so a per-month
   request loses its final day unless it also pulls the first hour of the month after. The
   fetch does, and drops the spillover.
+- **IMD's rain day is three hours behind Sanket's day, and is joined without shifting.**
+  IMD's gauge day accumulates 0830 IST to 0830 IST and is filed under the day the window
+  *started*, so in UTC it runs 03:00 to 03:00. Sanket's day is midnight to midnight UTC on
+  both sides - `((k-1)*24, k*24]` on the forecast side per rule 4, `(t-24h, t]` on the ERA5
+  side. The two share 21 of their 24 hours, so IMD's date D is joined straight onto model
+  date D with no offset: the remaining 3 hours fall in model day D+1, and 21 outvotes 3.
+  The mismatch is real - rain falling 05:30-08:30 IST is counted by the model on day D and
+  by IMD on day D-1 - and it is deliberately not corrected. Re-cutting the model day to
+  start at 0300 UTC would match IMD exactly and push Day 10 out to forecast hour 243, past
+  the 240-hour end of the GEFSv12 reforecast, losing rainfall at the longest lead. And
+  because a bust is the 90th percentile of a variable's *own* error distribution rather
+  than a fixed millimetre count, a uniform inflation of error lifts the threshold with it;
+  what does not cancel is districts and seasons where an unusual share of rain falls inside
+  that window. The windows and the 21/3 join are pinned by tests in
+  `test_fetch_imd_district_rainfall.py`.
+- **How much that three-hour offset actually costs has not been measured.** ERA5 is
+  hourly, so the same bust labels can be built on the 00 UTC day and on the 03 UTC day and
+  compared - a single percentage of labels that differ, on real data, with no assumption
+  about IMD involved. Nobody has produced that number yet. Until someone does, the
+  paragraph above is an argument, not evidence.
+- **Whether IMD attributes to the starting or the ending day is not yet confirmed against
+  the archive.** The starting-day convention above is taken from IMD's documentation of
+  the gridded product; some IMD products file the 0830 reading under the day it was taken,
+  which is a whole day out rather than three hours. No timestamp arithmetic can tell the
+  two apart - only real rainfall on independently known dates. The event tests in
+  `test_fetch_imd_district_rainfall.py` (Kerala floods 2018, Cyclone Ockhi 2017) do exactly
+  that, but they need a merged IMD parquet on disk and skip on a fresh clone and in CI.
+  As of this commit they have not been run.
 
 - **A cycle too incomplete to publish is refused, not partially ingested.** A short
   rainfall *sum* is roughly half the real accumulation, and rainfall drives most busts, so

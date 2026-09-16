@@ -19,6 +19,48 @@ else (temperature, humidity, wind, pressure, soil moisture, water vapour) keeps 
 from ERA5/CDS. The two products never blend inside one column: `source` is annotated so
 it is always traceable which product produced a row's rainfall.
 
+Accumulation windows - the 0830 IST rain day
+---------------------------------------------
+IMD and Sanket do not mean the same 24 hours by "a day". This is the one place that
+difference gets stated rather than assumed.
+
+    Sanket's day D     [D 00:00 UTC, D+1 00:00 UTC)   ==  05:30 IST -> 05:30 IST
+    IMD's rain day D   [D 03:00 UTC, D+1 03:00 UTC)   ==  08:30 IST -> 08:30 IST
+
+The model day is fixed by CLAUDE.md rule 4 - day k is forecast hours ((k-1)*24, k*24]
+- and the ERA5 observation fetch matches it deliberately: `to_daily` in
+fetch_era5_cds_district_observations.py shifts ERA5's end-of-hour accumulation stamp
+so that a day is the half-open window (t-24h, t]. IMD's day is a rain-gauge
+convention instead: the reading taken at 0830 IST covers the previous 24 hours and is
+filed under the day that window STARTED.
+
+India is UTC+05:30 all year, with no daylight saving, so the offset is exactly three
+hours, every day.
+
+THE JOIN: IMD's date D pairs with Sanket's date D. Nothing is shifted. That is not a
+convenience - IMD's day D shares 21 of its 24 hours with the model's day D and only 3
+with the model's day D+1, so the 21 hours outvote the 3. `merge_precip` therefore
+joins on (region_id, date) with no offset, and test_fetch_imd_district_rainfall.py
+pins that 21/3 ratio so a later tidy-up cannot quietly invert it. Getting this
+backwards shifts every rainfall bust label by a day - the same class of bug rule 4
+already records once.
+
+WHAT IT COSTS: re-cutting the model day to start at 0300 UTC would match IMD exactly,
+and would push Day 10 out to forecast hour 243 - past the 240-hour end of the GEFSv12
+reforecast archive. That trades rainfall at the longest lead for three hours at the
+edge of the window. The residual three-hour mismatch is a known limitation, written
+down in docs/known-issues.md rather than left implicit.
+
+NOT SETTLED HERE: that IMD attributes to the starting day is taken from IMD's own
+documentation of the gridded product. Some IMD products file the 0830 reading under
+the day it was taken instead, which is a whole day out and which no amount of
+timestamp arithmetic can detect. The event tests in
+test_fetch_imd_district_rainfall.py check it against real rainfall on dates we know
+independently; they need a merged parquet on disk and skip without one.
+
+These windows live in this script because it is their only consumer. If a second IMD
+path appears, move them into app/utils/ - do not copy them.
+
 Access
 ------
 Verified against the real archive 2026-09-13: a plain POST to
@@ -53,6 +95,50 @@ OUT_DIR = BACKEND_DIR / "data" / "samples"
 SOURCE_IMD = "IMD gauge-based gridded rainfall 0.25 deg (imdpune.gov.in)"
 MISSING = -999.0
 
+# --- Accumulation windows. See "the 0830 IST rain day" in the module docstring. ---
+DAY = pd.Timedelta(hours=24)
+IST_OFFSET = pd.Timedelta(hours=5, minutes=30)   # India has no daylight saving
+MODEL_DAY_START_UTC = pd.Timedelta(hours=0)      # 00:00 UTC, CLAUDE.md rule 4
+IMD_DAY_START_UTC = pd.Timedelta(hours=3)        # 08:30 IST
+
+
+def _utc_midnight(day) -> pd.Timestamp:
+    ts = pd.Timestamp(day)
+    ts = ts.tz_localize("UTC") if ts.tzinfo is None else ts.tz_convert("UTC")
+    return ts.normalize()
+
+
+def model_day_window_utc(day) -> tuple[pd.Timestamp, pd.Timestamp]:
+    """Sanket's day `day` as a half-open [start, end) window in UTC.
+
+    Midnight to midnight UTC - the window the GEFS forecast side and the ERA5
+    observation side both already use.
+    """
+    start = _utc_midnight(day) + MODEL_DAY_START_UTC
+    return start, start + DAY
+
+
+def imd_rain_day_window_utc(day) -> tuple[pd.Timestamp, pd.Timestamp]:
+    """IMD's gauge rain-day `day` as a half-open [start, end) window in UTC.
+
+    0830 IST to 0830 IST, attributed to the day the window started, so in UTC it
+    runs 03:00 to 03:00 - three hours behind `model_day_window_utc` for the same
+    calendar date.
+    """
+    start = _utc_midnight(day) + IMD_DAY_START_UTC
+    return start, start + DAY
+
+
+def window_overlap_hours(a: tuple[pd.Timestamp, pd.Timestamp],
+                         b: tuple[pd.Timestamp, pd.Timestamp]) -> float:
+    """Hours two half-open [start, end) windows share; 0.0 when they do not touch.
+
+    The join rule in one number: an IMD rain-day overlaps the model day of the same
+    date by 21 hours and the next model day by 3.
+    """
+    overlap = min(a[1], b[1]) - max(a[0], b[0])
+    return max(pd.Timedelta(0), overlap).total_seconds() / 3600.0
+
 
 def imd_to_long(imd_obj) -> pd.DataFrame:
     """An imdlib IMD object (or anything with the same `.data`/`.lat_array`/`.lon_array`/
@@ -82,6 +168,14 @@ def imd_to_long(imd_obj) -> pd.DataFrame:
 
 def merge_precip(base: pd.DataFrame, imd_districts: pd.DataFrame) -> pd.DataFrame:
     """Replace `base`'s precip_mm with IMD's, matched on (region_id, date).
+
+    The dates are joined straight across, with NO shift, even though IMD's rain day
+    runs 0830-0830 IST and `base`'s day runs midnight-to-midnight UTC. IMD's day D
+    shares 21 of its 24 hours with the model's day D and only 3 with day D+1, so
+    date D is the right partner for date D. See "the 0830 IST rain day" in the
+    module docstring for the full window arithmetic, and
+    test_imd_date_d_pairs_with_model_date_d_by_a_21_hour_majority for the assertion
+    that stops this drifting.
 
     Refuses if IMD covers fewer (region_id, date) pairs than `base` - a real coverage gap,
     not a row to drop silently (CLAUDE.md rule 3: refuse rather than patch). A district-date
