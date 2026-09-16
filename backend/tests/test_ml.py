@@ -371,3 +371,39 @@ def test_replay_service_narrates_from_real_numbers(_retrain):
         if other:
             pinned = replay_service.get_replay(str(rep.init_date), focus_region=other)
             assert pinned.focus is not None and pinned.focus.region_id == other
+
+
+def test_cycle_summary_excludes_wind_direction_from_the_peak_error(monkeypatch):
+    """wind_direction_deg is circular (0 and 360 degrees are the same bearing), so a naive
+    abs difference can read as a ~345 degree "miss" for an actual 15 degree one - the same
+    reason ensemble_service and _focus_variable_for already exclude it. Shape-only
+    synthetic events, built to put wind_direction_deg at the peak-probability row; this
+    never reaches a served metric, it only exercises _cycle_summary's guard directly."""
+    from app.ml.inference import ScoredCycle
+    from app.services import replay_service
+
+    events = pd.DataFrame({
+        "region_id": ["IN-TEST"],
+        "lead_time_days": [1],
+        "bust_probability": [0.9],
+        "risk_band": ["high"],
+        "dominant_variable": ["wind_direction_deg"],
+    })
+    per_variable = pd.DataFrame({
+        "region_id": ["IN-TEST"],
+        "lead_time_days": [1],
+        "variable": ["wind_direction_deg"],
+        "predicted_value": [350.0],
+        "observed_value": [5.0],
+    })
+    sc = ScoredCycle(
+        run_id="test", init_date=pd.Timestamp("2026-01-01"),
+        events=events, per_variable=per_variable, n_rows_scored=1,
+    )
+    monkeypatch.setattr(replay_service.inference, "score_cycle", lambda state, init: sc)
+
+    summary = replay_service._cycle_summary(state=object(), init="2026-01-01")
+    assert summary is not None
+    assert summary.peak_region_variable is None
+    assert summary.peak_region_abs_error is None
+    assert summary.peak_region_unit is None

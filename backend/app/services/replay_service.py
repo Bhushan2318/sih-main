@@ -43,7 +43,10 @@ def _cycle_summary(state, init) -> Optional[schemas.ReplayCycleSummary]:
             & (pv["region_id"].astype(str) == str(peak["region_id"]))
             & (pv["variable"] == dom)
         ]
-        if not prz.empty:
+        # wind_direction_deg is circular (0 and 360 are the same bearing); a naive abs
+        # difference can read as a ~345 degree "miss" for an actual 15 degree one, so it's
+        # excluded here the same way ensemble_service and _focus_variable_for exclude it.
+        if not prz.empty and dom != "wind_direction_deg":
             peak_abs_err = float((prz["predicted_value"] - prz["observed_value"]).abs().mean())
             peak_dom_var = str(dom)
 
