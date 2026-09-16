@@ -1,0 +1,59 @@
+# Who to route review requests to, per workstream (docs/team-brief-2026-09-15-updated.md
+# Section 6). Later, more specific patterns win over earlier, more general ones - so this
+# file goes general (workstream A, the default) to specific (individual modules) in that
+# order, per GitHub's own last-match-wins rule.
+#
+# Coverage is deliberately partial. Undeclared paths (most of docs/, top-level configs,
+# anything not listed below) have no owner here - that's intentional, not an oversight:
+# forcing every one-line docs fix through a specific person's review would slow down
+# exactly the kind of change that shouldn't need it. Add a line here only for paths a
+# workstream owner actually wants routed to them.
+
+# ---- A: pipeline, fetch, CI, contracts (default for backend infra) ------------------
+/.github/workflows/               @Bhushan2318
+/backend/app/contracts.py         @Bhushan2318
+/backend/app/storage/             @Bhushan2318
+/backend/app/ingestion/           @Bhushan2318
+/backend/app/utils/geo.py               @Bhushan2318
+/backend/app/utils/india_districts.py   @Bhushan2318
+/backend/app/utils/district_observations.py  @Bhushan2318
+/backend/scripts/fetch_gefs_reforecast_sample.py  @Bhushan2318
+/backend/scripts/ingest_backfill.py               @Bhushan2318
+/backend/scripts/ingest_districts_chunked.py      @Bhushan2318
+/backend/scripts/package_for_deploy.py            @Bhushan2318
+/backend/scripts/refresh_for_deploy.py            @Bhushan2318
+/render.yaml                      @Bhushan2318
+/Dockerfile                       @Bhushan2318
+/docker-entrypoint.sh             @Bhushan2318
+
+# ---- B: observations and truth -------------------------------------------------------
+/backend/scripts/fetch_era5_cds_district_observations.py  @mayankjain1815-commits
+/backend/scripts/fetch_era5_district_observations.py      @mayankjain1815-commits
+/backend/scripts/fetch_era5_observations.py                @mayankjain1815-commits
+/backend/scripts/fetch_imd_district_rainfall.py             @mayankjain1815-commits
+
+# ---- C: features and the tabular model ------------------------------------------------
+/backend/app/features/            @Harithdn
+/backend/app/ml/classifier.py     @Harithdn
+/backend/app/ml/regressors.py     @Harithdn
+/backend/app/ml/thresholds.py     @Harithdn
+/backend/app/ml/train_pipeline.py @Harithdn
+
+# ---- D: verification and conformal -----------------------------------------------------
+/backend/app/ml/verification.py   @Aryakuna14
+/backend/scripts/run_baselines.py @Aryakuna14
+
+# ---- E: CNN (closed per CLAUDE.md / docs/team-brief - not accepting new model changes,
+# owner working through Bhushan2318 in practice) -----------------------------------------
+/backend/app/ml/cnn.py            @Bhushan2318
+/backend/app/ml/train_cnn.py      @Bhushan2318
+
+# ---- F: frontend, demo, boundary -------------------------------------------------------
+/frontend/                        @Dhanush133
+/docs/boundary-geometry-licensing.md  @Dhanush133
+/docs/replay-coverage-review.md       @Dhanush133
+
+# ---- Shared contracts: anyone touching these three shapes should loop in whoever froze
+# them (A), since a change here is exactly what breaks another workstream silently.
+/backend/tests/test_contracts.py  @Bhushan2318
+/backend/app/api/schemas.py       @Bhushan2318
