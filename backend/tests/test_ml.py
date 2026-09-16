@@ -326,6 +326,17 @@ def test_replay_service_narrates_from_real_numbers(_retrain):
     # verified cycles must rank ahead of unverified ones
     verified_flags = [c.verified for c in cycles]
     assert verified_flags == sorted(verified_flags, reverse=True)
+    # a cycle with a measured peak-region error names the variable and its unit,
+    # so a viewer can tell a well-tracked cycle from a badly-missed one before picking it
+    from app.ingestion.canonical_schema import CanonicalVariable, VARIABLE_UNITS
+
+    for c in cycles:
+        if c.peak_region_abs_error is not None:
+            assert c.peak_region_variable
+            assert c.peak_region_unit == VARIABLE_UNITS[CanonicalVariable(c.peak_region_variable)]
+        else:
+            assert c.peak_region_variable is None
+            assert c.peak_region_unit is None
 
     rep = replay_service.get_replay()
     assert rep.model_trained

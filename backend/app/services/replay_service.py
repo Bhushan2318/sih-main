@@ -31,6 +31,7 @@ def _cycle_summary(state, init) -> Optional[schemas.ReplayCycleSummary]:
 
     verified_leads = 0
     peak_abs_err = None
+    peak_dom_var = None
     growth = 0.0
     pv = sc.per_variable
     if not pv.empty and "observed_value" in pv.columns:
@@ -44,6 +45,7 @@ def _cycle_summary(state, init) -> Optional[schemas.ReplayCycleSummary]:
         ]
         if not prz.empty:
             peak_abs_err = float((prz["predicted_value"] - prz["observed_value"]).abs().mean())
+            peak_dom_var = str(dom)
 
     near = ev.loc[ev["lead_time_days"] <= 3, "bust_probability"].mean()
     far = ev.loc[ev["lead_time_days"] >= 4, "bust_probability"].mean()
@@ -62,6 +64,8 @@ def _cycle_summary(state, init) -> Optional[schemas.ReplayCycleSummary]:
         verified=verified_leads > 0,
         verified_lead_days=verified_leads,
         peak_region_abs_error=_f(peak_abs_err),
+        peak_region_variable=peak_dom_var,
+        peak_region_unit=_unit(peak_dom_var) if peak_dom_var else None,
         medium_range_growth=round(growth, 4),
     )
 
