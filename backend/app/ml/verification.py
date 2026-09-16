@@ -6,11 +6,16 @@ callers own reading the eval-events frame and writing the result. Consumed by
 ``scripts/run_baselines.py``, which already has both the arrays and the ``init_date``
 cycle id on the held-out test split.
 
-Two things live here, per D1/D2 of ``docs/team-brief-2026-09-15-updated.md`` Section 6:
+Three things live here, per D1/D2/D3 of ``docs/team-brief-2026-09-15-updated.md``
+Section 6:
 
 - ``block_bootstrap_ci``: a confidence interval for any ladder metric, resampling whole
   forecast cycles rather than rows.
 - ``binormal_auc`` / ``trapezoidal_auc``: the two AUC estimators side by side.
+- ``corp_reliability_curve`` / ``brier_decomposition``: CORP (Consistent, Optimally
+  binned, Reproducible - Dimitriadis, Gneiting & Jordan, PNAS 2021,
+  doi:10.1073/pnas.2016191118) reliability diagrams via isotonic regression, and the
+  matching exact Brier score decomposition.
 """
 
 from __future__ import annotations
@@ -19,6 +24,7 @@ from typing import Callable
 
 import numpy as np
 from scipy import stats
+from sklearn.isotonic import IsotonicRegression
 from sklearn.metrics import roc_auc_score
 
 MetricFn = Callable[[np.ndarray, np.ndarray], float]
@@ -133,4 +139,96 @@ def block_bootstrap_ci(
     return {
         "point": point, "lo": lo, "hi": hi,
         "n_resamples": int(draws.size), "n_cycles": int(n_cycles), "ci": ci,
+    }
+
+
+def _pav_fit(y_true, y_prob):
+    """Sort by forecast, run isotonic regression (PAV) of outcome on forecast.
+
+    Returns ``(y_sorted, p_sorted, fitted)`` - ``fitted`` is the PAV-recalibrated
+    "conditional event probability" (CEP) estimate, the same length as the inputs,
+    constant within each pooled block. Shared by both public functions below so their
+    numbers can never drift apart from using two different isotonic fits.
+    """
+    y = np.asarray(y_true, float)
+    p = np.asarray(y_prob, float)
+    if len(y) == 0:
+        return y, p, np.empty(0, dtype=float)
+    order = np.argsort(p, kind="stable")
+    y_sorted, p_sorted = y[order], p[order]
+    iso = IsotonicRegression(out_of_bounds="clip")
+    fitted = iso.fit_transform(p_sorted, y_sorted)
+    return y_sorted, p_sorted, fitted
+
+
+def corp_reliability_curve(y_true, y_prob) -> list:
+    """CORP reliability diagram: the PAV-recalibrated forecast, grouped into the blocks
+    isotonic regression actually produced.
+
+    Dimitriadis, Gneiting & Jordan (2021, PNAS), doi:10.1073/pnas.2016191118: naive
+    fixed-width binning (as in ``classifier._reliability``) is not a consistent
+    estimator of the true calibration curve - its shape depends on an arbitrary choice
+    of bin count and edges. CORP instead fits the provably-optimal (least-squares)
+    monotone recalibration via the pool-adjacent-violators algorithm, with no bin count
+    to choose: points are pooled only where the data itself forces it, via
+    ``sklearn.isotonic.IsotonicRegression``.
+
+    Returns the same ``{predicted_mean, observed_rate, n}`` shape as the existing
+    ``CalibrationBin`` type (see ``app/api/schemas.py``), so this can sit alongside the
+    naive curve without a contract change - one row per PAV block, in ascending
+    forecast order.
+    """
+    y_sorted, p_sorted, fitted = _pav_fit(y_true, y_prob)
+    if len(y_sorted) == 0:
+        return []
+    bins, start = [], 0
+    n = len(fitted)
+    for i in range(1, n + 1):
+        if i == n or not np.isclose(fitted[i], fitted[start], atol=1e-12):
+            bins.append({
+                "predicted_mean": float(p_sorted[start:i].mean()),
+                "observed_rate": float(fitted[start]),
+                "n": int(i - start),
+            })
+            start = i
+    return bins
+
+
+def brier_decomposition(y_true, y_prob) -> dict:
+    """Exact CORP-consistent Brier score decomposition: BS = MCB - DSC + UNC.
+
+    Dimitriadis, Gneiting & Jordan (2021, PNAS), doi:10.1073/pnas.2016191118. Given the
+    PAV-recalibrated forecast ``f`` from ``_pav_fit``:
+
+    - UNC (uncertainty) = ybar * (1 - ybar): the Brier score of the constant
+      climatology forecast, independent of the forecast under evaluation.
+    - DSC (discrimination) = UNC - BS(f, y): how much recalibration improves on
+      climatology.
+    - MCB (miscalibration) = BS(x, y) - BS(f, y): the mean score lost to the original
+      forecast not already being PAV-calibrated.
+
+    MCB and DSC are defined as score DIFFERENCES, not as an independent squared-error
+    term against the original forecast - that is what makes ``BS = MCB - DSC + UNC``
+    an exact identity rather than an approximation, and it is also why MCB is
+    guaranteed non-negative: PAV recalibration is a least-squares projection, so it can
+    only weakly improve the Brier score, never worsen it.
+    """
+    y = np.asarray(y_true, float)
+    p = np.asarray(y_prob, float)
+    if len(y) == 0:
+        return {"brier": float("nan"), "uncertainty": float("nan"),
+                "discrimination": float("nan"), "miscalibration": float("nan")}
+
+    y_sorted, p_sorted, fitted = _pav_fit(y, p)
+    ybar = float(y_sorted.mean())
+    uncertainty = ybar * (1.0 - ybar)
+    bs_x = float(np.mean((p_sorted - y_sorted) ** 2))
+    bs_f = float(np.mean((fitted - y_sorted) ** 2))
+    discrimination = uncertainty - bs_f
+    miscalibration = bs_x - bs_f
+    return {
+        "brier": bs_x,
+        "uncertainty": uncertainty,
+        "discrimination": discrimination,
+        "miscalibration": miscalibration,
     }

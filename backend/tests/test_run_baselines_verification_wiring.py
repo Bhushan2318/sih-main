@@ -1,7 +1,8 @@
-"""D1/D2 wiring: scripts/run_baselines.py must actually call into app/ml/verification.py
-and put the results where /api/model/status already serves baselines.json from - not just
-have the functions exist unused. See app/ml/verification.py for the metric formulas
-themselves and their own hand-computed tests.
+"""D1/D2/D3 wiring: scripts/run_baselines.py must actually call into
+app/ml/verification.py and put the results where /api/model/status already serves
+baselines.json from - not just have the functions exist unused. See
+app/ml/verification.py for the metric formulas themselves and their own hand-computed
+tests.
 """
 
 from __future__ import annotations
@@ -9,6 +10,7 @@ from __future__ import annotations
 import math
 
 import numpy as np
+import pytest
 
 from scripts.run_baselines import _fmt_ci, _metrics
 
@@ -65,3 +67,14 @@ def test_fmt_ci_renders_bracketed_range():
 
 def test_fmt_ci_dash_on_nan():
     assert _fmt_ci({"lo": float("nan"), "hi": float("nan")}) == "—"
+
+
+def test_metrics_includes_corp_reliability_and_brier_decomposition():
+    y, proba, ref, cycles = _fixture()
+    m = _metrics(y, proba, ref, cycles)
+    assert "corp_reliability" in m and "brier_decomposition" in m
+    assert len(m["corp_reliability"]) >= 1
+    bd = m["brier_decomposition"]
+    assert bd["miscalibration"] - bd["discrimination"] + bd["uncertainty"] == \
+        pytest.approx(bd["brier"], abs=1e-9)
+    assert bd["miscalibration"] >= -1e-9
