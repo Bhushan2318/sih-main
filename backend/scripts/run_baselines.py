@@ -9,8 +9,10 @@ boundary. Rebuilding any of those here would be a second implementation that can
 from the pipeline silently - and a drifted baseline flatters the model. So the training
 run publishes what it scored (`--emit-eval`) and this reads it.
 
-Reports, per model: Brier, Brier skill score against climatology, ROC-AUC, and BSS broken
-down by lead day - because the honest question is not whether the model beats climatology
+Reports, per model: Brier, Brier skill score against climatology, ROC-AUC with a
+by-cycle block bootstrap 95% CI, the binormal Z-AUC alongside the trapezoidal ROC-AUC
+(app/ml/verification.py - D1/D2 of the verification package), and BSS broken down by
+lead day - because the honest question is not whether the model beats climatology
 overall, but whether it still adds anything once you know the lead time.
 
 Writes a markdown table into docs/results.md under `## Baselines`, stamped with the run_id
@@ -35,6 +37,7 @@ sys.path.insert(0, str(BACKEND_DIR))
 
 from app.ml import baselines as bl               # noqa: E402
 from app.ml import classifier as clf_mod         # noqa: E402
+from app.ml import verification as ver           # noqa: E402
 
 EVAL_DIR = BACKEND_DIR / "data" / "analysis" / "eval_events"
 RESULTS_MD = BACKEND_DIR.parent / "docs" / "results.md"
@@ -61,11 +64,18 @@ def _git_sha() -> str:
         return "unknown"
 
 
-def _metrics(y, proba, ref) -> dict:
+def _metrics(y, proba, ref, cycles) -> dict:
     """Reuses the classifier's own _evaluate so every number here is computed by exactly
-    the same code that produced the model's reported metrics."""
+    the same code that produced the model's reported metrics.
+
+    D1/D2 additions, per docs/team-brief-2026-09-15-updated.md Section 6: a block
+    bootstrap CI around ROC-AUC, resampled by forecast cycle (never by row - rows in
+    the same cycle share the same synoptic situation), and the binormal Z-AUC estimate
+    alongside the trapezoidal one already in `_evaluate`."""
     m = clf_mod._evaluate(y, proba)
     m["bss"] = bl.brier_skill_score(y, proba, ref)
+    m["z_auc"] = ver.binormal_auc(y, proba)
+    m["roc_auc_ci"] = ver.block_bootstrap_ci(y, proba, cycles, metric_fn=ver.trapezoidal_auc)
     return m
 
 
@@ -82,6 +92,12 @@ def _per_lead(y, proba, ref, leads) -> dict:
 
 def _fmt(v, nd=4) -> str:
     return "—" if v is None or not np.isfinite(v) else f"{v:.{nd}f}"
+
+
+def _fmt_ci(ci: dict, nd=4) -> str:
+    if ci is None or not (np.isfinite(ci["lo"]) and np.isfinite(ci["hi"])):
+        return "—"
+    return f"[{ci['lo']:.{nd}f}, {ci['hi']:.{nd}f}]"
 
 
 def main() -> int:
@@ -110,6 +126,10 @@ def main() -> int:
 
     y_test = np.asarray(test[bl.LABEL], int)
     leads = np.asarray(test["lead_time_days"], int)
+    if "init_date" not in test.columns:
+        raise SystemExit(
+            "no init_date column - block_bootstrap_ci needs a cycle id per row")
+    cycles = np.asarray(test["init_date"])
 
     fitted = bl.fit_all(train)
     ref = fitted["climatology"].predict_proba(test)      # the BSS reference forecast
@@ -117,12 +137,12 @@ def main() -> int:
     rows, per_lead = [], {}
     for name, model in fitted.items():
         p = model.predict_proba(test)
-        rows.append((name, _metrics(y_test, p, ref)))
+        rows.append((name, _metrics(y_test, p, ref, cycles)))
         per_lead[name] = _per_lead(y_test, p, ref, leads)
 
     if "model_proba" in test.columns and test["model_proba"].notna().any():
         p = np.asarray(test["model_proba"], float)
-        rows.append((MODEL_ROW, _metrics(y_test, p, ref)))
+        rows.append((MODEL_ROW, _metrics(y_test, p, ref, cycles)))
         per_lead[MODEL_ROW] = _per_lead(y_test, p, ref, leads)
     else:
         print("WARNING: no model_proba column - the classifier row is missing.")
@@ -158,14 +178,22 @@ def main() -> int:
         f"weak, sign-flipping relationship is why a lead-day-only model can score below "
         f"chance here — and it is also direct evidence that the classifier's skill is "
         f"not simply a rediscovery of lead time.\n\n"
+        f"The ROC-AUC confidence interval is a block bootstrap over 1000 resamples of "
+        f"whole forecast cycles (never rows - rows in one cycle share the same synoptic "
+        f"situation, so a row-level bootstrap understates uncertainty; see "
+        f"`app/ml/verification.py`). Z-AUC is the binormal estimator of Shanker, Sarkar "
+        f"& Mamgain (NCMRWF, QJRMS 2024, doi:10.1002/qj.4674), reported alongside the "
+        f"trapezoidal ROC-AUC rather than in place of it.\n\n"
     )
 
-    tbl = ["| model | Brier ↓ | BSS vs climatology ↑ | ROC-AUC ↑ | F1 ↑ |",
-           "|---|---|---|---|---|"]
+    tbl = ["| model | Brier ↓ | BSS vs climatology ↑ | ROC-AUC ↑ | 95% CI (by cycle) | "
+           "Z-AUC ↑ | F1 ↑ |",
+           "|---|---|---|---|---|---|---|"]
     for name, m in rows:
         label = f"**{name}**" if name == MODEL_ROW else name
         tbl.append(f"| {label} | {_fmt(m['brier'])} | {_fmt(m['bss'])} | "
-                   f"{_fmt(m['roc_auc'])} | {_fmt(m['f1'])} |")
+                   f"{_fmt(m['roc_auc'])} | {_fmt_ci(m['roc_auc_ci'])} | "
+                   f"{_fmt(m['z_auc'])} | {_fmt(m['f1'])} |")
 
     all_leads = sorted({l for d in per_lead.values() for l in d})
     lead_tbl = []
@@ -201,7 +229,8 @@ def main() -> int:
                 "lead_bust_correlation": {"train": corr["train"], "test": corr["test"]},
                 "models": [
                     {"name": name, "brier": m["brier"], "bss": m["bss"],
-                     "roc_auc": m["roc_auc"], "f1": m["f1"],
+                     "roc_auc": m["roc_auc"], "roc_auc_ci": m["roc_auc_ci"],
+                     "z_auc": m["z_auc"], "f1": m["f1"],
                      "is_model": name == MODEL_ROW}
                     for name, m in rows
                 ],
