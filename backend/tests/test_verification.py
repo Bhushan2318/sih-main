@@ -1,10 +1,13 @@
-"""D1/D2 of the verification package: block-bootstrap CIs and binormal Z-AUC.
+"""D1/D2/D3 of the verification package: block-bootstrap CIs, binormal Z-AUC, and the
+CORP reliability curve / Brier decomposition.
 
 Every metric function is checked against a value computed independently of the code
 under test - either a closed-form hand computation (via ``math.erf``, never
-``scipy.stats``, since that is what ``binormal_auc`` itself calls) or a literal
-Mann-Whitney count done by hand. See ``app/ml/verification.py`` for the formulas and
-citations.
+``scipy.stats``, since that is what ``binormal_auc`` itself calls), a literal
+Mann-Whitney count done by hand, or (for D3) a 4-point pool-adjacent-violators trace
+worked by hand and cross-checked against ``sklearn.isotonic.IsotonicRegression``
+directly rather than through the module under test. See ``app/ml/verification.py`` for
+the formulas and citations.
 """
 
 from __future__ import annotations
@@ -13,8 +16,15 @@ import math
 
 import numpy as np
 import pytest
+from sklearn.isotonic import IsotonicRegression
 
-from app.ml.verification import binormal_auc, block_bootstrap_ci, trapezoidal_auc
+from app.ml.verification import (
+    binormal_auc,
+    block_bootstrap_ci,
+    brier_decomposition,
+    corp_reliability_curve,
+    trapezoidal_auc,
+)
 
 
 def _phi(x: float) -> float:
@@ -171,3 +181,101 @@ def test_block_bootstrap_ci_single_cycle_returns_degenerate_interval():
 def test_block_bootstrap_ci_rejects_mismatched_lengths():
     with pytest.raises(ValueError):
         block_bootstrap_ci([0, 1], [0.1, 0.9], ["a", "b", "c"])
+
+
+# ---------------------------------------------------------------------------
+# corp_reliability_curve / brier_decomposition
+#
+# Hand-traced 4-point PAV example. y = [1, 0, 1, 1] in forecast order (x =
+# [0.2, 0.4, 0.6, 0.8], already sorted, so sort order is a no-op here and doesn't
+# obscure the trace):
+#
+#   start: blocks (1) (0) (1) (1)
+#   (1) then (0): 1 > 0 violates non-decreasing -> pool -> (0.5, n=2) (1) (1)
+#   (0.5) then (1): 0.5 <= 1, no violation
+#   (1) then (1): no violation
+#   final PAV fit: [0.5, 0.5, 1, 1]
+#
+# ybar = 0.75, UNC = 0.75*0.25 = 0.1875
+# BS_f = mean((f-y)^2) = ((0.5-1)^2+(0.5-0)^2+(1-1)^2+(1-1)^2)/4 = 0.5/4 = 0.125
+# DSC = UNC - BS_f = 0.0625
+# BS_x = mean((x-y)^2) = (0.64+0.16+0.16+0.04)/4 = 0.25
+# MCB = BS_x - BS_f = 0.125
+# check: MCB - DSC + UNC = 0.125 - 0.0625 + 0.1875 = 0.25 = BS_x  (exact by construction)
+# ---------------------------------------------------------------------------
+
+_PAV_X = [0.2, 0.4, 0.6, 0.8]
+_PAV_Y = [1, 0, 1, 1]
+
+
+def test_corp_reliability_curve_matches_a_hand_traced_pav_example():
+    bins = corp_reliability_curve(_PAV_Y, _PAV_X)
+    assert len(bins) == 2
+    assert bins[0]["n"] == 2 and bins[0]["observed_rate"] == pytest.approx(0.5)
+    assert bins[0]["predicted_mean"] == pytest.approx(0.3)  # mean(0.2, 0.4)
+    assert bins[1]["n"] == 2 and bins[1]["observed_rate"] == pytest.approx(1.0)
+    assert bins[1]["predicted_mean"] == pytest.approx(0.7)  # mean(0.6, 0.8)
+
+
+def test_corp_reliability_curve_agrees_with_sklearn_isotonic_directly():
+    """Independent check: fit IsotonicRegression ourselves (not through the module
+    under test) and confirm each bin's observed_rate matches the fitted level."""
+    x = np.array(_PAV_X)
+    y = np.array(_PAV_Y, dtype=float)
+    fitted = IsotonicRegression(out_of_bounds="clip").fit_transform(x, y)
+    bins = corp_reliability_curve(y, x)
+    got = np.concatenate([[b["observed_rate"]] * b["n"] for b in bins])
+    assert got == pytest.approx(fitted)
+
+
+def test_brier_decomposition_matches_the_hand_traced_example():
+    d = brier_decomposition(_PAV_Y, _PAV_X)
+    assert d["brier"] == pytest.approx(0.25)
+    assert d["uncertainty"] == pytest.approx(0.1875)
+    assert d["discrimination"] == pytest.approx(0.0625)
+    assert d["miscalibration"] == pytest.approx(0.125)
+
+
+def test_brier_decomposition_identity_holds_exactly():
+    """MCB - DSC + UNC == BS, by construction (MCB and DSC are defined as score
+    differences, not independent terms) - checked on random data, not just the
+    hand-traced example, since this is the property the whole decomposition rests on."""
+    rng = np.random.default_rng(3)
+    p = rng.uniform(0, 1, 200)
+    y = rng.binomial(1, p)
+    d = brier_decomposition(y, p)
+    assert d["miscalibration"] - d["discrimination"] + d["uncertainty"] == \
+        pytest.approx(d["brier"], abs=1e-9)
+
+
+def test_brier_decomposition_miscalibration_is_never_negative():
+    """PAV recalibration is a least-squares projection onto the monotone cone, so it
+    can only weakly improve the Brier score - MCB = BS(x) - BS(f) >= 0 always. Checked
+    over many random forecasts, not asserted from theory alone."""
+    rng = np.random.default_rng(4)
+    for _ in range(20):
+        n = rng.integers(10, 100)
+        p = rng.uniform(0, 1, n)
+        y = rng.binomial(1, rng.uniform(0, 1, n))  # forecast deliberately uncorrelated with y
+        d = brier_decomposition(y, p)
+        assert d["miscalibration"] >= -1e-9
+
+
+def test_brier_decomposition_miscalibration_is_zero_when_already_calibrated():
+    """If the forecast already equals its own PAV fit, recalibrating changes nothing -
+    MCB must be exactly 0, not just close to 0."""
+    rng = np.random.default_rng(5)
+    x = np.sort(rng.uniform(0, 1, 30))
+    y = rng.binomial(1, x)
+    fitted = IsotonicRegression(out_of_bounds="clip").fit_transform(x, y.astype(float))
+    d = brier_decomposition(y, fitted)  # use the PAV fit itself as "the forecast"
+    assert d["miscalibration"] == pytest.approx(0.0, abs=1e-9)
+
+
+def test_corp_reliability_curve_empty_input():
+    assert corp_reliability_curve([], []) == []
+
+
+def test_brier_decomposition_nan_on_empty_input():
+    d = brier_decomposition([], [])
+    assert all(math.isnan(v) for v in d.values())
