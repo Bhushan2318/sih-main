@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { Topology } from "topojson-specification";
 import type { RegionSummary, ReplayRegionStep } from "../../api/types";
 import { useModelStatus, useReplay, useReplayCycles } from "../../hooks/useDashboardData";
+import { formatByMagnitude } from "../../lib/format";
 import { EmptyState, ErrorState, LoadingState } from "../common/States";
 import { IndiaChoroplethMap } from "../map/IndiaChoroplethMap";
 import { MapLegend } from "../map/MapLegend";
@@ -93,7 +94,7 @@ export function ReplayView({ topology }: { topology: Topology | null }) {
                   ? ` · peak risk ${(c.peak_bust_probability * 100).toFixed(0)}%`
                   : ""}
                 {c.peak_region_abs_error != null
-                  ? ` · actual error there: ${c.peak_region_abs_error.toFixed(1)}${c.peak_region_unit ? ` ${c.peak_region_unit}` : ""}`
+                  ? ` · actual error there: ${formatByMagnitude(c.peak_region_abs_error)}${c.peak_region_unit ? ` ${c.peak_region_unit}` : ""}`
                   : ""}
               </option>
             ))}

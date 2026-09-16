@@ -3,6 +3,7 @@ import {
   Tooltip, XAxis, YAxis,
 } from "recharts";
 import type { ReplayFocusSeries } from "../../api/types";
+import { formatByMagnitude } from "../../lib/format";
 import { CHART } from "../../theme";
 
 export function ReplayFocusChart({
@@ -40,13 +41,13 @@ export function ReplayFocusChart({
         <ComposedChart data={data} margin={{ top: 20, right: 14, bottom: 4, left: -6 }}>
           <CartesianGrid strokeDasharray="3 3" />
           <XAxis dataKey="lead" tickFormatter={(d) => `D${d}`} />
-          <YAxis width={58} domain={["auto", "auto"]} tickFormatter={(v: number) => fmt(v)} />
+          <YAxis width={58} domain={["auto", "auto"]} tickFormatter={(v: number) => formatByMagnitude(v)} />
           <Tooltip
             labelFormatter={(l) => `Lead day ${l}`}
             formatter={(v: unknown) => {
 
               const one = (x: unknown) =>
-                typeof x === "number" && Number.isFinite(x) ? fmt(x) : "—";
+                typeof x === "number" && Number.isFinite(x) ? formatByMagnitude(x) : "—";
               const body = Array.isArray(v) ? v.map(one).join(" – ") : one(v);
               return body === "—" ? body : `${body}${focus.unit ? ` ${focus.unit}` : ""}`;
             }}
@@ -55,7 +56,7 @@ export function ReplayFocusChart({
           <ReferenceLine x={currentLead} stroke={CHART.marker} strokeWidth={2}
             label={{ value: `Day ${currentLead}`, position: "top", fontSize: 10, fill: CHART.marker }} />
           {thr != null ? (
-            <Area type="monotone" dataKey="band" name={`Close enough — not a bust (±${fmt(thr)})`}
+            <Area type="monotone" dataKey="band" name={`Close enough — not a bust (±${formatByMagnitude(thr)})`}
               stroke="none" fill={CHART.observed} fillOpacity={0.07} connectNulls={false}
               activeDot={false} isAnimationActive={false} legendType="rect"
               tooltipType="none" />
@@ -73,12 +74,4 @@ export function ReplayFocusChart({
       ) : null}
     </div>
   );
-}
-
-function fmt(v: number): string {
-  if (v == null || Number.isNaN(v)) return "—";
-  const a = Math.abs(v);
-  if (a >= 100) return v.toFixed(0);
-  if (a >= 10) return v.toFixed(1);
-  return v.toFixed(2);
 }
