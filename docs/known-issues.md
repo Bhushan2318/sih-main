@@ -269,6 +269,29 @@ here rather than discovered live.
   two outright and deferring the test year's load until after the event-building pass
   that needed the headroom. Cost: roughly 9 hours of wall-clock across the failed
   attempts before the working run above. Measured 2026-09-13/14.
+- **The first leave-one-out cross-check of the 3-year pool: train-2016+2017+2019/
+  test-2018 (run_20260915T215514Z), held-out ROC-AUC 0.8418, Brier 0.162, F1 0.7295,
+  precision 0.7356, recall 0.7234, n=2,430,900 test events.** Took 19 attempts and 8
+  distinct real crashes/bugs to get one clean run - not repeats of the same bug, each
+  reached only after the previous one was fixed: (4) categorical concat across years
+  silently degrading to object dtype; (5) heap fragmentation from dozens of
+  DataIter/QuantileDMatrix/Booster objects accumulating in one long-lived process,
+  fixed by giving each variable's training its own subprocess; (6) the same
+  fragmentation pattern one stage later in per-year event building, fixed the same way;
+  (7a) `pooled_stats`'s own global-stats pass never having been isolated at all, hit
+  once real data density made it the first thing to allocate a large contiguous array;
+  (7b) `subprocess.run(capture_output=True)` buffering child output with no bound,
+  ballooning the PARENT to ~35 GB; (8) the real, measured root cause of that same
+  ~35 GB parent growth even after (7b)'s fix: the validation slice (`va`, 39.65M rows)
+  was loaded once and held resident in the parent for the whole run to slice per
+  variable - found only by adding `[MEM]` checkpoints and reading the actual RSS
+  trail, not by guessing. Fixed by having each variable's worker (and the final
+  event-frame build) read their own validation rows directly, so the parent never
+  holds them at all. Also found and fixed en route: `Series.astype(str)` on a
+  Categorical materialising a dense fixed-width numpy-unicode array (8.27 GiB for one
+  76.5M-row column) instead of the cheap `.astype("object")` equivalent - identical
+  values, one 8-byte pointer per row instead of a fresh string buffer. Measured
+  2026-09-16.
 
 ## Data
 
