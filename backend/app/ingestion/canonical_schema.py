@@ -36,6 +36,11 @@ VARIABLE_UNITS: dict[CanonicalVariable, str] = {
     CanonicalVariable.WIND_DIRECTION_DEG: "degrees (meteorological, from-direction)",
 }
 
+CIRCULAR_VARIABLES: frozenset[CanonicalVariable] = frozenset({CanonicalVariable.WIND_DIRECTION_DEG})
+"""Variables where 0 and 360 are the same value, so a naive abs(predicted - observed)
+overstates a small miss near the wraparound (350 vs 5 reads as 345, not the true 15).
+Excluded from plain abs-error comparisons wherever they'd otherwise be computed."""
+
 VARIABLE_PLAUSIBLE_RANGE: dict[CanonicalVariable, tuple[float, float]] = {
     CanonicalVariable.RAINFALL_MM: (0.0, 2000.0),
     CanonicalVariable.TEMPERATURE_C: (-50.0, 60.0),

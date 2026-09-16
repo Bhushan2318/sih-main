@@ -3,8 +3,10 @@ import type { ModelStatusResponse } from "../../api/types";
 /**
  * Trimmed from a real GET /api/model/status response against the live
  * deployment (https://sanket-a0dd.onrender.com), run run_20260916T050655Z,
- * fetched 2026-09-16. Only fields the baseline-ladder UI reads are kept;
- * numbers are copied verbatim, not invented.
+ * fetched 2026-09-16. Numbers are copied verbatim, not invented; unrelated
+ * top-level fields are still present at minimal/placeholder values only
+ * because ModelStatusResponse marks them non-optional, not because the
+ * baseline-ladder UI reads them.
  */
 export const REAL_BASELINES_RUN_20260916: ModelStatusResponse["baselines"] = {
   run_id: "run_20260916T050655Z",

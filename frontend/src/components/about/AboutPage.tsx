@@ -1,4 +1,5 @@
 import { useModelStatus } from "../../hooks/useDashboardData";
+import { formatMetric } from "../../lib/format";
 import { ErrorState, LoadingState } from "../common/States";
 import { BaselineLadderTable } from "../model/BaselineLadderTable";
 
@@ -13,8 +14,6 @@ export function AboutPage({ onReplay }: { onReplay: () => void }) {
   const td = data.training_data ?? {};
   const thr = data.thresholds?.bust_threshold ?? {};
   const bl = data.baselines ?? {};
-  const n3 = (v: unknown, dp = 3) =>
-    typeof v === "number" && Number.isFinite(v) ? v.toFixed(dp) : "—";
 
   return (
     <main className="page page--wide">
@@ -64,7 +63,7 @@ export function AboutPage({ onReplay }: { onReplay: () => void }) {
             </p>
             <ul className="taglist">
               {Object.entries(thr).map(([v, t]) => (
-                <li key={v} className="tag">{v} ≥ {n3(t, 2)}</li>
+                <li key={v} className="tag">{v} ≥ {formatMetric(t, 2)}</li>
               ))}
             </ul>
           </section>
@@ -72,9 +71,9 @@ export function AboutPage({ onReplay }: { onReplay: () => void }) {
           <section className="card">
             <header className="card__head"><h3>How well it works</h3></header>
             <dl className="metrics metrics--compact metrics--hero">
-              <div><dt>ROC-AUC</dt><dd>{n3(clf.roc_auc)}</dd></div>
-              <div><dt>F1</dt><dd>{n3(clf.f1)}</dd></div>
-              <div><dt>Brier</dt><dd>{n3(clf.brier)}</dd></div>
+              <div><dt>ROC-AUC</dt><dd>{formatMetric(clf.roc_auc, 3)}</dd></div>
+              <div><dt>F1</dt><dd>{formatMetric(clf.f1, 3)}</dd></div>
+              <div><dt>Brier</dt><dd>{formatMetric(clf.brier, 3)}</dd></div>
               <div>
                 <dt>Held-out forecasts</dt>
                 <dd>{typeof clf.n === "number" ? clf.n.toLocaleString() : "—"}</dd>
@@ -113,8 +112,9 @@ export function AboutPage({ onReplay }: { onReplay: () => void }) {
                   <p className="muted small">
                     Guessing from the lead day alone scores at or below zero, because busts do
                     not simply become more likely further out. The measured link between lead
-                    day and bust is only {n3(bl.lead_bust_correlation.train, 3)} on training
-                    data and {n3(bl.lead_bust_correlation.test, 3)} on held-out data.
+                    day and bust is only {formatMetric(bl.lead_bust_correlation.train, 3)} on
+                    training data and {formatMetric(bl.lead_bust_correlation.test, 3)} on
+                    held-out data.
                   </p>
                 ) : null}
               </>
