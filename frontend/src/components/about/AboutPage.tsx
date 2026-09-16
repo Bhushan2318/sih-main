@@ -1,5 +1,6 @@
 import { useModelStatus } from "../../hooks/useDashboardData";
 import { ErrorState, LoadingState } from "../common/States";
+import { BaselineLadderTable } from "../model/BaselineLadderTable";
 
 export function AboutPage({ onReplay }: { onReplay: () => void }) {
   const { data, isLoading, error } = useModelStatus();
@@ -106,25 +107,7 @@ export function AboutPage({ onReplay }: { onReplay: () => void }) {
                   guessing the long-run bust rate every time. <b>0.000 means it does no better
                   than that guess</b>; higher is better.
                 </p>
-                <div className="tablewrap">
-                  <table className="dtable">
-                    <thead>
-                      <tr>
-                        <th>model</th><th>Brier ↓</th><th>skill vs climatology ↑</th><th>ROC-AUC ↑</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {bl.models.map((m) => (
-                        <tr key={m.name} className={m.is_model ? "is-active" : undefined}>
-                          <td>{m.is_model ? <b>{m.name}</b> : m.name}</td>
-                          <td className="mono">{n3(m.brier, 4)}</td>
-                          <td className="mono">{n3(m.bss, 4)}</td>
-                          <td className="mono">{n3(m.roc_auc, 4)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                <BaselineLadderTable baselines={data.baselines} />
                 <p className="muted small">↓ lower is better · ↑ higher is better</p>
                 {typeof bl.lead_bust_correlation?.test === "number" ? (
                   <p className="muted small">
