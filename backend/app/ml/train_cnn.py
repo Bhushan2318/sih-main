@@ -27,11 +27,21 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
+
+# Must be set before CUDA initialises - torch.use_deterministic_algorithms(True) needs it
+# for cuBLAS's GEMM op or raises RuntimeError naming cuBLAS explicitly at first use, not
+# at import time. Diagnosed 2026-09-17 (docs/known-issues.md): fit_streaming's weights
+# were not bit-reproducible on CUDA with the same seed; this was the actual cause, not the
+# two things suspected first (cuDNN convolution, DistrictPooling's torch.sparse.mm -
+# neither needed a fix once this was set). setdefault, not assignment: an operator running
+# this under their own CUBLAS_WORKSPACE_CONFIG keeps it.
+os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
 
 # Windows only, load-bearing: torch must be the first thing in the process to touch its
 # own OpenMP/MKL runtime, or a later torch.onnx.export() (app.ml.cnn.export_encoder)
@@ -281,6 +291,14 @@ def fit_streaming(seed, index: "FieldIndex", tr_idx, va_idx,
     torch.manual_seed(seed)
     np.random.seed(seed)
     rng = np.random.default_rng(seed)
+    # Same seed must give bit-identical weights (E1, docs/team-brief-2026-09-15-updated.md
+    # Section 6) - true on CPU by default, not true on CUDA without this. deterministic
+    # algorithms cost some speed; this model is 43,969 parameters and already the slower
+    # of the two model families to iterate, so the trade is worth it for a result that has
+    # to be trusted, not just fast.
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    torch.use_deterministic_algorithms(True)
     model = BustCNN(in_channels=index.n_channels, region_ids=region_ids).to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
     bce = nn.BCEWithLogitsLoss(reduction="none")
@@ -365,6 +383,12 @@ def _fit_one(seed, Xtr, Mtr, EXtr, Ytr, AUXtr, Xva, Mva, EXva, Yva,
 
     torch.manual_seed(seed)
     np.random.seed(seed)
+    # Same reproducibility requirement as fit_streaming (E1) - this path is CPU-only
+    # today (never moved to a device), so cuDNN/cuBLAS nondeterminism does not currently
+    # apply, but setting it here too means it stays true if that ever changes.
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    torch.use_deterministic_algorithms(True)
     # Xtr carries the DATA channels; BustCNN doubles that itself because forward
     # concatenates the mask. Halving here built an encoder for half the channels it would
     # be handed, and nothing failed until the first batch reached the first convolution.
