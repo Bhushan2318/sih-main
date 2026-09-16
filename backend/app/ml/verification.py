@@ -184,7 +184,13 @@ def corp_reliability_curve(y_true, y_prob) -> list:
     bins, start = [], 0
     n = len(fitted)
     for i in range(1, n + 1):
-        if i == n or not np.isclose(fitted[i], fitted[start], atol=1e-12):
+        # rtol=0 deliberately: PAV block values are bit-identical (all points in a block
+        # are literally assigned the same computed float), not merely numerically close,
+        # so this is an exact-equality-up-to-float-noise check. The default rtol=1e-5
+        # would instead treat any two blocks whose means differ by less than ~3e-6
+        # (relative) as the same block - a real risk at this project's row counts, not
+        # just a theoretical one.
+        if i == n or not np.isclose(fitted[i], fitted[start], atol=1e-12, rtol=0):
             bins.append({
                 "predicted_mean": float(p_sorted[start:i].mean()),
                 "observed_rate": float(fitted[start]),

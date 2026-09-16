@@ -228,6 +228,26 @@ def test_corp_reliability_curve_agrees_with_sklearn_isotonic_directly():
     assert got == pytest.approx(fitted)
 
 
+def test_corp_reliability_curve_does_not_merge_close_but_distinct_blocks():
+    """Regression test for a real bug: the block-boundary comparison originally used
+    np.isclose(..., atol=1e-12) without overriding rtol, which defaults to 1e-5 - so two
+    genuinely distinct PAV blocks whose means differ by less than ~3e-6 (relative) were
+    silently merged into one reported bin. At this project's real held-out row counts
+    (hundreds of thousands to millions), PAV block means can land this close together,
+    so this needs a realistic scale to actually exercise, not just a toy example: two
+    million-row tied-forecast groups with means exactly 1e-6 apart."""
+    n = 1_000_000
+    p = np.concatenate([np.full(n, 0.3), np.full(n, 0.300001)])
+    y = np.concatenate([
+        np.concatenate([np.ones(300000), np.zeros(n - 300000)]),
+        np.concatenate([np.ones(300001), np.zeros(n - 300001)]),
+    ])
+    bins = corp_reliability_curve(y, p)
+    assert len(bins) == 2, "two genuinely distinct PAV blocks were merged into one"
+    assert bins[0]["observed_rate"] == pytest.approx(0.3)
+    assert bins[1]["observed_rate"] == pytest.approx(0.300001)
+
+
 def test_brier_decomposition_matches_the_hand_traced_example():
     d = brier_decomposition(_PAV_Y, _PAV_X)
     assert d["brier"] == pytest.approx(0.25)
