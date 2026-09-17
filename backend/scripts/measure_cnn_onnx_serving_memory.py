@@ -65,7 +65,6 @@ def export_artifacts(out_dir: Path) -> None:
     no torch object, no pickle of anything torch-specific, so phase 2 truly never needs
     to import torch to read them back."""
     import numpy as np
-    import torch
 
     from app.ml.cnn import BustCNN, export_encoder
     from app.utils.india_districts import load_registry
