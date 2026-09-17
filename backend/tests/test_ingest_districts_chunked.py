@@ -10,20 +10,31 @@ import sys
 import pytest
 
 
+def _psutil_or_skip_on_windows():
+    """On Windows, peak RSS is read through psutil - a training extra
+    (requirements-train.txt), not part of the core install CI's backend job uses."""
+    if sys.platform == "win32":
+        pytest.importorskip("psutil")
+
+
 def test_module_imports_on_every_platform():
     """The historical bug: `import resource` at module level made the whole script
-    unusable on Windows before a single line of its own logic executed. `resource` is
-    the correct, expected import on POSIX - only Windows must avoid it."""
+    unusable on Windows before a single line of its own logic executed.
+
+    Neither platform-specific module may be imported at module level. The earlier
+    platform-guarded version still put `resource` on the module on Mac and Linux - so
+    this assertion could only ever pass on Windows - and put `psutil` there on Windows,
+    where the core requirements do not install it."""
     import scripts.ingest_districts_chunked as m
-    has_resource = hasattr(sys.modules[m.__name__], "resource")
-    if sys.platform == "win32":
-        assert not has_resource, (
-            "resource is POSIX-only; importing it unconditionally breaks Windows")
-    else:
-        assert has_resource, "POSIX platforms should take the resource-module path"
+    mod = sys.modules[m.__name__]
+    assert not hasattr(mod, "resource"), (
+        "resource is POSIX-only; importing it unconditionally breaks Windows")
+    assert not hasattr(mod, "psutil"), (
+        "psutil is a training extra; importing it at module level breaks the core install")
 
 
 def test_peak_rss_mb_returns_a_positive_float():
+    _psutil_or_skip_on_windows()
     from scripts.ingest_districts_chunked import peak_rss_mb
     peak = peak_rss_mb()
     assert isinstance(peak, float)
@@ -33,6 +44,7 @@ def test_peak_rss_mb_returns_a_positive_float():
 def test_peak_rss_mb_grows_after_a_real_allocation():
     """Not a tight bound - just proof this reads a real, moving number rather than a
     constant that would pass the test above by accident."""
+    _psutil_or_skip_on_windows()
     from scripts.ingest_districts_chunked import peak_rss_mb
 
     before = peak_rss_mb()
@@ -44,6 +56,9 @@ def test_peak_rss_mb_grows_after_a_real_allocation():
 
 @pytest.mark.skipif(sys.platform != "win32", reason="only exercises the Windows path")
 def test_peak_rss_mb_uses_psutil_on_windows():
+    _psutil_or_skip_on_windows()
+    from scripts.ingest_districts_chunked import peak_rss_mb
+    peak_rss_mb()  # psutil is imported on first call now, not at module import
     assert "psutil" in sys.modules, (
         "expected the Windows path to go through psutil, not the POSIX resource module")
 
