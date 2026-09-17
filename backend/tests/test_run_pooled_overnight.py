@@ -69,7 +69,7 @@ def test_progress_is_written_after_every_job_not_just_at_the_end(tmp_path, monke
     assert written_after == [0, 1, 2], "each job should see one more completed job than the last"
 
 
-def test_a_rerun_after_a_crash_skips_jobs_already_recorded(tmp_path, monkeypatch):
+def test_a_rerun_after_success_skips_jobs_already_recorded(tmp_path, monkeypatch):
     calls = []
 
     def fake_full_retrain_pooled(train_years, test_year, cache_dir):
@@ -87,7 +87,40 @@ def test_a_rerun_after_a_crash_skips_jobs_already_recorded(tmp_path, monkeypatch
 
     calls.clear()
     orch.run_queue(queue, tmp_path, out, log)
-    assert calls == [], "every job was already recorded - none should re-run"
+    assert calls == [], "every job already succeeded - none should re-run"
+
+
+def test_a_rerun_after_a_crash_retries_the_crashed_job_not_skips_it(tmp_path, monkeypatch):
+    """Real bug 2026-09-17: the first version of resume treated ANY recorded status,
+    including a crash, as done - so a fold that crashed 32 minutes in would be skipped
+    forever on every future resume, silently never producing a model."""
+    calls = []
+    should_crash = {2020: True}
+
+    def fake_full_retrain_pooled(train_years, test_year, cache_dir):
+        calls.append(test_year)
+        if should_crash.get(test_year):
+            raise MemoryError("simulated OOM")
+        return _FakeReport(run_id=f"run_{test_year}", status="success")
+
+    monkeypatch.setattr(
+        "app.ml.pooled_training.full_retrain_pooled", fake_full_retrain_pooled)
+    monkeypatch.setattr("app.config.settings.allow_local_retrain", True)
+
+    out, log = tmp_path / "report.json", tmp_path / "log.txt"
+    queue = _queue(3)
+    orch.run_queue(queue, tmp_path, out, log)
+    assert calls == [2019, 2020, 2021]
+
+    # The underlying bug is now fixed (as if a code fix landed between runs).
+    should_crash[2020] = False
+    calls.clear()
+    results = orch.run_queue(queue, tmp_path, out, log)
+
+    assert calls == [2020], "only the previously-crashed job should retry"
+    statuses = {r["test_year"]: r["status"] for r in results}
+    assert statuses == {2019: "success", 2020: "success", 2021: "success"}
+    assert len(results) == 3, "the stale crash record for 2020 must be replaced, not duplicated"
 
 
 def test_refuses_without_allow_local_retrain(tmp_path, monkeypatch):
