@@ -35,14 +35,6 @@ from pathlib import Path
 
 import pandas as pd
 
-# `resource` is POSIX-only, so importing it unconditionally made this whole script
-# unimportable on Windows before a single line of its own logic ran. psutil covers all
-# three platforms this needs to run on (Mac, Linux CI, this Windows box).
-if sys.platform == "win32":
-    import psutil
-else:
-    import resource
-
 SCRIPT_DIR = Path(__file__).resolve().parent
 BACKEND_DIR = SCRIPT_DIR.parent
 sys.path.insert(0, str(BACKEND_DIR))
@@ -59,8 +51,16 @@ def peak_rss_mb() -> float:
     usage, which is what every other branch here reports and what the per-cycle ceiling
     in docs/known-issues.md was measured against.
     """
+    # Both imports live here, not at module level. `resource` is POSIX-only, so a
+    # top-level import made the script unimportable on Windows. The platform-guarded
+    # top-level version that replaced it still broke the core install on Windows -
+    # psutil is a training extra (requirements-train.txt) - and put `resource` on the
+    # module on Mac and Linux, which is what tests/test_ingest_districts_chunked.py
+    # checks against. Importing on first call keeps the module importable everywhere.
     if sys.platform == "win32":
+        import psutil
         return psutil.Process().memory_info().peak_wset / 1e6
+    import resource
     raw = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     return raw / 1e6 if sys.platform == "darwin" else raw / 1024
 
