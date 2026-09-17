@@ -506,6 +506,22 @@ def _run_test_events_subprocess(cached_path: Path, test_cycles: set, hbf: dict,
     return result["event_frame"], result["test_metrics"]
 
 
+def _cuda_available() -> bool:
+    """Whether a CUDA device can be used, without making PyTorch a requirement.
+
+    XGBoost trains on CUDA without torch; torch is only the probe here. Importing it
+    unconditionally crashed pooled training with ModuleNotFoundError on any machine
+    without torch - CI's core install, any XGBoost-only environment - before the
+    "no GPU, everything on CPU" branch below could run. No torch means no probe, which
+    is the same answer as no GPU.
+    """
+    try:
+        import torch
+    except ImportError:
+        return False
+    return bool(torch.cuda.is_available())
+
+
 def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
                         run_id: str | None = None) -> "TrainReport":
     """The pooled-training equivalent of `train_pipeline.full_retrain`: any number of
@@ -616,8 +632,7 @@ def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
     half = max(1, len(variables) // 2)
     gpu_vars, cpu_vars = variables[:half], variables[half:]
 
-    import torch
-    gpu_available = torch.cuda.is_available()
+    gpu_available = _cuda_available()
 
     artifacts: dict = {}
     val_pred = pd.Series(np.nan, index=va.index, dtype=float)
