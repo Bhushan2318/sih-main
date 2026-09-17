@@ -269,6 +269,18 @@ here rather than discovered live.
   two outright and deferring the test year's load until after the event-building pass
   that needed the headroom. Cost: roughly 9 hours of wall-clock across the failed
   attempts before the working run above. Measured 2026-09-13/14.
+- **Block-bootstrap AUC intervals are coarse below roughly 20 held-out cycles.**
+  `app/ml/verification.py`'s `block_bootstrap_ci` resamples whole forecast cycles
+  (deliberately - see D1 in `docs/team-brief-2026-09-15-updated.md`), but with only N
+  cycles there are only on the order of N distinct resample compositions the bootstrap
+  distribution can concentrate near, so the reported 95% interval is itself quantized
+  rather than smooth. Demonstrated directly with a hand-constructed 2-cycle case in
+  `backend/tests/test_verification.py`: the interval collapses to exactly the full
+  [min, max] range of the two cycles' own metric values, not a narrower band around the
+  point estimate. This is correct - it is the honest answer when independence gives you
+  only 2 samples - but it means the interval width should not be read as improving
+  smoothly as the held-out set grows; it improves in steps, one per additional
+  independent cycle.
 - **`fit_streaming` (the CNN training loop) was not bit-reproducible on CUDA with the
   same seed - fixed 2026-09-17.** E1 of `docs/team-brief-2026-09-15-updated.md` Section 6
   required a test asserting two same-seed runs produce identical weights; none existed
