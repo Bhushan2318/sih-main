@@ -19,6 +19,7 @@ from app.config import settings
 from app.db.base import resolve_path
 from app.features import engineering as fe
 from app.features import pivot as pv
+from app.features.history import forecast_history
 from app.ml import classifier as clf_mod
 from app.ml import explain as explain_mod
 from app.ml import regressors as reg_mod
@@ -122,6 +123,10 @@ def _build_paired_in_chunks(init_date_max=None, init_date_min=None) -> "tuple[pd
     if len(inits) == 0:
         return pd.DataFrame(), 0
     inits = sorted(pd.to_datetime(pd.Series(inits)).dt.normalize().unique())
+    # Every cycle in the store, before the window is applied: a cycle just before
+    # init_date_min is still a forecast that existed when the first cycle in the window was
+    # issued, so it feeds that cycle's jumpiness. It contributes no rows and no label.
+    store_inits = list(inits)
     if init_date_max is not None:
         bound = pd.Timestamp(init_date_max).normalize()
         inits = [c for c in inits if pd.Timestamp(c) <= bound]
@@ -143,6 +148,7 @@ def _build_paired_in_chunks(init_date_max=None, init_date_min=None) -> "tuple[pd
         )
         if fc.empty:
             continue
+        history = forecast_history(chunk[0], store_inits, exclude_provisional=True)
         ob = parquet_store.read_dataset(
             value_types=["observed"], columns=_TRAINING_COLUMNS,
             valid_date_min=(pd.Timestamp(chunk[0]) - pd.Timedelta(days=_OBS_PAD_DAYS)).date(),
@@ -152,12 +158,13 @@ def _build_paired_in_chunks(init_date_max=None, init_date_min=None) -> "tuple[pd
         )
         rows_read += len(fc) + len(ob)
         part = fe.build_training_frame(
-            pd.concat([fc, ob], ignore_index=True), historical_bust_freq=None)
+            pd.concat([fc, ob], ignore_index=True), historical_bust_freq=None,
+            forecast_history=history)
         if not part.empty:
             # Downcast per chunk, not after the concat: the whole point is never to hold
             # the expensive version of a year at once.
             frames.append(_downcast_paired(part))
-        del fc, ob, part
+        del fc, ob, part, history
 
     if not frames:
         return pd.DataFrame(), rows_read
@@ -180,6 +187,17 @@ def _build_paired_in_chunks(init_date_max=None, init_date_min=None) -> "tuple[pd
     return (out.sort_values(fe.MEMBER_KEYS[:-1] + ["variable", "ensemble_member_id",
                                                    "lead_time_days"], ignore_index=True),
             rows_read)
+
+
+def _fit_jump_climatology(train: pd.DataFrame, others) -> dict:
+    """Mean |jump| per (district, variable), fitted on the TRAINING split only - the same
+    discipline as the bust threshold - then used to scale jump_rel_climatology in every
+    split. `train` and `others` gain the column in place."""
+    clim = fe.compute_jump_climatology(train) if "jump_abs_change" in train.columns else {}
+    for frame in (train, *others):
+        if frame is not None and not frame.empty:
+            fe.attach_jump_climatology(frame, clim)
+    return clim
 
 
 def _split_by_cycle(paired: pd.DataFrame):
@@ -336,6 +354,7 @@ def full_retrain(triggered_by_batch_id: str | None = None, make_current: bool = 
                 continue
             key = list(zip(frame["region_id"].astype(str), frame["season"].astype(str)))
             frame["historical_bust_frequency_region_season"] = [hbf.get(k, np.nan) for k in key]
+        jump_clim = _fit_jump_climatology(tr, (va, te))
 
         p90_error = compute_member_p90(tr[["variable", "abs_error"]])
         event_err_tr = _event_mean_error(tr)
@@ -427,6 +446,7 @@ def full_retrain(triggered_by_batch_id: str | None = None, make_current: bool = 
         registry.save_classifier(run_id, clf_art.model, clf_art.feature_columns)
         registry.save_thresholds(run_id, thresholds)
         registry.save_historical_bust_freq(run_id, hbf)
+        registry.save_jump_climatology(run_id, jump_clim)
         if not shap_summary.empty:
             shap_summary.to_parquet(registry.run_dir(run_id) / "shap_summary.parquet", index=False)
         registry.save_metrics(run_id, {
