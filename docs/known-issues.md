@@ -310,6 +310,19 @@ here rather than discovered live.
   whatever machine and onnxruntime build actually produced it, and this repo's own rule
   is not to overwrite a measured fact with a different machine's reading without saying
   so - recorded here instead. Measured 2026-09-17.
+- **`fetch_gefs_reforecast_sample.py`'s CSV twin can silently stop a multi-year finalise
+  partway through, with no traceback.** Discovered 2026-09-17/18 finalising 2013-2015 from
+  already-cached dense parts (`--years 2013-2015 --stride 1 --resume`, no `--no-csv`):
+  2013 finalised correctly (parquet + a `.csv.partial` that never got renamed), but 2014
+  and 2015 were never touched at all - `_finalise` iterates years in a plain loop with no
+  per-year isolation, and the district-scale CSV twin is "tens of GB" (the docstring's own
+  words) per year. On a machine with ~38 GB free, 2013's CSV alone (12 GB, still `.partial`
+  when the process stopped) was enough to exhaust free disk before 2014 was ever reached -
+  and nothing printed an error to the captured output; the process just stopped. `--no-csv`
+  exists precisely because "nothing reads it downstream" (the ingest, training, and every
+  test read the parquet only) - use it for any multi-year finalise, not just as an
+  optimisation. Fixed by deleting the runaway `.partial` and re-running 2014/2015 with
+  `--no-csv`; both finalised correctly once disk pressure was gone. Measured 2026-09-18.
 
 ## Data
 
