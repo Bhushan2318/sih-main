@@ -262,19 +262,22 @@ def sedi(y_true, y_prob, threshold: float = 0.5) -> float:
     """Symmetric Extremal Dependence Index (SEDI).
 
     Ferro & Stephenson (2011, Weather and Forecasting), doi:10.1175/WAF-D-10-05030.1:
-    built specifically for rare binary events, where scores like CSI/HSS degenerate
-    toward trivial values as the event's base rate shrinks - exactly this project's
-    situation, since a bust is defined as the rarest 10% of each variable's own error
-    distribution. Given hit rate H and false-alarm rate F at one decision threshold
-    (0.5, the same convention ``classifier._evaluate`` already uses for
-    precision/recall/F1):
+    built for rare binary events, where scores like CSI/HSS degenerate toward trivial
+    values as the event's base rate shrinks. Each variable's own bust threshold really
+    is rare by construction - the 90th percentile of that variable's own error - but
+    the label this is actually scored on, ``y_bust`` ("did ANY of ~8 variables bust"),
+    is not: CLAUDE.md's own measured figure is ~43% (1 - 0.9**8 ~= 0.57 before
+    dependence pulls it down), not the 10% the per-variable definition might suggest.
+    SEDI is included anyway - it costs nothing to report correctly at any base rate -
+    but it does not carry the strong rare-event case here that the per-variable
+    framing implies, and that gap is stated rather than left for a reader to assume
+    wrong. Given hit rate H and false-alarm rate F at one decision threshold (0.5, the
+    same convention ``classifier._evaluate`` already uses for precision/recall/F1):
 
         SEDI = (ln F - ln H - ln(1-F) + ln(1-H)) / (ln F + ln H + ln(1-F) + ln(1-H))
 
     Bounded in [-1, 1]: 0 for no skill (H == F), 1 in the limit of a perfect forecast
-    (H -> 1, F -> 0), negative when the forecast is worse than chance (H < F) - unlike
-    plain hit/false-alarm rates, this does not collapse toward a fixed value as the
-    base rate goes to zero, which is the entire point of using it here.
+    (H -> 1, F -> 0), negative when the forecast is worse than chance (H < F).
     """
     y = np.asarray(y_true, int)
     pred = (np.asarray(y_prob, float) >= threshold).astype(int)
