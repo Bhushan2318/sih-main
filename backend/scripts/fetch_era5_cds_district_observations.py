@@ -49,10 +49,13 @@ import sys
 import time
 import zipfile
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
-import xarray as xr
+
+if TYPE_CHECKING:
+    import xarray as xr
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 BACKEND_DIR = SCRIPT_DIR.parent
@@ -201,6 +204,8 @@ def _read_archive(path: Path) -> pd.DataFrame:
     """CDS returns a zip of two NetCDFs split by stepType - accumulations in one file,
     instantaneous fields in the other - regardless of download_format. Verified on a real
     download; reading `path` directly as NetCDF fails."""
+    import xarray as xr
+
     frames = []
     with zipfile.ZipFile(path) as z:
         members = [m for m in z.namelist() if m.endswith(".nc")]
