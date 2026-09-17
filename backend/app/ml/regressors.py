@@ -15,6 +15,7 @@ NUMERIC_FEATURES = [
     "ensemble_spread", "ensemble_member_count",
     "pressure_rate_of_change", "moisture_rate_of_change",
     "forecast_error_lag", "historical_bust_frequency_region_season",
+    "jump_abs_change", "jump_std", "jump_sign_flips", "jump_rel_climatology",
 ]
 CATEGORICAL_FEATURES = ["region_id", "season"]
 CONCURRENT_PREFIX = "fc_"
