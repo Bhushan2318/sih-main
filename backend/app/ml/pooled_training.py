@@ -163,30 +163,53 @@ def _feature_columns_for(cached_paths: dict, years: list) -> list:
 
 def attach_hbf_column(df: "pd.DataFrame", hbf: dict,
                       out_col: str = "historical_bust_frequency_region_season") -> "pd.DataFrame":
-    """Attach the per-(region, season) historical bust frequency feature, vectorized -
-    the replacement for `df[out_col] = [hbf.get(k, np.nan) for k in key]`, which every
-    call site in this file used until the real crash 2026-09-15 (v10): that builds a
-    length-N Python list of boxed tuples and then a length-N list of boxed floats before
-    pandas can convert either back to an array, and on a 76.7M-row year that conversion
-    itself needs a large contiguous allocation - inside an already-isolated per-year
-    subprocess, proving process isolation alone does not fix an operation that is simply
-    too expensive within one call.
+    """Attach the per-(region, season) historical bust frequency feature, vectorized in
+    category-code space - never materialising a per-row string array, at any row count.
 
-    A merge on a small, separate two-column string key frame does the same lookup in
-    vectorized C code, and touches none of `df`'s other columns - unlike a `.copy()` or
-    `.assign()` on `df` itself, `how="left"` on a key frame whose right side (`hbf`,
-    built from a dict) never has duplicate keys preserves row order and row count
-    exactly, so `merged[out_col].to_numpy()` lines up positionally with `df` without
-    needing to reindex anything."""
+    History: the original `[hbf.get(k, np.nan) for k in key]` list comprehension was
+    replaced (2026-09-15, v10) by a merge on a `region_id.astype(str)` key frame, which
+    fixed the boxed-list allocation but not the underlying problem - `.astype(str)` on a
+    Categorical still builds a genuinely dense fixed-width unicode array, one entry per
+    row. That merge version worked in `pooled_stats` (a thin, freshly-read 2-3 column
+    frame) but real crash 2026-09-17: called here on the FULL wide per-year training
+    frame - already resident with every feature column - the same `.astype(str)` needed
+    an 8.27 GiB contiguous allocation for one 76.5M-row year and hit `ArrayMemoryError`,
+    the same "free but not contiguous" signature as every earlier crash in this file.
+
+    `region_id`/`season` are already Categorical (contracts.py), which means the actual
+    per-row data is already a small int codes array plus a tiny categories index - the
+    string array the merge approach built was pure waste. Building a `region x season`
+    lookup table (at most a few thousand cells - 666 districts x a handful of seasons,
+    independent of row count) and indexing it with the existing `.cat.codes` arrays does
+    the identical lookup with zero additional string materialisation, at any scale."""
+    out = np.full(len(df), np.nan, dtype=np.float64)
     if not hbf:
-        df[out_col] = np.nan
+        df[out_col] = out
         return df
-    hbf_df = pd.DataFrame(
-        [(r, s, v) for (r, s), v in hbf.items()], columns=["region_id", "season", out_col])
-    key = pd.DataFrame({"region_id": df["region_id"].astype(str).to_numpy(),
-                        "season": df["season"].astype(str).to_numpy()})
-    merged = key.merge(hbf_df, on=["region_id", "season"], how="left")
-    df[out_col] = merged[out_col].to_numpy()
+
+    def _codes_and_categories(col: "pd.Series"):
+        if isinstance(col.dtype, pd.CategoricalDtype):
+            return col.cat.codes.to_numpy(), col.cat.categories
+        # Not categorical (e.g. a hand-built test frame) - the fallback path is the one
+        # place this still costs a string array, sized to the number of DISTINCT values,
+        # not the row count, so it stays cheap even here.
+        cat = col.astype(str).astype("category")
+        return cat.cat.codes.to_numpy(), cat.cat.categories
+
+    region_codes, region_cats = _codes_and_categories(df["region_id"])
+    season_codes, season_cats = _codes_and_categories(df["season"])
+    region_pos = {r: i for i, r in enumerate(region_cats)}
+    season_pos = {s: i for i, s in enumerate(season_cats)}
+
+    lut = np.full((len(region_cats), len(season_cats)), np.nan, dtype=np.float64)
+    for (r, s), v in hbf.items():
+        ri, si = region_pos.get(r), season_pos.get(s)
+        if ri is not None and si is not None:
+            lut[ri, si] = v
+
+    valid = (region_codes >= 0) & (season_codes >= 0)
+    out[valid] = lut[region_codes[valid], season_codes[valid]]
+    df[out_col] = out
     return df
 
 
@@ -417,15 +440,48 @@ def _run_variable_subprocess(cached: dict, train_years: list, variable: str,
     return the result as a plain dict. See _train_pooled_variable_worker.py's docstring
     for why this is a subprocess and not a function call: the process exit is what
     actually reclaims the native (pyarrow/XGBoost) memory this does, which repeated
-    `gc.collect()` calls in a long-lived process could not - real crashes 2026-09-14."""
-    job = {"cached": cached, "train_years": train_years, "variable": variable,
-          "train_cycles": train_cycles, "va_var": va_var, "hbf": hbf,
-          "cache_dir": cache_dir, "device": device, "fold_of": fold_of}
-    result = _run_worker_subprocess(_WORKER_SCRIPT, job)
-    if "artifact" not in result:  # the no-output/no-result-file case
-        result = {"artifact": None, "val_pred": None, "fold_models": {},
-                  "skipped": result.get("error"), "error": result.get("error")}
-    return result
+    `gc.collect()` calls in a long-lived process could not - real crashes 2026-09-14.
+
+    Real crash 2026-09-16: humidity_pct's worker died with a hard OS-level kill -
+    STATUS_STACK_BUFFER_OVERRUN (0xC0000409) once, 0xFFFFFFFF another time - specifically
+    when `train_years` contained exactly one of {2016, 2017} without the other. Both are
+    native crashes below Python (the worker's own `except Exception` never runs; no
+    stderr is written before the OS kills it), so there is nothing to catch here, only to
+    retry around. A `humidity_pct: worker produced no output` in skipped_variables used
+    to mean the whole variable silently dropped from that run - it is now missing from
+    the feature set AND the bust-label definition (an event busts if any of ~8 variables
+    exceeds its own p90), which is a real, unflagged degradation of the run, not a
+    graceful skip. Retry once on the same device (a one-off native fault, e.g. a
+    transient CUDA/driver hiccup, need not repeat); if it fails twice and the device was
+    CUDA, retry once more on CPU - if the crash is specific to the CUDA path for this
+    variable/year combination, CPU sidesteps it entirely rather than losing the variable.
+    Every attempt is recorded in the returned dict's `skipped`/`error` message even on
+    eventual success, so a run that needed a fallback is visible, not indistinguishable
+    from one that never had a problem."""
+    def attempt(dev: str) -> dict:
+        job = {"cached": cached, "train_years": train_years, "variable": variable,
+              "train_cycles": train_cycles, "va_var": va_var, "hbf": hbf,
+              "cache_dir": cache_dir, "device": dev, "fold_of": fold_of}
+        return _run_worker_subprocess(_WORKER_SCRIPT, job)
+
+    attempts_log = []
+    devices_to_try = [device, device] + (["cpu"] if device != "cpu" else [])
+    result = None
+    for i, dev in enumerate(devices_to_try):
+        result = attempt(dev)
+        if "artifact" in result:      # pickle came back - a hard crash did not happen
+            if i > 0:
+                note = (f"succeeded on attempt {i + 1} (device={dev}) after: "
+                        f"{' | '.join(attempts_log)}")
+                if result.get("skipped"):
+                    result["skipped"] = f"{result['skipped']} [{note}]"
+            return result
+        attempts_log.append(f"attempt {i + 1} device={dev}: {result.get('error')}")
+
+    # Every attempt hard-crashed with no pickled result at all.
+    msg = f"worker crashed on every attempt - {' | '.join(attempts_log)}"
+    return {"artifact": None, "val_pred": None, "fold_models": {},
+           "skipped": msg, "error": msg}
 
 
 _TEST_EVENTS_WORKER_SCRIPT = (Path(__file__).resolve().parents[2] / "scripts"
@@ -448,6 +504,22 @@ def _run_test_events_subprocess(cached_path: Path, test_cycles: set, hbf: dict,
     if result.get("error"):
         raise RuntimeError(f"test-events worker failed:\n{result['error']}")
     return result["event_frame"], result["test_metrics"]
+
+
+def _cuda_available() -> bool:
+    """Whether a CUDA device can be used, without making PyTorch a requirement.
+
+    XGBoost trains on CUDA without torch; torch is only the probe here. Importing it
+    unconditionally crashed pooled training with ModuleNotFoundError on any machine
+    without torch - CI's core install, any XGBoost-only environment - before the
+    "no GPU, everything on CPU" branch below could run. No torch means no probe, which
+    is the same answer as no GPU.
+    """
+    try:
+        import torch
+    except ImportError:
+        return False
+    return bool(torch.cuda.is_available())
 
 
 def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
@@ -562,8 +634,7 @@ def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
     half = max(1, len(variables) // 2)
     gpu_vars, cpu_vars = variables[:half], variables[half:]
 
-    import torch
-    gpu_available = torch.cuda.is_available()
+    gpu_available = _cuda_available()
 
     artifacts: dict = {}
     val_pred = pd.Series(np.nan, index=va.index, dtype=float)
