@@ -21,6 +21,25 @@ _SEASONS = {
 EVENT_KEYS = ["region_id", "init_date", "valid_date", "lead_time_days"]
 MEMBER_KEYS = EVENT_KEYS + ["ensemble_member_id"]
 
+# C1, forecast jumpiness: how far the forecast for one (district, variable, valid date)
+# moved between consecutive initialisations. A forecast that keeps changing its mind is
+# one the model itself is unsure of, and that is visible at issue time - it uses only
+# cycles issued on or before the row's own init_date, never an observation.
+JUMP_FEATURES = ("jump_abs_change", "jump_std", "jump_sign_flips", "jump_rel_climatology")
+# Cycles in the std / sign-flip window, the row's own cycle included.
+JUMP_WINDOW = 5
+# A cycle issued this many days earlier still reaches the same valid date: Day 10 of
+# init-9 is valid on init (valid_date = init + (lead - 1)). Anything older cannot overlap.
+MAX_LEAD_DAYS = 10
+JUMP_LOOKBACK_DAYS = MAX_LEAD_DAYS - 1
+# Degrees: 350 -> 10 is a 20 degree change, not 340.
+_CIRCULAR_VARIABLES = {"wind_direction_deg"}
+_TRAJECTORY_KEYS = ["region_id", "variable", "valid_date", "init_date"]
+TRAJECTORY_COLUMNS = _TRAJECTORY_KEYS + ["fc_mean"]
+# Same mask build_training_frame applies to paired rows: the archive saturates soil
+# moisture at 100 where it has no value.
+_SOIL_SATURATED = 99.5
+
 
 def _season(month: pd.Series) -> pd.Series:
     return month.map(_SEASONS).astype("category")
@@ -30,10 +49,25 @@ def build_training_frame(
     canonical: pd.DataFrame,
     historical_bust_freq: dict | None = None,
     require_observed: bool = True,
+    forecast_history: pd.DataFrame | None = None,
+    jump_climatology: dict | None = None,
 ) -> pd.DataFrame:
+    """`forecast_history` is cycles issued before those in `canonical` - raw forecast rows,
+    or trajectories already reduced by forecast_trajectories (app.features.history). They
+    feed the jumpiness features and produce no rows of their own: the chunked trainer and
+    the one-cycle scorer each see only part of the archive at a time.
+
+    `jump_climatology` is fitted on training rows only (compute_jump_climatology); without
+    it `jump_rel_climatology` is NaN, exactly as the historical bust frequency is.
+    """
     df = canonical.copy()
     df = df[df["region_id"].notna()]
     fc = df[df["value_type"] == FORECAST].copy()
+    trajectories = [forecast_trajectories(fc)]
+    if forecast_history is not None and not forecast_history.empty:
+        trajectories.insert(0, forecast_trajectories(forecast_history))
+    jumps = compute_jumpiness(pd.concat(trajectories, ignore_index=True))
+    del trajectories
     ob_cols = ["region_id", "valid_date", "variable", "value"]
     has_vs = "verification_status" in df.columns
     if has_vs:
@@ -73,6 +107,9 @@ def build_training_frame(
 
     paired["valid_date"] = pd.to_datetime(paired["valid_date"])
     paired["init_date"] = pd.to_datetime(paired["init_date"])
+    paired = _merge_jumpiness(paired, jumps)
+    del jumps
+    paired = attach_jump_climatology(paired, jump_climatology)
     paired["month"] = paired["valid_date"].dt.month
     paired["season"] = _season(paired["month"])
     paired["region_id"] = paired["region_id"].astype("category")
@@ -135,6 +172,147 @@ def _add_concurrent_variable_forecasts(paired: pd.DataFrame) -> pd.DataFrame:
         if col in merged.columns:
             merged.loc[merged["variable"] == var, col] = np.nan
     return merged
+
+
+def forecast_trajectories(fc: pd.DataFrame) -> pd.DataFrame:
+    """The ensemble-mean forecast per (region, variable, valid_date, init_date).
+
+    The ensemble mean, not a member: perturbed member p01 of one cycle is not the same
+    trajectory as p01 of the next, so a member-by-member change would be noise between
+    unrelated perturbations. Wind direction is averaged as a unit vector.
+    """
+    out_cols = TRAJECTORY_COLUMNS
+    if fc.empty:
+        return pd.DataFrame(columns=out_cols)
+    if "value" not in fc.columns and "fc_mean" in fc.columns:
+        return fc[out_cols]                      # already reduced
+    t = pd.DataFrame({
+        "region_id": fc["region_id"].to_numpy(),
+        "variable": fc["variable"].to_numpy(),
+        "valid_date": pd.to_datetime(fc["valid_date"]).to_numpy(),
+        "init_date": pd.to_datetime(fc["init_date"]).to_numpy(),
+        "value": pd.to_numeric(fc["value"], errors="coerce").to_numpy(dtype=float),
+    })
+    t = t[t["value"].notna() & t["init_date"].notna() & t["region_id"].notna()]
+    t = t[~((t["variable"] == "soil_moisture_pct") & (t["value"] >= _SOIL_SATURATED))]
+    if t.empty:
+        return pd.DataFrame(columns=out_cols)
+
+    circ = t["variable"].isin(_CIRCULAR_VARIABLES).to_numpy()
+    rad = np.radians(t["value"].to_numpy())
+    t["_sin"] = np.where(circ, np.sin(rad), np.nan)
+    t["_cos"] = np.where(circ, np.cos(rad), np.nan)
+    g = (t.groupby(_TRAJECTORY_KEYS, sort=False, observed=True)
+          .agg(fc_mean=("value", "mean"), _sin=("_sin", "mean"), _cos=("_cos", "mean"))
+          .reset_index())
+    del t
+    circ_g = g["variable"].isin(_CIRCULAR_VARIABLES).to_numpy()
+    if circ_g.any():
+        g.loc[circ_g, "fc_mean"] = np.degrees(
+            np.arctan2(g.loc[circ_g, "_sin"], g.loc[circ_g, "_cos"])) % 360.0
+    g["region_id"] = g["region_id"].astype(str)
+    g["variable"] = g["variable"].astype(str)
+    return g[out_cols]
+
+
+def compute_jumpiness(trajectories: pd.DataFrame, window: int = JUMP_WINDOW) -> pd.DataFrame:
+    """jump_abs_change, jump_std and jump_sign_flips per trajectory row.
+
+    For each (region, variable, valid_date), cycles are ordered by init_date and each row
+    looks back only at cycles issued before it:
+
+      jump_abs_change  |this cycle - the previous cycle covering the same valid date|
+      jump_std         sample std (ddof=1) of the last `window` cycles, this one included;
+                       needs at least 3 - with 2 it is only |change| / sqrt(2) again
+      jump_sign_flips  how often the direction of change reversed within that window;
+                       an unchanged step carries no direction and is skipped over, so
+                       up / flat / down still counts as one reversal. Needs 3 cycles.
+
+    Too few cycles is NaN, never 0: "no earlier forecast" is not "it did not move".
+    Wind direction differences are wrapped to (-180, 180] before anything is computed.
+    """
+    feats = ["jump_abs_change", "jump_std", "jump_sign_flips"]
+    if trajectories.empty:
+        return pd.DataFrame(columns=_TRAJECTORY_KEYS + feats)
+    k = max(int(window), 3)
+    out = trajectories.sort_values(_TRAJECTORY_KEYS, ignore_index=True)
+    grp = out.groupby(["region_id", "variable", "valid_date"], sort=False,
+                      observed=True)["fc_mean"]
+    # column j is the value j cycles back; NaN once a trajectory has no earlier cycle
+    vals = np.column_stack([grp.shift(j).to_numpy(dtype=float) for j in range(k)])
+    diffs = vals[:, :-1] - vals[:, 1:]          # column j: change into cycle t-j
+    del vals
+    circ = out["variable"].isin(_CIRCULAR_VARIABLES).to_numpy()
+    if circ.any():
+        diffs[circ] = (diffs[circ] + 180.0) % 360.0 - 180.0
+
+    # Values relative to this cycle, rebuilt from the (wrapped) changes, so the spread of
+    # 350 -> 10 -> 350 is taken over 350, 370, 350. NaNs only ever trail, so they stay put.
+    rel = np.column_stack([np.zeros(len(out)), -np.cumsum(diffs, axis=1)])
+    n = np.sum(~np.isnan(rel), axis=1)
+    mean = np.nansum(rel, axis=1) / n
+    ss = np.nansum((rel - mean[:, None]) ** 2, axis=1)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        std = np.where(n >= 3, np.sqrt(ss / (n - 1)), np.nan)
+
+    sign = np.sign(diffs)
+    flips = np.zeros(len(out))
+    last = np.zeros(len(out))
+    for j in range(sign.shape[1]):
+        s = sign[:, j]
+        moved = ~np.isnan(s) & (s != 0)
+        flips += moved & (last != 0) & (s != last)
+        last = np.where(moved, s, last)
+
+    out["jump_abs_change"] = np.abs(diffs[:, 0])
+    out["jump_std"] = std
+    out["jump_sign_flips"] = np.where(n >= 3, flips, np.nan)
+    return out[_TRAJECTORY_KEYS + feats]
+
+
+def _merge_jumpiness(paired: pd.DataFrame, jumps: pd.DataFrame) -> pd.DataFrame:
+    feats = ["jump_abs_change", "jump_std", "jump_sign_flips"]
+    if jumps.empty:
+        for col in feats:
+            paired[col] = np.nan
+        return paired
+    return paired.merge(jumps, on=_TRAJECTORY_KEYS, how="left")
+
+
+def compute_jump_climatology(frame: pd.DataFrame) -> dict:
+    """(region_id, variable) -> mean jump_abs_change. Fit on TRAINING rows only.
+
+    Member-grain rows repeat one trajectory value per member; every member row carries the
+    same value, so the mean is unchanged by that repetition when member counts agree.
+    """
+    ok = frame["jump_abs_change"].notna()
+    if not ok.any():
+        return {}
+    sub = frame.loc[ok, ["region_id", "variable", "jump_abs_change"]]
+    m = sub.groupby(["region_id", "variable"], observed=True)["jump_abs_change"].mean()
+    return {(str(r), str(v)): float(x) for (r, v), x in m.items()}
+
+
+def attach_jump_climatology(frame: pd.DataFrame, climatology: dict | None) -> pd.DataFrame:
+    """jump_rel_climatology = jump_abs_change / that district-variable's climatology.
+
+    NaN where the climatology is unknown or zero: a district whose forecast never moved in
+    training has no scale to be relative to, and inventing one would be a fabricated value.
+    A merge on a thin key frame, not a per-row Python lookup - see attach_hbf_column.
+    """
+    col = "jump_rel_climatology"
+    if not climatology or frame.empty or "jump_abs_change" not in frame.columns:
+        frame[col] = np.nan
+        return frame
+    ref = pd.DataFrame([(r, v, x) for (r, v), x in climatology.items()],
+                       columns=["region_id", "variable", "_clim"])
+    key = pd.DataFrame({"region_id": frame["region_id"].astype(str).to_numpy(),
+                        "variable": frame["variable"].astype(str).to_numpy()})
+    clim = key.merge(ref, on=["region_id", "variable"], how="left")["_clim"].to_numpy(float)
+    del key
+    clim = np.where(clim > 0, clim, np.nan)
+    frame[col] = pd.to_numeric(frame["jump_abs_change"], errors="coerce").to_numpy(float) / clim
+    return frame
 
 
 def compute_historical_bust_frequency(

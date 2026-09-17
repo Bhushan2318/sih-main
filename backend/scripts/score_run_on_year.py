@@ -41,6 +41,7 @@ def score_run_on_year(run_id: str, year: int) -> pd.DataFrame:
     """
     from app.ml import inference
     from app.ml.train_pipeline import _build_paired_in_chunks
+    from app.features import engineering as fe
     from app.features import pivot as pv
 
     state = inference.load_model_state(run_id)
@@ -59,6 +60,9 @@ def score_run_on_year(run_id: str, year: int) -> pd.DataFrame:
     hbf = state.historical_bust_freq
     key = list(zip(paired["region_id"].astype(str), paired["season"].astype(str)))
     paired["historical_bust_frequency_region_season"] = [hbf.get(k, np.nan) for k in key]
+    # Same reasoning for the jump climatology (C1): the run's own training split, never
+    # the scoring year's.
+    fe.attach_jump_climatology(paired, state.jump_climatology)
 
     pred = pd.Series(np.nan, index=paired.index, dtype=float)
     for var, (model, cols) in state.regressors.items():

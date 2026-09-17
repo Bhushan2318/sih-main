@@ -200,6 +200,8 @@ def test_full_retrain_pooled_end_to_end(tmp_path, _ingested_slice):
     real archive year fetched. This checks the pooling MECHANISM does not crash and
     produces usable, finite artifacts; it is not a claim about meteorological accuracy -
     that comparison is made separately against real archive years."""
+    pytest.importorskip("torch")  # full_retrain_pooled's GPU/CPU split unconditionally
+    # imports torch; requirements-train.txt only, not installed by setup.yml's test step.
     from app.ml.pooled_training import full_retrain_pooled
     from app.ml.train_pipeline import _build_paired_in_chunks
 

@@ -5,3 +5,11 @@
 #   pip install -r requirements.txt -r requirements-dev.txt
 pytest>=8.0,<9.0
 httpx>=0.27,<0.28
+
+# tests/test_ingest_districts_chunked.py exercises scripts/ingest_districts_chunked.py,
+# whose Windows peak-RSS path needs psutil (see that script's own comment - `resource` is
+# POSIX-only). Not requirements-train.txt: nothing in .github/workflows currently runs
+# that ingest script itself, only its tests, and setup.yml's "test suite" step installs
+# this file but not requirements-train.txt - keeping it here, not requirements.txt, means
+# the serving Docker image is untouched.
+psutil>=5.9,<8.0
