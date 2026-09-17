@@ -231,3 +231,97 @@ def test_full_retrain_pooled_end_to_end(tmp_path, _ingested_slice):
     assert clf is not None and clf_cols
     hbf = registry.load_historical_bust_freq(report.run_id)
     assert hbf
+
+
+# --------------------------------------------------------------- attach_hbf_column
+# Real crash 2026-09-17: the previous implementation cast region_id/season to a dense
+# per-row string array via .astype(str) - fine on pooled_stats's thin frame, but on the
+# FULL wide per-year training frame (already resident, 76.5M rows for a dense year) that
+# needed an 8.27 GiB contiguous allocation and hit ArrayMemoryError. The fix works in
+# category-code space instead - these tests pin correctness against a naive per-row dict
+# lookup (the actual spec, independent of either implementation), not against the old
+# merge's own output.
+
+def _naive_hbf_lookup(df, hbf, out_col):
+    """The obviously-correct, obviously-slow reference: one dict lookup per row."""
+    return [hbf.get((r, s), np.nan)
+           for r, s in zip(df["region_id"].astype(str), df["season"].astype(str))]
+
+
+def test_attach_hbf_column_matches_a_naive_dict_lookup():
+    df = pd.DataFrame({
+        "region_id": pd.Categorical(["r1", "r2", "r1", "r3", "r2"]),
+        "season": pd.Categorical(["winter", "winter", "monsoon", "monsoon", "monsoon"]),
+    })
+    hbf = {("r1", "winter"): 0.1, ("r2", "winter"): 0.2, ("r1", "monsoon"): 0.3,
+          ("r2", "monsoon"): 0.4}
+    want = _naive_hbf_lookup(df, hbf, "hbf")
+    got = pt.attach_hbf_column(df.copy(), hbf, out_col="hbf")["hbf"].tolist()
+    assert got == pytest.approx(want, nan_ok=True)
+
+
+def test_attach_hbf_column_missing_keys_are_nan_not_zero():
+    """A (region, season) combination with no historical bust frequency is missing
+    signal, not zero risk - CLAUDE.md rule 3: missing never becomes zero."""
+    df = pd.DataFrame({"region_id": pd.Categorical(["r1", "r2"]),
+                       "season": pd.Categorical(["winter", "summer"])})
+    hbf = {("r1", "winter"): 0.5}  # r2/summer is not in the table
+    out = pt.attach_hbf_column(df, hbf, out_col="hbf")["hbf"]
+    assert out.iloc[0] == pytest.approx(0.5)
+    assert np.isnan(out.iloc[1])
+
+
+def test_attach_hbf_column_empty_hbf_is_all_nan():
+    df = pd.DataFrame({"region_id": pd.Categorical(["r1", "r2"]),
+                       "season": pd.Categorical(["winter", "summer"])})
+    out = pt.attach_hbf_column(df, {}, out_col="hbf")["hbf"]
+    assert out.isna().all()
+
+
+def test_attach_hbf_column_works_on_non_categorical_columns_too():
+    """A hand-built test frame (or any caller) may hand this plain object-dtype
+    columns, not just the Categorical the real pipeline always produces."""
+    df = pd.DataFrame({"region_id": ["r1", "r2"], "season": ["winter", "monsoon"]})
+    hbf = {("r1", "winter"): 0.7}
+    out = pt.attach_hbf_column(df, hbf, out_col="hbf")["hbf"]
+    assert out.iloc[0] == pytest.approx(0.7)
+    assert np.isnan(out.iloc[1])
+
+
+def test_attach_hbf_column_row_count_and_order_are_preserved():
+    """The output must line up positionally with the input - the historical bug class
+    this whole function exists to avoid is a lookup that silently reindexes."""
+    df = pd.DataFrame({
+        "region_id": pd.Categorical(["r3", "r1", "r2", "r1"]),
+        "season": pd.Categorical(["monsoon", "winter", "winter", "monsoon"]),
+    })
+    hbf = {("r1", "winter"): 0.1, ("r2", "winter"): 0.2, ("r3", "monsoon"): 0.3,
+          ("r1", "monsoon"): 0.4}
+    out = pt.attach_hbf_column(df, hbf, out_col="hbf")["hbf"].tolist()
+    assert out == pytest.approx([0.3, 0.1, 0.2, 0.4])
+
+
+def test_attach_hbf_column_handles_a_large_row_count_without_a_dense_string_array():
+    """Not a memory-ceiling test (pytest cannot assert that portably) - a scale smoke
+    test: many rows, few distinct categories, the exact shape of the real crash
+    (76.5M rows, 666 districts). If this silently regressed back to .astype(str) on the
+    full column, it would still pass at this size, but the whole point is that the
+    lookup-table approach's cost is O(distinct values), not O(rows) - this at least
+    exercises that path for real rather than only ever at hand-built sizes of 2-5 rows."""
+    n = 2_000_000
+    rng = np.random.default_rng(0)
+    region_ids = [f"r{i}" for i in range(666)]
+    seasons = ["winter", "summer", "monsoon", "post-monsoon"]
+    df = pd.DataFrame({
+        "region_id": pd.Categorical(rng.choice(region_ids, size=n)),
+        "season": pd.Categorical(rng.choice(seasons, size=n)),
+    })
+    hbf = {(r, s): float(i % 100) / 100
+          for i, (r, s) in enumerate((r, s) for r in region_ids for s in seasons)}
+    out = pt.attach_hbf_column(df, hbf, out_col="hbf")["hbf"]
+    assert len(out) == n
+    assert out.notna().all()
+    # Spot-check against the naive reference on a small random sample, not all 2M rows.
+    sample = df.sample(500, random_state=0)
+    want = _naive_hbf_lookup(sample, hbf, "hbf")
+    assert out.loc[sample.index].tolist() == pytest.approx(want)
