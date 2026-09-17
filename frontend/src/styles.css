@@ -521,6 +521,10 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 
 .kpis--flush { padding: 0; margin-bottom: 16px; }
 
+.ladder { margin: 12px 1.3rem 0; }
+.ladder .dtable { font-size: 12.5px; }
+@media (max-width: 900px) { .ladder { margin-inline: 1rem; } }
+
 .card--table { padding-bottom: 0.6rem; }
 
 .tablewrap { overflow-x: auto; margin: 0 -0.25rem; }
@@ -539,6 +543,10 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 .dtable tr.is-active { background: var(--blue-wash); }
 .dtable tr.is-active td { color: var(--ink); font-weight: 600; border-top: 1px solid var(--blue); border-bottom: 1px solid var(--blue); }
 .dtable tr.is-active td:first-child { box-shadow: inset 3px 0 0 var(--blue); }
+
+.dtable tr.is-flagged { background: var(--bust-wash); }
+.dtable tr.is-flagged td { color: var(--ink); border-top: 1px solid var(--bust); border-bottom: 1px solid var(--bust); }
+.dtable tr.is-flagged td:first-child { box-shadow: inset 3px 0 0 var(--bust); }
 .dtable__row { cursor: pointer; transition: background 0.13s; }
 .dtable__row:hover { background: var(--card-2); }
 .dtable__row:focus-visible { outline: 2px solid var(--blue); outline-offset: -2px; }
