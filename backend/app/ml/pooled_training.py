@@ -506,6 +506,22 @@ def _run_test_events_subprocess(cached_path: Path, test_cycles: set, hbf: dict,
     return result["event_frame"], result["test_metrics"]
 
 
+def _cuda_available() -> bool:
+    """Whether a CUDA device can be used, without making PyTorch a requirement.
+
+    XGBoost trains on CUDA without torch; torch is only the probe here. Importing it
+    unconditionally crashed pooled training with ModuleNotFoundError on any machine
+    without torch - CI's core install, any XGBoost-only environment - before the
+    "no GPU, everything on CPU" branch below could run. No torch means no probe, which
+    is the same answer as no GPU.
+    """
+    try:
+        import torch
+    except ImportError:
+        return False
+    return bool(torch.cuda.is_available())
+
+
 def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
                         run_id: str | None = None) -> "TrainReport":
     """The pooled-training equivalent of `train_pipeline.full_retrain`: any number of
@@ -585,14 +601,12 @@ def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
                        ["variable"].unique())
     fold_of = assign_folds(train_c)
 
-    # Split the variables across a GPU thread and a CPU thread, both running against the
-    # same `va` and `hbf`. XGBoost's training call is a C++ extension that releases the
-    # GIL while it runs, so this is genuine concurrent use of both the GPU and the CPU
-    # cores, not two halves of one resource taking turns - verified with a real GPU fit
-    # via QuantileDMatrix+DataIter before this was wired in. Each half returns its own
-    # partial results; the halves touch disjoint variables and disjoint rows of `va` (via
-    # vmask), so merging afterward rather than writing into shared dicts/Series from both
-    # threads avoids relying on pandas' assignment being thread-safe.
+    # Split the variables across GPU and CPU devices, both running against the same `va`
+    # and `hbf`. Each half returns its own partial results; the halves touch disjoint
+    # variables and disjoint rows of `va` (via vmask), so merging afterward rather than
+    # writing into shared dicts/Series avoids relying on pandas' assignment being
+    # thread-safe - kept even though the groups no longer run concurrently (below),
+    # because it is still the simplest way to merge two independently-produced results.
     def _train_group(var_subset: list, device: str):
         # Each variable trains in its own subprocess (see _run_variable_subprocess) so
         # fragmentation from one variable's fits can never carry over into the next -
@@ -618,18 +632,25 @@ def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
     half = max(1, len(variables) // 2)
     gpu_vars, cpu_vars = variables[:half], variables[half:]
 
-    import torch
-    gpu_available = torch.cuda.is_available()
+    gpu_available = _cuda_available()
 
     artifacts: dict = {}
     val_pred = pd.Series(np.nan, index=va.index, dtype=float)
     fold_models: dict = {}
+    # Sequential, deliberately - NOT a ThreadPoolExecutor running both groups at once
+    # anymore. Real crash 2026-09-17: each variable's worker is its own OS subprocess
+    # (_run_variable_subprocess) reading a full year's frame - several GB depending on
+    # the variable - and running two of those at once (one GPU-thread variable, one
+    # CPU-thread variable) alongside whatever the parent still holds (`va`, `hbf`) pushed
+    # this ~24 GB machine over the edge repeatedly: the SAME ~4.29 GB malloc failed on
+    # different variables across different runs (temperature_c, wind_direction_deg,
+    # rainfall_mm), consistent with "whichever pair happened to be concurrent at the peak
+    # moment" rather than one variable being the problem. Concurrency here bought GPU/CPU
+    # overlap; it cost reliably fitting in memory. Given this project's own rule (a model
+    # that gets a number is worse than no number if it silently dropped 5 of 8 variables
+    # getting there), correctness wins over the wall-clock saving.
     if gpu_available and cpu_vars:
-        from concurrent.futures import ThreadPoolExecutor
-        with ThreadPoolExecutor(max_workers=2) as ex:
-            fut_gpu = ex.submit(_train_group, gpu_vars, "cuda")
-            fut_cpu = ex.submit(_train_group, cpu_vars, "cpu")
-            results = [fut_gpu.result(), fut_cpu.result()]
+        results = [_train_group(gpu_vars, "cuda"), _train_group(cpu_vars, "cpu")]
     else:
         # No GPU (or nothing left for a second group) - everything on CPU, one group.
         results = [_train_group(variables, "cpu")]
