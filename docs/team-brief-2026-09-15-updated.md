@@ -97,7 +97,8 @@ the CDS/ERA5 observation files through the same district weight table
 (`app.utils.district_observations`), and merged parquets exist on disk for
 2016-2019. **What the original brief required and is NOT yet done:** the
 0830 IST accumulation-window decision. IMD daily rainfall accumulates 0830 IST
-to 0830 IST, attributed to the starting day; nothing in the script or the docs
+to 0830 IST, attributed to the starting day [CORRECTED 2026-09-17: IMD
+attributes to the ENDING day - measured, see docs/known-issues.md, Data]; nothing in the script or the docs
 currently states how that aligns with the 00 UTC-initialised `valid_date`
 convention, and there is no test pinning it. This is a real gap, not a
 formality — get it wrong and every rainfall bust label is off by a day. Do
