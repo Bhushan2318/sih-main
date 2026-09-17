@@ -417,15 +417,48 @@ def _run_variable_subprocess(cached: dict, train_years: list, variable: str,
     return the result as a plain dict. See _train_pooled_variable_worker.py's docstring
     for why this is a subprocess and not a function call: the process exit is what
     actually reclaims the native (pyarrow/XGBoost) memory this does, which repeated
-    `gc.collect()` calls in a long-lived process could not - real crashes 2026-09-14."""
-    job = {"cached": cached, "train_years": train_years, "variable": variable,
-          "train_cycles": train_cycles, "va_var": va_var, "hbf": hbf,
-          "cache_dir": cache_dir, "device": device, "fold_of": fold_of}
-    result = _run_worker_subprocess(_WORKER_SCRIPT, job)
-    if "artifact" not in result:  # the no-output/no-result-file case
-        result = {"artifact": None, "val_pred": None, "fold_models": {},
-                  "skipped": result.get("error"), "error": result.get("error")}
-    return result
+    `gc.collect()` calls in a long-lived process could not - real crashes 2026-09-14.
+
+    Real crash 2026-09-16: humidity_pct's worker died with a hard OS-level kill -
+    STATUS_STACK_BUFFER_OVERRUN (0xC0000409) once, 0xFFFFFFFF another time - specifically
+    when `train_years` contained exactly one of {2016, 2017} without the other. Both are
+    native crashes below Python (the worker's own `except Exception` never runs; no
+    stderr is written before the OS kills it), so there is nothing to catch here, only to
+    retry around. A `humidity_pct: worker produced no output` in skipped_variables used
+    to mean the whole variable silently dropped from that run - it is now missing from
+    the feature set AND the bust-label definition (an event busts if any of ~8 variables
+    exceeds its own p90), which is a real, unflagged degradation of the run, not a
+    graceful skip. Retry once on the same device (a one-off native fault, e.g. a
+    transient CUDA/driver hiccup, need not repeat); if it fails twice and the device was
+    CUDA, retry once more on CPU - if the crash is specific to the CUDA path for this
+    variable/year combination, CPU sidesteps it entirely rather than losing the variable.
+    Every attempt is recorded in the returned dict's `skipped`/`error` message even on
+    eventual success, so a run that needed a fallback is visible, not indistinguishable
+    from one that never had a problem."""
+    def attempt(dev: str) -> dict:
+        job = {"cached": cached, "train_years": train_years, "variable": variable,
+              "train_cycles": train_cycles, "va_var": va_var, "hbf": hbf,
+              "cache_dir": cache_dir, "device": dev, "fold_of": fold_of}
+        return _run_worker_subprocess(_WORKER_SCRIPT, job)
+
+    attempts_log = []
+    devices_to_try = [device, device] + (["cpu"] if device != "cpu" else [])
+    result = None
+    for i, dev in enumerate(devices_to_try):
+        result = attempt(dev)
+        if "artifact" in result:      # pickle came back - a hard crash did not happen
+            if i > 0:
+                note = (f"succeeded on attempt {i + 1} (device={dev}) after: "
+                        f"{' | '.join(attempts_log)}")
+                if result.get("skipped"):
+                    result["skipped"] = f"{result['skipped']} [{note}]"
+            return result
+        attempts_log.append(f"attempt {i + 1} device={dev}: {result.get('error')}")
+
+    # Every attempt hard-crashed with no pickled result at all.
+    msg = f"worker crashed on every attempt - {' | '.join(attempts_log)}"
+    return {"artifact": None, "val_pred": None, "fold_models": {},
+           "skipped": msg, "error": msg}
 
 
 _TEST_EVENTS_WORKER_SCRIPT = (Path(__file__).resolve().parents[2] / "scripts"
