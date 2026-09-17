@@ -59,12 +59,29 @@ def _log(log_path: Path, msg: str) -> None:
         f.write(line + "\n")
 
 
+def _parse_trailing_json(stdout_text: str) -> dict | None:
+    """The last top-level (column-0) `{...}` block in `stdout_text`, or `None` if there
+    isn't one. See `_run_job_subprocess`'s docstring for why "last line starting with {"
+    (matches a nested object too) is wrong and this is column-0-exact instead."""
+    lines = stdout_text.splitlines()
+    start = next((i for i in range(len(lines) - 1, -1, -1) if lines[i] == "{"), None)
+    if start is None:
+        return None
+    return json.loads("\n".join(lines[start:]))
+
+
 def _run_job_subprocess(job: dict, cache_dir: Path, log_dir: Path) -> dict:
     """One job, in a brand-new process. Mirrors `_run_worker_subprocess` in
     app/ml/pooled_training.py: stdout/stderr to files, never captured in memory.
-    `train_pooled.py --json` prints exactly one JSON object as its last line of stdout;
-    everything before that (the training loop's own progress prints) is preserved in the
-    log file for later reading, not lost."""
+
+    `train_pooled.py --json` prints `json.dumps({...}, indent=2)` - a PRETTY-PRINTED,
+    multi-line object, not a single line. Real bug 2026-09-17: the first version looked
+    for "the last line starting with '{'", which matches a NESTED object's opening brace
+    (e.g. inside "split_cycles": {) just as readily as the real top-level one, and grabbed
+    the wrong one - a training run that genuinely finished (returncode 0, a full result in
+    the log file) was reported as a parse failure and its real result discarded. `indent=2`
+    means the outer brace is always alone on its own line at column 0; a nested brace is
+    always indented. Take the LAST line that is exactly "{" with no leading whitespace."""
     years_arg = ",".join(str(y) for y in sorted(job["train_years"]))
     test_year = job["test_year"]
     stdout_path = log_dir / f"job_test{test_year}_stdout.log"
@@ -78,17 +95,16 @@ def _run_job_subprocess(job: dict, cache_dir: Path, log_dir: Path) -> dict:
             stdout=out_f, stderr=err_f, cwd=BACKEND_DIR, env=env,
         )
     stdout_text = stdout_path.read_text(errors="replace")
-    json_line = next((ln for ln in reversed(stdout_text.splitlines())
-                      if ln.strip().startswith("{")), None)
-    if json_line is None:
+    try:
+        result = _parse_trailing_json(stdout_text)
+    except json.JSONDecodeError as exc:
+        return {"status": "crashed", "returncode": proc.returncode,
+               "error": f"could not parse JSON output: {exc}\nstdout tail: {stdout_text[-2000:]}"}
+    if result is None:
         tail = stderr_path.read_text(errors="replace")[-4000:]
         return {"status": "crashed", "returncode": proc.returncode,
                "error": f"no JSON output from subprocess (rc={proc.returncode}): {tail}"}
-    try:
-        return json.loads(json_line)
-    except json.JSONDecodeError as exc:
-        return {"status": "crashed", "returncode": proc.returncode,
-               "error": f"could not parse JSON output: {exc}\nline: {json_line[:2000]}"}
+    return result
 
 
 def run_queue(queue: list[dict], cache_dir: Path, out_path: Path, log_path: Path) -> list[dict]:
