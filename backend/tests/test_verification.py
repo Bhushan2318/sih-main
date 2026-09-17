@@ -1,14 +1,16 @@
-"""D1/D2/D3/D4 of the verification package: block-bootstrap CIs, binormal Z-AUC, the
-CORP reliability curve / Brier decomposition, and relative economic value / SEDI.
+"""D1/D2/D3/D4/D6 of the verification package: block-bootstrap CIs, binormal Z-AUC, the
+CORP reliability curve / Brier decomposition, relative economic value / SEDI, and split
+conformal prediction.
 
 Every metric function is checked against a value computed independently of the code
 under test - either a closed-form hand computation (via ``math.erf``, never
 ``scipy.stats``, since that is what ``binormal_auc`` itself calls), a literal
 Mann-Whitney count done by hand, a 4-point pool-adjacent-violators trace worked by hand
-and cross-checked against ``sklearn.isotonic.IsotonicRegression`` directly, or (for D4)
-a raw expected-cost simulation of the cost-loss decision model, independent of the
-closed-form formula the module itself uses. See ``app/ml/verification.py`` for the
-formulas and citations.
+and cross-checked against ``sklearn.isotonic.IsotonicRegression`` directly, a raw
+expected-cost simulation of the cost-loss decision model independent of D4's closed-form
+formula, or (for D6) the literature's own central empirical claim - marginal coverage -
+checked directly rather than assumed from the formula alone. See
+``app/ml/verification.py`` for the formulas and citations.
 """
 
 from __future__ import annotations
@@ -23,6 +25,8 @@ from app.ml.verification import (
     binormal_auc,
     block_bootstrap_ci,
     brier_decomposition,
+    conformal_prediction_set,
+    conformal_threshold,
     corp_reliability_curve,
     relative_economic_value,
     sedi,
@@ -428,3 +432,83 @@ def test_relative_economic_value_stays_fast_at_realistic_scale():
     elapsed = time.time() - start
     assert elapsed < 15.0, f"took {elapsed:.1f}s - the O(n^2)/Python-loop bug is back"
     assert len(curve) == 99
+
+
+# ---------------------------------------------------------------------------
+# conformal_threshold / conformal_prediction_set
+# ---------------------------------------------------------------------------
+
+def test_conformal_threshold_matches_a_hand_computed_order_statistic():
+    """n=19, alpha=0.1 -> k=ceil(20*0.9)=18. Scores are exactly 0.05, 0.10, ..., 0.95
+    (all y=0, so score=p directly) - the 18th smallest is 0.90, read straight off the
+    list, not computed by any quantile-interpolation machinery."""
+    p = np.array([0.05 * i for i in range(1, 20)])
+    y = np.zeros(19, dtype=int)
+    assert conformal_threshold(y, p, alpha=0.1) == pytest.approx(0.90)
+
+
+def test_conformal_threshold_at_the_k_equals_n_boundary():
+    """n=9, alpha=0.1 -> k=ceil(10*0.9)=9=n exactly: q_hat must be the single largest
+    score, the boundary case where the correction saturates at the whole sample."""
+    p = np.array([0.05 * i for i in range(1, 10)])
+    y = np.zeros(9, dtype=int)
+    assert conformal_threshold(y, p, alpha=0.1) == pytest.approx(0.45)
+
+
+def test_conformal_prediction_set_matches_hand_computed_membership():
+    """q_hat=0.90 (from the n=19 example above): a confident no-bust point (p=0.05)
+    gets only {no_bust}; a confident bust point (p=0.95) gets only {bust}; a middling
+    point (p=0.5) gets both - genuinely uncertain under this generous threshold."""
+    q_hat = 0.90
+    sets = conformal_prediction_set(np.array([0.05, 0.95, 0.5]), q_hat)
+    assert sets[0] == {"no_bust": True, "bust": False}
+    assert sets[1] == {"no_bust": False, "bust": True}
+    assert sets[2] == {"no_bust": True, "bust": True}
+
+
+def test_conformal_prediction_set_can_legitimately_be_empty():
+    """n=9, alpha=0.5 -> k=ceil(10*0.5)=5 -> q_hat=0.25 (5th of 0.05..0.45). At p=0.5,
+    neither label's nonconformity score (0.5 for both) clears 0.25 - a real, literature-
+    documented phenomenon, not a bug to paper over."""
+    p_calib = np.array([0.05 * i for i in range(1, 10)])
+    y_calib = np.zeros(9, dtype=int)
+    q_hat = conformal_threshold(y_calib, p_calib, alpha=0.5)
+    assert q_hat == pytest.approx(0.25)
+    result = conformal_prediction_set(np.array([0.5]), q_hat)
+    assert result == [{"no_bust": False, "bust": False}]
+
+
+def test_conformal_threshold_nan_on_empty_calibration_set():
+    assert math.isnan(conformal_threshold([], [], alpha=0.1))
+
+
+def test_conformal_prediction_set_is_fully_uncertain_when_q_hat_is_nan():
+    sets = conformal_prediction_set(np.array([0.1, 0.5, 0.9]), float("nan"))
+    assert all(s == {"no_bust": True, "bust": True} for s in sets)
+
+
+def test_conformal_prediction_achieves_marginal_coverage():
+    """The literature's central empirical claim, checked directly rather than trusted
+    from the formula: averaged over many independent calibration draws, the fraction of
+    test points whose TRUE label is included in their own prediction set should be
+    >= 1 - alpha. This is a statement about the AVERAGE over calibration draws, not a
+    per-trial guarantee (q_hat is itself random) - individual trials scatter around the
+    target, which is why this asserts the mean across 200 trials, not every trial."""
+    alpha = 0.1
+    n_calib, n_test = 2000, 3000
+    coverages = []
+    for trial in range(200):
+        r = np.random.default_rng(trial)
+        y_calib = r.binomial(1, 0.4, n_calib)
+        p_calib = np.clip(r.beta(2 + 3 * y_calib, 5 - 2 * y_calib), 1e-6, 1 - 1e-6)
+        q_hat = conformal_threshold(y_calib, p_calib, alpha)
+
+        y_test = r.binomial(1, 0.4, n_test)
+        p_test = np.clip(r.beta(2 + 3 * y_test, 5 - 2 * y_test), 1e-6, 1 - 1e-6)
+        sets = conformal_prediction_set(p_test, q_hat)
+        covered = [s["bust"] if y else s["no_bust"] for s, y in zip(sets, y_test)]
+        coverages.append(np.mean(covered))
+
+    mean_coverage = float(np.mean(coverages))
+    assert mean_coverage == pytest.approx(1 - alpha, abs=0.01), \
+        f"mean coverage {mean_coverage:.4f} across 200 trials, target {1 - alpha}"

@@ -6,7 +6,7 @@ callers own reading the eval-events frame and writing the result. Consumed by
 ``scripts/run_baselines.py``, which already has both the arrays and the ``init_date``
 cycle id on the held-out test split.
 
-Four things live here, per D1/D2/D3/D4 of ``docs/team-brief-2026-09-15-updated.md``
+Five things live here, per D1/D2/D3/D4/D6 of ``docs/team-brief-2026-09-15-updated.md``
 Section 6:
 
 - ``block_bootstrap_ci``: a confidence interval for any ladder metric, resampling whole
@@ -23,6 +23,12 @@ Section 6:
   and is the more directly relevant citation here) and the Symmetric Extremal
   Dependence Index for rare events (Ferro & Stephenson, 2011, Weather and Forecasting,
   doi:10.1175/WAF-D-10-05030.1).
+- ``conformal_threshold`` / ``conformal_prediction_set``: split conformal prediction
+  (Vovk, Gammerman & Shafer, 2005; Angelopoulos & Bates, 2023, Foundations and Trends
+  in Machine Learning 16(4):494-591, arXiv:2107.07511) - a distribution-free, exact
+  marginal coverage guarantee on top of the classifier's own probability, with no
+  assumption on the model or data distribution beyond exchangeability of the
+  calibration and test points.
 """
 
 from __future__ import annotations
@@ -384,3 +390,68 @@ def relative_economic_value(y_true, y_prob, cost_loss_ratios=None) -> list:
     # nanmax raises a RuntimeWarning (already silenced above) and returns nan for a
     # column that is all-nan - exactly the fallback wanted, not an error.
     return [{"cost_loss_ratio": float(a), "value": float(v)} for a, v in zip(alphas, best)]
+
+
+def conformal_threshold(y_calib, p_calib, alpha: float = 0.1) -> float:
+    """Split conformal calibration threshold q-hat.
+
+    Vovk, Gammerman & Shafer (2005); Angelopoulos & Bates (2023, Foundations and Trends
+    in Machine Learning 16(4):494-591, arXiv:2107.07511 - formula and coverage bound
+    verified directly against the source, not from memory). The nonconformity score for
+    a calibration point is how far the model's predicted probability for that point's
+    TRUE class was from certainty: ``1 - p`` if it busted, ``p`` if it did not. q-hat is
+    the k-th smallest of these n calibration scores, with ``k = ceil((n+1)*(1-alpha))``
+    (capped at n) - not an interpolated quantile, the literal order statistic the
+    theorem is stated in terms of, since interpolation would not carry the same exact
+    guarantee.
+
+    This threshold, used with ``conformal_prediction_set``, gives an EXACT,
+    distribution-free marginal coverage guarantee - no assumption on the model or the
+    data distribution beyond exchangeability of the calibration and test points:
+
+        1 - alpha <= P(Y_test in C(X_test)) <= 1 - alpha + 1/(n+1)
+
+    Calibration set: the classifier's own held-out ``val`` split (see
+    ``scripts/run_baselines.py``) - not ``train`` (used to fit the model) and not
+    ``test`` (used to report every other metric on this ladder, which calibrating on
+    would double-dip the same rows for two different jobs). One honest caveat: XGBoost's
+    own early stopping already looks at ``val``'s loss to decide when to stop training,
+    a mild exchangeability violation the conformal prediction literature commonly
+    tolerates in practice, but a real one - stated here rather than left unmentioned,
+    since carving out a dedicated fourth split is a pipeline change outside a pure
+    function's scope.
+    """
+    y = np.asarray(y_calib, int)
+    p = np.asarray(p_calib, float)
+    n = len(y)
+    if n == 0:
+        return float("nan")
+    scores = np.where(y == 1, 1.0 - p, p)
+    k = min(int(np.ceil((n + 1) * (1.0 - alpha))), n)
+    return float(np.sort(scores)[k - 1])
+
+
+def conformal_prediction_set(y_prob, q_hat: float) -> list:
+    """Which labels survive the calibrated threshold from ``conformal_threshold``, for
+    each predicted bust probability.
+
+    Label 1 (bust) is included if its nonconformity score does not exceed q-hat:
+    ``1 - p <= q_hat``, i.e. ``p >= 1 - q_hat``. Label 0 (no-bust) is included if
+    ``p <= q_hat``. Both included means genuinely uncertain - the calibrated threshold
+    cannot rule out either outcome. Neither included (both false) is a real,
+    literature-documented phenomenon for points where the model's probability sits too
+    close to 0.5 relative to q-hat for either label's score to clear the bar - stated
+    plainly rather than something this function quietly avoids or reinterprets.
+
+    Returns one ``{"no_bust": bool, "bust": bool}`` dict per row. A non-finite q-hat
+    (an empty or degenerate calibration set - see ``conformal_threshold``) has nothing
+    to exclude anything with, so every row gets both labels: maximally uncertain is the
+    honest answer, not a guess.
+    """
+    p = np.asarray(y_prob, float)
+    if not np.isfinite(q_hat):
+        return [{"no_bust": True, "bust": True} for _ in range(len(p))]
+    include_no_bust = p <= q_hat
+    include_bust = (1.0 - p) <= q_hat
+    return [{"no_bust": bool(a), "bust": bool(b)}
+           for a, b in zip(include_no_bust, include_bust)]

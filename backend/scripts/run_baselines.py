@@ -64,7 +64,7 @@ def _git_sha() -> str:
         return "unknown"
 
 
-def _metrics(y, proba, ref, cycles) -> dict:
+def _metrics(y, proba, ref, cycles, y_calib, p_calib) -> dict:
     """Reuses the classifier's own _evaluate so every number here is computed by exactly
     the same code that produced the model's reported metrics.
 
@@ -80,7 +80,14 @@ def _metrics(y, proba, ref, cycles) -> dict:
     D4 addition: SEDI (at the same 0.5 threshold `_evaluate` already uses for
     precision/recall/F1 - see verification.sedi's own docstring for why its usual
     rare-event justification only partly applies to the ~43% aggregate y_bust label
-    scored here) and the relative economic value curve, swept over cost-loss ratios."""
+    scored here) and the relative economic value curve, swept over cost-loss ratios.
+
+    D6 addition: split conformal prediction, calibrated on `y_calib`/`p_calib` (the
+    `val` split - see verification.conformal_threshold's own docstring for why, and its
+    one honest caveat) at alpha=0.1 (target 90% coverage), then applied to this rung's
+    own test-split probabilities. Coverage and mean prediction-set size below are
+    MEASURED on the real held-out test rows, not the theoretical guarantee alone -
+    CLAUDE.md's own "measure, don't estimate" applies here as much as anywhere."""
     m = clf_mod._evaluate(y, proba)
     m["bss"] = bl.brier_skill_score(y, proba, ref)
     m["z_auc"] = ver.binormal_auc(y, proba)
@@ -89,6 +96,16 @@ def _metrics(y, proba, ref, cycles) -> dict:
     m["brier_decomposition"] = ver.brier_decomposition(y, proba)
     m["sedi"] = ver.sedi(y, proba)
     m["economic_value"] = ver.relative_economic_value(y, proba)
+
+    alpha = 0.1
+    q_hat = ver.conformal_threshold(y_calib, p_calib, alpha=alpha)
+    sets = ver.conformal_prediction_set(proba, q_hat)
+    covered = [s["bust"] if yy else s["no_bust"] for s, yy in zip(sets, y)]
+    set_sizes = [int(s["no_bust"]) + int(s["bust"]) for s in sets]
+    m["conformal_alpha"] = alpha
+    m["conformal_q_hat"] = q_hat
+    m["conformal_coverage"] = float(np.mean(covered)) if covered else float("nan")
+    m["conformal_mean_set_size"] = float(np.mean(set_sizes)) if set_sizes else float("nan")
     return m
 
 
@@ -129,6 +146,7 @@ def main() -> int:
     ev = pd.read_parquet(path)
 
     train = ev[ev["split"] == "train"]
+    val = ev[ev["split"] == "val"]
     test = ev[ev["split"] == "test"]
     if train.empty or test.empty:
         raise SystemExit(
@@ -136,8 +154,12 @@ def main() -> int:
             "A store with too few cycles produces no held-out split.")
     if bl.LABEL not in ev.columns:
         raise SystemExit(f"no {bl.LABEL} column - these events were built without labels")
+    if val.empty:
+        print("WARNING: no val split - conformal prediction (D6) cannot be calibrated; "
+              "those fields will be reported as fully uncertain (q_hat=nan).")
 
     y_test = np.asarray(test[bl.LABEL], int)
+    y_val = np.asarray(val[bl.LABEL], int) if not val.empty else np.array([], dtype=int)
     leads = np.asarray(test["lead_time_days"], int)
     if "init_date" not in test.columns:
         raise SystemExit(
@@ -150,12 +172,17 @@ def main() -> int:
     rows, per_lead = [], {}
     for name, model in fitted.items():
         p = model.predict_proba(test)
-        rows.append((name, _metrics(y_test, p, ref, cycles)))
+        p_val = model.predict_proba(val) if not val.empty else np.array([])
+        rows.append((name, _metrics(y_test, p, ref, cycles, y_val, p_val)))
         per_lead[name] = _per_lead(y_test, p, ref, leads)
 
     if "model_proba" in test.columns and test["model_proba"].notna().any():
         p = np.asarray(test["model_proba"], float)
-        rows.append((MODEL_ROW, _metrics(y_test, p, ref, cycles)))
+        model_val_ok = (not val.empty and "model_proba" in val.columns
+                        and val["model_proba"].notna().any())
+        p_val_model = np.asarray(val["model_proba"], float) if model_val_ok else np.array([])
+        y_val_model = y_val if model_val_ok else np.array([], dtype=int)
+        rows.append((MODEL_ROW, _metrics(y_test, p, ref, cycles, y_val_model, p_val_model)))
         per_lead[MODEL_ROW] = _per_lead(y_test, p, ref, leads)
     else:
         print("WARNING: no model_proba column - the classifier row is missing.")
@@ -215,11 +242,20 @@ def main() -> int:
         f"2000, doi:10.1002/qj.49712656313; Shanker, Sarkar & Mamgain, 2024, "
         f"doi:10.1002/qj.4674) is swept over cost-loss ratios in the run artifact, not "
         f"this table - a single number cannot represent a curve.\n\n"
+        f"Conformal coverage/set size (Vovk, Gammerman & Shafer, 2005; Angelopoulos & "
+        f"Bates, 2023, Foundations and Trends in ML 16(4):494-591, arXiv:2107.07511) "
+        f"are calibrated on the `val` split at alpha=0.1 (target 90% coverage) and "
+        f"MEASURED on these test rows, not the theoretical guarantee alone - coverage "
+        f"below 90% here would mean the guarantee is not holding on real data, not a "
+        f"formula to trust blindly. Set size is the mean number of labels ({{no-bust}}, "
+        f"{{bust}}, both, or neither) surviving calibration per row - 1.0 is maximally "
+        f"informative (every row confidently one label or the other), 2.0 is "
+        f"maximally uncertain (every row admits both).\n\n"
     )
 
     tbl = ["| model | Brier ↓ | BSS vs climatology ↑ | ROC-AUC ↑ | 95% CI (by cycle) | "
-           "Z-AUC ↑ | F1 ↑ | MCB ↓ | DSC ↑ | SEDI ↑ |",
-           "|---|---|---|---|---|---|---|---|---|---|"]
+           "Z-AUC ↑ | F1 ↑ | MCB ↓ | DSC ↑ | SEDI ↑ | Coverage (90% target) | Set size ↓ |",
+           "|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for name, m in rows:
         label = f"**{name}**" if name == MODEL_ROW else name
         bd = m["brier_decomposition"]
@@ -227,7 +263,8 @@ def main() -> int:
                    f"{_fmt(m['roc_auc'])} | {_fmt_ci(m['roc_auc_ci'])} | "
                    f"{_fmt(m['z_auc'])} | {_fmt(m['f1'])} | "
                    f"{_fmt(bd['miscalibration'])} | {_fmt(bd['discrimination'])} | "
-                   f"{_fmt(m['sedi'])} |")
+                   f"{_fmt(m['sedi'])} | {_fmt(m['conformal_coverage'], 3)} | "
+                   f"{_fmt(m['conformal_mean_set_size'], 3)} |")
 
     all_leads = sorted({l for d in per_lead.values() for l in d})
     lead_tbl = []
@@ -268,6 +305,11 @@ def main() -> int:
                      "brier_decomposition": m["brier_decomposition"],
                      "corp_reliability": m["corp_reliability"],
                      "sedi": m["sedi"], "economic_value": m["economic_value"],
+                     "conformal": {
+                         "alpha": m["conformal_alpha"], "q_hat": m["conformal_q_hat"],
+                         "coverage": m["conformal_coverage"],
+                         "mean_set_size": m["conformal_mean_set_size"],
+                     },
                      "is_model": name == MODEL_ROW}
                     for name, m in rows
                 ],
