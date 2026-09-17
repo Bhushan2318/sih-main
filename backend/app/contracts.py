@@ -20,7 +20,8 @@ import pandas as pd
 PAIRED_ROW_COLUMNS: tuple[str, ...] = (
     "region_id", "variable", "valid_date", "forecast_value", "value_type",
     "init_date", "lead_time_days", "ensemble_member_id", "observed_value",
-    "verification_status", "abs_error", "month", "season", "ensemble_spread",
+    "verification_status", "abs_error", "jump_abs_change", "jump_std",
+    "jump_sign_flips", "jump_rel_climatology", "month", "season", "ensemble_spread",
     "ensemble_member_count", "pressure_rate_of_change", "moisture_rate_of_change",
     "forecast_error_lag", "fc_atmospheric_moisture_kgm2", "fc_humidity_pct",
     "fc_pressure_hpa", "fc_rainfall_mm", "fc_soil_moisture_pct", "fc_temperature_c",
@@ -45,7 +46,8 @@ _KINDS: dict[str, str] = {
     "region_id": "C", "variable": "C", "valid_date": "M", "forecast_value": "f",
     "value_type": "C", "init_date": "M", "lead_time_days": "i",
     "ensemble_member_id": "C", "observed_value": "f", "verification_status": "C",
-    "abs_error": "f", "month": "i", "season": "C", "ensemble_spread": "f",
+    "abs_error": "f", "jump_abs_change": "f", "jump_std": "f", "jump_sign_flips": "f",
+    "jump_rel_climatology": "f", "month": "i", "season": "C", "ensemble_spread": "f",
     "ensemble_member_count": "i", "pressure_rate_of_change": "f",
     "moisture_rate_of_change": "f", "forecast_error_lag": "f",
     "fc_atmospheric_moisture_kgm2": "f", "fc_humidity_pct": "f", "fc_pressure_hpa": "f",
@@ -57,13 +59,16 @@ _KINDS: dict[str, str] = {
 # Columns that are legitimately sparse, and why. Nulls here are real signal, never a
 # value to fill: soil moisture is masked past day 3 and wind past day 5 in the archive,
 # the lag features have no predecessor on the first cycle, and the historical bust
-# frequency is absent until a climatology exists.
+# frequency is absent until a climatology exists. The jump_* columns (C1) need earlier
+# cycles covering the same valid date - none exist at the reforecast's sampled density,
+# where initialisations are 14-35 days apart - and a climatology for the relative one.
 NULLABLE: frozenset[str] = frozenset({
     "pressure_rate_of_change", "moisture_rate_of_change", "forecast_error_lag",
     "fc_atmospheric_moisture_kgm2", "fc_humidity_pct", "fc_pressure_hpa",
     "fc_rainfall_mm", "fc_soil_moisture_pct", "fc_temperature_c",
     "fc_wind_direction_deg", "fc_wind_speed_ms",
     "historical_bust_frequency_region_season",
+    "jump_abs_change", "jump_std", "jump_sign_flips", "jump_rel_climatology",
 })
 
 

@@ -31,13 +31,17 @@ def test_paired_row_columns_are_frozen():
     """The exact column set, in order, as produced by build_training_frame and measured
     against the real 2017 store on 2026-09-10 (one cycle, 10,695 rows).
 
+    C1 (2026-09-16) added the four jump_* columns; order re-printed from a real frame
+    built over the serving store's 2026-09-10 cycle.
+
     If this fails you either added a feature - update the contract in the same commit and
     say so in the message - or something upstream changed shape without meaning to.
     """
     assert contracts.PAIRED_ROW_COLUMNS == (
         "region_id", "variable", "valid_date", "forecast_value", "value_type",
         "init_date", "lead_time_days", "ensemble_member_id", "observed_value",
-        "verification_status", "abs_error", "month", "season", "ensemble_spread",
+        "verification_status", "abs_error", "jump_abs_change", "jump_std",
+        "jump_sign_flips", "jump_rel_climatology", "month", "season", "ensemble_spread",
         "ensemble_member_count", "pressure_rate_of_change", "moisture_rate_of_change",
         "forecast_error_lag", "fc_atmospheric_moisture_kgm2", "fc_humidity_pct",
         "fc_pressure_hpa", "fc_rainfall_mm", "fc_soil_moisture_pct", "fc_temperature_c",
