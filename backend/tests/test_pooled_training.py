@@ -325,3 +325,22 @@ def test_attach_hbf_column_handles_a_large_row_count_without_a_dense_string_arra
     sample = df.sample(500, random_state=0)
     want = _naive_hbf_lookup(sample, hbf, "hbf")
     assert out.loc[sample.index].tolist() == pytest.approx(want)
+
+
+# --- GPU detection must not require PyTorch ------------------------------------------
+# full_retrain_pooled imported torch unconditionally just to ask whether a GPU exists.
+# XGBoost needs no torch, and the function already had a "no GPU -> everything on CPU"
+# branch - but a machine without torch (CI's core install, any XGBoost-only environment)
+# crashed with ModuleNotFoundError before reaching it.
+
+def test_cuda_probe_reports_no_gpu_when_torch_is_not_installed(monkeypatch):
+    import sys
+    monkeypatch.setitem(sys.modules, "torch", None)  # makes `import torch` raise ImportError
+    assert pt._cuda_available() is False
+
+
+def test_cuda_probe_is_a_plain_bool_when_torch_is_present():
+    torch = pytest.importorskip("torch")
+    got = pt._cuda_available()
+    assert isinstance(got, bool)
+    assert got == bool(torch.cuda.is_available())

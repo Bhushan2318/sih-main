@@ -351,6 +351,56 @@ here rather than discovered live.
   consequence: a complete day needs stamps `01:00..00:00` of the next day, so a per-month
   request loses its final day unless it also pulls the first hour of the month after. The
   fetch does, and drops the spillover.
+- **IMD dates each rain day by the END of its 0830 IST window, so IMD's date D is model
+  date D-1.** IMD's gauge day accumulates 0830 IST to 0830 IST (0300-0300 UTC); Sanket's day
+  is midnight to midnight UTC on both sides - `((k-1)*24, k*24]` per rule 4, `(t-24h, t]` in
+  `to_daily`. The rainfall IMD labels D covers 0830 IST on D-1 to 0830 IST on D, sharing 21
+  hours with model day D-1 and 3 with model day D. `fetch_imd_district_rainfall.py`
+  originally joined IMD's D to model day D, following the team brief's statement that IMD
+  attributes to the *starting* day. That put every IMD rainfall value one model day late: a
+  forecast for day D was verified against mostly the previous day's rain. IMD's own product
+  page (imdpune.gov.in, `Rainfall_25_NetCDF.html`) states no date convention at all, so this
+  was settled from data, measured 2026-09-17. Spearman correlation of IMD district rainfall
+  on IMD date D against independent hourly reanalysis rainfall summed to UTC day D+k, at the
+  district centroid:
+
+  | reference, period | districts | peak at k=-1 | mean at k=-1 | k=0 | k=+1 |
+  |---|---|---|---|---|---|
+  | ERA5 (Open-Meteo), Jun-Sep 2018 | 8 | 8 of 8 | 0.698 | 0.556 | 0.411 |
+  | MERRA-2 (NASA POWER), Jun-Sep 2018 | same 8 | 8 of 8 | 0.810 | 0.621 | 0.410 |
+  | ERA5, Jun-Sep 2017 | 5 | 5 of 5 | | | |
+  | ERA5, Oct-Dec 2017 (NE monsoon, Ockhi) | 5 | 5 of 5 | | | |
+
+  2018: Idukki, Ernakulam, Dakshina Kannada, Kolkata, Kamrup Metropolitan, Nagpur, Bhopal,
+  Mumbai City. 2017: Idukki, Dakshina Kannada, Kolkata, Nagpur, Mumbai City; then
+  Kanniyakumari, Thiruvananthapuram, Chennai, Tirunelveli, Nellore (Kanniyakumari 0.756 at
+  k=-1 against 0.572 at k=0). Re-dating IMD by one day moved every 2018 peak to k=-2 against
+  both references, so the test tracks dates rather than an artefact of rain persistence. Two
+  independent models agreeing rules out a timing bias in either. The merge now moves IMD's
+  dates back one day, reads IMD for the following year too (model 31 Dec is IMD's 1 Jan),
+  and `check_attribution` refuses to write any merge whose rainfall does not correlate best
+  with ERA5 at lag 0.
+- **Every `imd_merged_district_observations_india_*` file is one day out, and is now
+  refused.** They were written by the old join. Being gitignored, they exist only on local
+  disks - `docs/workstream-prompts-2026-09-15.md` records them for 2016-2019.
+  `ingest_backfill.observation_file` raises on one unless an `imd_aligned_*` file for the
+  same year exists, rather than letting it keep winning file selection. Regenerate with
+  `python -m scripts.fetch_imd_district_rainfall --years <year>`, then delete the old file.
+  Any model trained on data ingested from an `imd_merged_*` file learned from rainfall
+  labels one day out, and its scores should not be compared with ones trained after this.
+- **A three-hour residual remains, deliberately.** Even with the day corrected, rain falling
+  05:30-08:30 IST is counted by IMD in the neighbouring model day. It is not corrected:
+  re-cutting the model day to start at 0300 UTC would match IMD exactly and push Day 10 out
+  to forecast hour 243, past the 240-hour end of the GEFSv12 reforecast, losing rainfall at
+  the longest lead. Because a bust is the 90th percentile of a variable's *own* error
+  distribution rather than a fixed millimetre count, a uniform inflation of error lifts the
+  threshold with it; what does not cancel is districts and seasons where an unusual share of
+  rain falls inside that window.
+- **How much the three-hour residual costs has not been measured.** ERA5 is hourly, so the
+  same bust labels can be built on the 00 UTC day and on the 03 UTC day and compared - a
+  single percentage of labels that differ, on real data, with no assumption about IMD
+  involved. Nobody has produced that number yet. Until someone does, the paragraph above is
+  an argument, not evidence.
 
 - **A cycle too incomplete to publish is refused, not partially ingested.** A short
   rainfall *sum* is roughly half the real accumulation, and rainfall drives most busts, so

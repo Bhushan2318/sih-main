@@ -7,12 +7,26 @@ process, or found a job dead at some run count the next morning with no idea how
 got. `full_retrain_pooled` itself is already crash-resistant per variable (each variable's
 regressor runs in its own subprocess, with a retry + CPU fallback since 2026-09-16 -
 app/ml/pooled_training.py). What was missing is the layer above that: nothing caught an
-exception ESCAPING `full_retrain_pooled` itself (a bad job spec, an out-of-memory in the
-parent, a KeyboardInterrupt from a flaky terminal) and nothing wrote progress anywhere
-durable until the whole process exited. This script is that layer - one job's exception
-is caught, logged with a full traceback, and the queue moves on; progress is written to
-a JSON file after every job, not just at the end, so killing this script mid-run still
-leaves a readable record of what finished.
+exception ESCAPING `full_retrain_pooled` itself, and nothing wrote progress anywhere
+durable until the whole process exited.
+
+Real crash 2026-09-17, running two jobs back to back: the FIRST version of this script
+called `full_retrain_pooled` directly, in-process, for every queued job - so two jobs ran
+sequentially inside one long-lived Python process. Job 1 (test_year=2016) itself lost 5 of
+its 8 variables to plain `malloc()` failures (soil_moisture_pct, temperature_c,
+wind_direction_deg, wind_speed_ms, atmospheric_moisture_kgm2) despite "succeeding" overall
+- and job 2 (test_year=2017) crashed 123 seconds in with a MemoryError on an allocation an
+order of magnitude smaller than what job 1 had just been juggling. This machine has ~24 GB
+RAM (matches the ceiling already documented elsewhere in known-issues.md); every
+fragmentation crash this codebase has ever actually fixed was fixed by process-level
+isolation, never by `gc.collect()` in a long-lived process - Python's GC cannot defragment
+a process's native heap, only the OS reclaiming the whole process can. This script did not
+extend that isolation to the JOB level, so job 1's pressure bled straight into job 2.
+
+Each queued job now runs as its own completely fresh subprocess (`scripts/train_pooled.py
+--json`), the same way each variable and each year already does inside it. stdout/stderr
+go to files, never `capture_output=True` - the exact pattern that caused a 35 GB parent
+memory balloon on 2026-09-15 (see `_run_worker_subprocess` in app/ml/pooled_training.py).
 
     python -m scripts.run_pooled_overnight --queue queue.json --out overnight_report.json
 
@@ -22,9 +36,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import subprocess
 import sys
 import time
-import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -44,14 +59,61 @@ def _log(log_path: Path, msg: str) -> None:
         f.write(line + "\n")
 
 
+def _parse_trailing_json(stdout_text: str) -> dict | None:
+    """The last top-level (column-0) `{...}` block in `stdout_text`, or `None` if there
+    isn't one. See `_run_job_subprocess`'s docstring for why "last line starting with {"
+    (matches a nested object too) is wrong and this is column-0-exact instead."""
+    lines = stdout_text.splitlines()
+    start = next((i for i in range(len(lines) - 1, -1, -1) if lines[i] == "{"), None)
+    if start is None:
+        return None
+    return json.loads("\n".join(lines[start:]))
+
+
+def _run_job_subprocess(job: dict, cache_dir: Path, log_dir: Path) -> dict:
+    """One job, in a brand-new process. Mirrors `_run_worker_subprocess` in
+    app/ml/pooled_training.py: stdout/stderr to files, never captured in memory.
+
+    `train_pooled.py --json` prints `json.dumps({...}, indent=2)` - a PRETTY-PRINTED,
+    multi-line object, not a single line. Real bug 2026-09-17: the first version looked
+    for "the last line starting with '{'", which matches a NESTED object's opening brace
+    (e.g. inside "split_cycles": {) just as readily as the real top-level one, and grabbed
+    the wrong one - a training run that genuinely finished (returncode 0, a full result in
+    the log file) was reported as a parse failure and its real result discarded. `indent=2`
+    means the outer brace is always alone on its own line at column 0; a nested brace is
+    always indented. Take the LAST line that is exactly "{" with no leading whitespace."""
+    years_arg = ",".join(str(y) for y in sorted(job["train_years"]))
+    test_year = job["test_year"]
+    stdout_path = log_dir / f"job_test{test_year}_stdout.log"
+    stderr_path = log_dir / f"job_test{test_year}_stderr.log"
+    env = {**os.environ, "ALLOW_LOCAL_RETRAIN": "true"}
+    with open(stdout_path, "wb") as out_f, open(stderr_path, "wb") as err_f:
+        proc = subprocess.run(
+            [sys.executable, "-m", "scripts.train_pooled",
+             "--train-years", years_arg, "--test-year", str(test_year),
+             "--cache-dir", str(cache_dir), "--json"],
+            stdout=out_f, stderr=err_f, cwd=BACKEND_DIR, env=env,
+        )
+    stdout_text = stdout_path.read_text(errors="replace")
+    try:
+        result = _parse_trailing_json(stdout_text)
+    except json.JSONDecodeError as exc:
+        return {"status": "crashed", "returncode": proc.returncode,
+               "error": f"could not parse JSON output: {exc}\nstdout tail: {stdout_text[-2000:]}"}
+    if result is None:
+        tail = stderr_path.read_text(errors="replace")[-4000:]
+        return {"status": "crashed", "returncode": proc.returncode,
+               "error": f"no JSON output from subprocess (rc={proc.returncode}): {tail}"}
+    return result
+
+
 def run_queue(queue: list[dict], cache_dir: Path, out_path: Path, log_path: Path) -> list[dict]:
     from app.config import settings
     if not settings.allow_local_retrain:
         raise RuntimeError("ALLOW_LOCAL_RETRAIN is not set to true - refusing, same guard "
                            "full_retrain_pooled's own caller uses.")
 
-    from app.ml.pooled_training import full_retrain_pooled
-
+    log_dir = out_path.parent
     results: list[dict] = []
     if out_path.exists():
         # Resume: only a job that actually SUCCEEDED is skipped. Re-running a finished
@@ -84,33 +146,21 @@ def run_queue(queue: list[dict], cache_dir: Path, out_path: Path, log_path: Path
         t0 = time.time()
         record = {"train_years": job["train_years"], "test_year": job["test_year"],
                   "started_at": _now()}
-        try:
-            report = full_retrain_pooled(job["train_years"], job["test_year"], cache_dir)
-            record.update({
-                "status": report.status,
-                "run_id": report.run_id,
-                "error": report.error,
-                "modelled_variables": report.modelled_variables,
-                "skipped_variables": report.skipped_variables,
-                "classifier_test_roc_auc": (report.classifier_metrics.get("test", {})
-                                            .get("roc_auc")),
-                "seconds": report.seconds,
-            })
-            _log(log_path, f"[{i+1}/{len(queue)}] done: status={report.status} "
-                            f"run_id={report.run_id} "
+        result = _run_job_subprocess(job, cache_dir, log_dir)
+        result.setdefault("seconds", time.time() - t0)
+        record.update(result)
+        record["classifier_test_roc_auc"] = (
+            (result.get("classifier_metrics") or {}).get("test", {}).get("roc_auc"))
+        if record.get("status") == "success":
+            _log(log_path, f"[{i+1}/{len(queue)}] done: status=success "
+                            f"run_id={record.get('run_id')} "
                             f"roc_auc={record['classifier_test_roc_auc']} "
-                            f"skipped={list(report.skipped_variables)} "
-                            f"({time.time()-t0:.0f}s)")
-        except Exception as exc:  # noqa: BLE001 - the whole point: never let one job's
-                                  # exception take the rest of the queue down with it.
-            record.update({
-                "status": "exception",
-                "error": f"{exc}",
-                "traceback": traceback.format_exc(),
-                "seconds": time.time() - t0,
-            })
-            _log(log_path, f"[{i+1}/{len(queue)}] CRASHED: {exc!r} "
-                            f"({time.time()-t0:.0f}s) - see traceback in {out_path}, "
+                            f"skipped={list(record.get('skipped_variables') or {})} "
+                            f"({record['seconds']:.0f}s)")
+        else:
+            _log(log_path, f"[{i+1}/{len(queue)}] CRASHED: {record.get('error')!r} "
+                            f"({record['seconds']:.0f}s) - see {out_path} and "
+                            f"data/job_test{job['test_year']}_std{{out,err}}.log, "
                             f"continuing to next job")
 
         record["finished_at"] = _now()
