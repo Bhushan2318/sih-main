@@ -421,3 +421,51 @@ here rather than discovered live.
   float-noise sized. The observation files keep them as delivered, unclipped; whether the
   ingest preserves them has not been checked. A physical-range check that assumes ≥ 0 will
   flag them. Measured 2026-09-11.
+
+### Forecast jumpiness (C1), added 2026-09-16
+
+- **The jumpiness features are empty on every row the served model trains on.** They
+  compare forecasts for the same valid date from different initialisations, and a cycle
+  only reaches 10 days ahead, so two cycles must be under 10 days apart to overlap. The
+  backfill archive (`backfill-2000-2019.tar.gz`) holds 17 cycles a year spaced 14-35 days
+  apart: 0 of 304 consecutive pairs across 2000-2018 are under 10 days, measured
+  2026-09-16. Until a daily or stride-2..9 year (e.g. `fetch-daily-year.yml`'s 2017) is in
+  the training store, `jump_*` carries no signal, XGBoost cannot split on it, and SHAP
+  attributes nothing to it. The code path is complete; the data is not there.
+- **Jumpiness does not cross a change of region scheme.** The live feed moved from
+  state-level IDs (`IN-AN`) to district IDs (`IN-AN-SOUTHANDAMAN`) on the 2026-09-09
+  cycle. A district's jump history therefore starts there: 2026-09-10 has two usable
+  cycles, and `jump_std` / `jump_sign_flips` (which need three) are NaN until 2026-09-11.
+  Deliberate - a state mean and a district mean are not the same forecast.
+- **The relative jump is per district and variable, not per lead.** Jumps grow with lead
+  (on the 2026-09-10 serving cycle the median |change| was 0.316 at Day 1 against 0.758 at
+  Day 2), so `jump_rel_climatology` mixes lead with unusualness. The model also sees
+  `lead_time_days` and can separate them; a per-lead climatology is the refinement if the
+  feature earns its place once daily data exists.
+- **Pooled training does not fit the jump climatology.** `full_retrain_pooled` (a
+  comparison tool that never promotes) leaves `jump_rel_climatology` NaN; the other three
+  jump features are cached and used. `full_retrain` fits it on the training split and
+  ships it as `jump_climatology.json`.
+- **Scoring an uncached cycle is slower.** Earlier cycles are read one at a time and
+  reduced to ensemble means as they are read, to keep resident memory at one cycle of
+  member rows. Measured on the serving store (71 regions, Windows, 3 runs each): peak
+  working set 327/347/348 MB before, 348/338/355 MB after - inside run-to-run noise - and
+  1.2 s -> 3.4 s per uncached cycle. Not yet measured at 666 districts on the Linux box;
+  `measure-serving-memory.yml` is the check that counts.
+- **Training frames carry four more float32 columns per member row.** On the real slice
+  `test_paired_frame_memory.py` builds, the downcast frame went from 2.84 MB to 3.2 MB
+  (+14%). Not yet measured at year scale, where the paired frame was 7.4 GB for 365
+  district cycles. That test's "at least a halving" assertion was already failing on
+  `develop` (5.59 -> 2.84 MB) and still fails (6.2 -> 3.2 MB).
+
+### Found while building C1, not caused by it
+
+- **`forecast_error_lag` is present in training and absent at serving.** It is the
+  previous lead's absolute error for the same cycle and member, which needs that lead's
+  observation. Measured 2026-09-16 on real cycles: non-null on 100% of lead 2-10 rows of a
+  training cycle (2016-04-10), and on 0% of rows at every lead when scoring the newest
+  cycle (2026-09-16), because those observations do not exist yet. The regressors learn
+  from a value serving never supplies. The same observation is also later than the
+  forecast's issue time, so held-out metrics may include information a live forecast could
+  not have had. Not fixed here: it changes served model behaviour and needs its own
+  before/after ladder.
