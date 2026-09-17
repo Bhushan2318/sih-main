@@ -191,6 +191,8 @@ class ReplayCycleSummary(Schema):
     verified: bool = False
     verified_lead_days: int = 0
     peak_region_abs_error: Optional[float] = None
+    peak_region_variable: Optional[str] = None
+    peak_region_unit: Optional[str] = None
     medium_range_growth: float = 0.0
 
 
