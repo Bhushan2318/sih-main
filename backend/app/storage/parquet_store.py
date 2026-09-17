@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shutil
 import threading
 from datetime import date, datetime
@@ -85,7 +86,22 @@ def append_batch(batch_id: str, rows: Iterable[dict] | pd.DataFrame) -> int:
     if part_dir.exists():
         shutil.rmtree(part_dir)
     part_dir.mkdir(parents=True, exist_ok=True)
-    pq.write_table(table, part_dir / "part-0.parquet", row_group_size=_ROW_GROUP_SIZE)
+    # Write under a hidden name, then rename. A reader scans every batch file on each call,
+    # and one that opened this file mid-write would fail on a missing footer - hours into a
+    # retrain that shares the store with an ingest. The rename is atomic on one filesystem,
+    # so a file is either absent or whole. The leading "." matters as much as the suffix:
+    # pyarrow's discovery skips only names starting with "." or "_", so "part-0.parquet.partial"
+    # was listed, renamed away under the reader, and failed it with FileNotFoundError.
+    final = part_dir / "part-0.parquet"
+    tmp = part_dir / ".part-0.parquet.partial"
+    try:
+        pq.write_table(table, tmp, row_group_size=_ROW_GROUP_SIZE)
+        os.replace(tmp, final)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        if not any(part_dir.iterdir()):
+            part_dir.rmdir()
+        raise
     return len(df)
 
 
