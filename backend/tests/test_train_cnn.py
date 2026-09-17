@@ -295,3 +295,72 @@ def test_fit_streaming_trains_on_cuda_without_error(tmp_path, region_ids):
                                           device=torch.device("cuda"))
     assert next(model.parameters()).device.type == "cuda"
     assert np.isfinite(best)
+
+
+# --- reproducibility (E1) ---------------------------------------------------------------
+# docs/team-brief-2026-09-15-updated.md Section 6, PHASE 1, E1: "Assert two runs with the
+# same seed give bit-identical weights." No test anywhere did this before now -
+# test_streaming_predictions_agree_between_cpu_and_cuda above loads ONE state_dict onto two
+# devices and checks inference agrees; it assumes the weights already match. This checks
+# whether training itself, run twice, produces them.
+
+def _train_twice(device, region_ids):
+    """Two independent fit_streaming(seed=0, ...) runs on the same real bundles.
+    Returns both final state_dicts, moved to CPU so the comparison itself never touches
+    the device - only training does."""
+    grid_dir = Path(__file__).resolve().parents[1] / "data" / "samples" / "grids"
+    bundle_paths = sorted(grid_dir.glob("*.npz"))[:2]
+    if len(bundle_paths) < 2:
+        pytest.skip("real grid bundles are not on disk")
+    inits = [p.stem for p in bundle_paths]
+    ev = _events(inits, region_ids[:8], leads=(1, 2))
+
+    def run():
+        idx = train_cnn.build_index(grid_dir, ev, region_ids)
+        idx.fit_normalizer(np.arange(len(idx.samples)))
+        all_idx = np.arange(len(idx.samples))
+        model, _ = train_cnn.fit_streaming(
+            0, idx, all_idx, all_idx, epochs=3, patience=3, region_ids=region_ids,
+            log=False, device=device)
+        return {k: v.clone().cpu() for k, v in model.state_dict().items()}
+
+    return run(), run()
+
+
+def _tensors_equal(x: torch.Tensor, y: torch.Tensor) -> bool:
+    """torch.equal has no SparseCPU/SparseCUDA kernel - DistrictPooling.weight_matrix is
+    a sparse COO buffer in every state_dict here. It is geometry, not a learned weight,
+    rebuilt identically from the same parquet file on both runs regardless of seed, so
+    densifying it for comparison is exact, not an approximation."""
+    if x.is_sparse:
+        return torch.equal(x.to_dense(), y.to_dense())
+    return torch.equal(x, y)
+
+
+def _mismatched_tensors(a: dict, b: dict) -> list[str]:
+    assert a.keys() == b.keys()
+    return [k for k in a if not _tensors_equal(a[k], b[k])]
+
+
+def test_same_seed_gives_bit_identical_weights_on_cpu(region_ids):
+    """E1's actual claim, forced onto CPU so this isolates the training loop's own logic
+    (seeding, batch order, the auxiliary loss) from GPU-only sources of nondeterminism,
+    which is checked separately below and is expected to behave differently."""
+    a, b = _train_twice(torch.device("cpu"), region_ids)
+    mismatched = _mismatched_tensors(a, b)
+    assert not mismatched, f"non-deterministic on CPU: {mismatched}"
+
+
+def test_same_seed_gives_bit_identical_weights_on_cuda(region_ids):
+    """Same claim as the CPU test, on CUDA. Diagnosed 2026-09-17 (docs/known-issues.md)
+    not bit-reproducible by default - root cause was cuBLAS's GEMM algorithm selection,
+    not the two things suspected first (cuDNN convolution, DistrictPooling's
+    torch.sparse.mm). fit_streaming now sets CUBLAS_WORKSPACE_CONFIG (train_cnn.py,
+    module import time) plus torch.backends.cudnn.deterministic and
+    torch.use_deterministic_algorithms(True) (inside fit_streaming, right after the
+    seed), which is what makes this pass rather than xfail."""
+    if not torch.cuda.is_available():
+        pytest.skip("no CUDA device on this machine")
+    a, b = _train_twice(torch.device("cuda"), region_ids)
+    mismatched = _mismatched_tensors(a, b)
+    assert not mismatched, f"non-deterministic on CUDA: {mismatched}"

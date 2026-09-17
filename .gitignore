@@ -88,6 +88,7 @@ backend/data/_pooled_cache/
 # store and the CDS observation files.
 backend/data/samples/_imd/
 backend/data/samples/imd_merged_district_observations_india_*.parquet
+backend/data/samples/imd_aligned_district_observations_india_*.parquet
 
 # One-off CNN multi-seed training scratch (checkpoints/predictions per seed run).
 backend/data/_cnn_parallel/

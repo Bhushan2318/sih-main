@@ -54,6 +54,12 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pandas as pd
 
+# xarray is fetch-side only (requirements-live.txt) and is needed solely to open the
+# downloaded NetCDF in `_read_archive`. Importing it here made the whole module - and
+# so tests/test_era5_cds.py, whose to_daily/rh/request_area tests need no xarray at
+# all - fail to import under the core requirements CI installs. That collection error
+# aborted pytest before any backend test ran, from 3bc6893 (2026-09-10) onward. Same
+# idiom as fetch_imd_district_rainfall.py's `import imdlib` inside build().
 if TYPE_CHECKING:
     import xarray as xr
 
@@ -204,7 +210,7 @@ def _read_archive(path: Path) -> pd.DataFrame:
     """CDS returns a zip of two NetCDFs split by stepType - accumulations in one file,
     instantaneous fields in the other - regardless of download_format. Verified on a real
     download; reading `path` directly as NetCDF fails."""
-    import xarray as xr
+    import xarray as xr  # fetch-side dependency; see the note at the top of the module
 
     frames = []
     with zipfile.ZipFile(path) as z:
