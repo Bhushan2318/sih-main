@@ -147,9 +147,14 @@ absolute difference 0.31 °C.
 label are area means over the same polygon. There is exactly one weight table.
 Do not write a second one.
 
-**Note:** the boundary depiction used for *display* is under review separately
-from the geometry used for *aggregation*. Do not change the display geometry
-without checking that review.
+**Note:** display and aggregation now use the same GADM 4.1 file (both were
+separate before the districts migration; the display-only Datameet file is
+vendored but unused). The open question is not which file to use but whether
+GADM's boundary *lines* match Survey of India's own published boundary data at
+the line level — India's 2021 Geospatial Data Guidelines name SoI data as the
+standard for any political map of India. Full research, sources, and a
+Datameet comparison: `docs/boundary-geometry-licensing.md`. Do not change the
+display geometry without reading that first.
 
 ## Models
 
