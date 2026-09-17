@@ -24,8 +24,11 @@ Accumulation windows - the 0830 IST rain day
 IMD and Sanket do not mean the same 24 hours by "a day". This is the one place that
 difference gets stated rather than assumed.
 
-    Sanket's day D     [D 00:00 UTC, D+1 00:00 UTC)   ==  05:30 IST -> 05:30 IST
-    IMD's rain day D   [D 03:00 UTC, D+1 03:00 UTC)   ==  08:30 IST -> 08:30 IST
+    Sanket's day D     (D 00:00 UTC, D+1 00:00 UTC]   ==  05:30 IST -> 05:30 IST
+    IMD's rain day D   (D 03:00 UTC, D+1 03:00 UTC]   ==  08:30 IST -> 08:30 IST
+
+Both are half-open at the start and closed at the end - the repo's own convention for
+an accumulation, since the total is stamped when the window closes.
 
 The model day is fixed by CLAUDE.md rule 4 - day k is forecast hours ((k-1)*24, k*24]
 - and the ERA5 observation fetch matches it deliberately: `to_daily` in
@@ -51,8 +54,9 @@ reforecast archive. That trades rainfall at the longest lead for three hours at 
 edge of the window. The residual three-hour mismatch is a known limitation, written
 down in docs/known-issues.md rather than left implicit.
 
-NOT SETTLED HERE: that IMD attributes to the starting day is taken from IMD's own
-documentation of the gridded product. Some IMD products file the 0830 reading under
+NOT SETTLED HERE: that IMD attributes to the starting day is the convention the project
+brief states for the gridded product. It has not been checked against IMD's own
+documentation or the archive. Some IMD products file the 0830 reading under
 the day it was taken instead, which is a whole day out and which no amount of
 timestamp arithmetic can detect. The event tests in
 test_fetch_imd_district_rainfall.py check it against real rainfall on dates we know
@@ -99,17 +103,29 @@ MISSING = -999.0
 DAY = pd.Timedelta(hours=24)
 IST_OFFSET = pd.Timedelta(hours=5, minutes=30)   # India has no daylight saving
 MODEL_DAY_START_UTC = pd.Timedelta(hours=0)      # 00:00 UTC, CLAUDE.md rule 4
-IMD_DAY_START_UTC = pd.Timedelta(hours=3)        # 08:30 IST
+IMD_DAY_START_IST = pd.Timedelta(hours=8, minutes=30)
+IMD_DAY_START_UTC = IMD_DAY_START_IST - IST_OFFSET  # = 03:00 UTC
 
 
 def _utc_midnight(day) -> pd.Timestamp:
+    """00:00 UTC at the start of calendar date `day`.
+
+    Refuses a timezone-aware timestamp. Which calendar day a moment belongs to is the
+    whole question here, and an aware timestamp has no single answer: 02:00 IST on the
+    15th is 20:30 UTC on the 14th. Converting it quietly would hand back the previous
+    day's window - the off-by-one-day error this code exists to prevent.
+    """
     ts = pd.Timestamp(day)
-    ts = ts.tz_localize("UTC") if ts.tzinfo is None else ts.tz_convert("UTC")
-    return ts.normalize()
+    if ts.tzinfo is not None:
+        raise ValueError(
+            f"expected a calendar date, got the timezone-aware {ts!r}, whose calendar "
+            f"day depends on which timezone it is read in. Pass the date itself - e.g. "
+            f"{ts.date().isoformat()!r} for the {ts.tzinfo} day.")
+    return ts.normalize().tz_localize("UTC")
 
 
 def model_day_window_utc(day) -> tuple[pd.Timestamp, pd.Timestamp]:
-    """Sanket's day `day` as a half-open [start, end) window in UTC.
+    """Sanket's day `day` as a (start, end] window in UTC.
 
     Midnight to midnight UTC - the window the GEFS forecast side and the ERA5
     observation side both already use.
@@ -119,7 +135,7 @@ def model_day_window_utc(day) -> tuple[pd.Timestamp, pd.Timestamp]:
 
 
 def imd_rain_day_window_utc(day) -> tuple[pd.Timestamp, pd.Timestamp]:
-    """IMD's gauge rain-day `day` as a half-open [start, end) window in UTC.
+    """IMD's gauge rain-day `day` as a (start, end] window in UTC.
 
     0830 IST to 0830 IST, attributed to the day the window started, so in UTC it
     runs 03:00 to 03:00 - three hours behind `model_day_window_utc` for the same
@@ -131,7 +147,7 @@ def imd_rain_day_window_utc(day) -> tuple[pd.Timestamp, pd.Timestamp]:
 
 def window_overlap_hours(a: tuple[pd.Timestamp, pd.Timestamp],
                          b: tuple[pd.Timestamp, pd.Timestamp]) -> float:
-    """Hours two half-open [start, end) windows share; 0.0 when they do not touch.
+    """Hours two (start, end] windows share; 0.0 when they do not touch.
 
     The join rule in one number: an IMD rain-day overlaps the model day of the same
     date by 21 hours and the next model day by 3.

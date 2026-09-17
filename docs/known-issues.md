@@ -319,8 +319,9 @@ here rather than discovered live.
   about IMD involved. Nobody has produced that number yet. Until someone does, the
   paragraph above is an argument, not evidence.
 - **Whether IMD attributes to the starting or the ending day is not yet confirmed against
-  the archive.** The starting-day convention above is taken from IMD's documentation of
-  the gridded product; some IMD products file the 0830 reading under the day it was taken,
+  the archive.** The starting-day convention above is the one the project brief states
+  for the gridded product, and has not been checked against IMD's own documentation
+  either; some IMD products file the 0830 reading under the day it was taken,
   which is a whole day out rather than three hours. No timestamp arithmetic can tell the
   two apart - only real rainfall on independently known dates. The event tests in
   `test_fetch_imd_district_rainfall.py` (Kerala floods 2018, Cyclone Ockhi 2017) do exactly

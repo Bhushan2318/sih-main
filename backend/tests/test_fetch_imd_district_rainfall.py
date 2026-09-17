@@ -180,6 +180,26 @@ def test_the_offset_is_exactly_three_hours_every_day_of_the_year():
         assert imd_start - model_start == pd.Timedelta(hours=3), day
 
 
+def test_windows_take_the_calendar_date_parquet_actually_stores():
+    """merge_precip reads dates back as datetime.date, so that is what real callers pass."""
+    import datetime as dt
+    assert fir.imd_rain_day_window_utc(dt.date(2018, 8, 15)) == \
+        fir.imd_rain_day_window_utc("2018-08-15")
+
+
+def test_windows_refuse_a_timezone_aware_timestamp():
+    """An aware timestamp has no single calendar day: 02:00 IST on the 15th is 20:30 UTC
+    on the 14th. Converting it silently returned the 14th's window - the exact
+    off-by-one-day error this code exists to prevent, triggered by precisely the input
+    an Indian team would reach for. Refuse rather than guess (CLAUDE.md rule 3)."""
+    ist = pd.Timestamp("2018-08-15 02:00", tz="Asia/Kolkata")
+    for fn in (fir.model_day_window_utc, fir.imd_rain_day_window_utc):
+        with pytest.raises(ValueError, match="calendar date"):
+            fn(ist)
+    with pytest.raises(ValueError, match="calendar date"):
+        fir.imd_rain_day_window_utc(pd.Timestamp("2018-08-15", tz="UTC"))
+
+
 def test_merge_precip_joins_imd_date_to_the_same_model_date():
     """The behavioural half of the join rule: merge_precip must not shift dates while
     swapping the column. A row dated D takes IMD's value for D - not D-1, not D+1.
