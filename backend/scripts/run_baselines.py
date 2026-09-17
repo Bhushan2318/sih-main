@@ -75,13 +75,19 @@ def _metrics(y, proba, ref, cycles) -> dict:
 
     D3 addition: the CORP reliability curve and its exact Brier decomposition
     (MCB/DSC/UNC), alongside - not replacing - the naive fixed-bin `calibration` field
-    `_evaluate` already produces."""
+    `_evaluate` already produces.
+
+    D4 addition: SEDI (rare-event skill at the same 0.5 threshold `_evaluate` already
+    uses for precision/recall/F1) and the relative economic value curve, swept over
+    cost-loss ratios."""
     m = clf_mod._evaluate(y, proba)
     m["bss"] = bl.brier_skill_score(y, proba, ref)
     m["z_auc"] = ver.binormal_auc(y, proba)
     m["roc_auc_ci"] = ver.block_bootstrap_ci(y, proba, cycles, metric_fn=ver.trapezoidal_auc)
     m["corp_reliability"] = ver.corp_reliability_curve(y, proba)
     m["brier_decomposition"] = ver.brier_decomposition(y, proba)
+    m["sedi"] = ver.sedi(y, proba)
+    m["economic_value"] = ver.relative_economic_value(y, proba)
     return m
 
 
@@ -198,18 +204,26 @@ def main() -> int:
         f"UNC is the bust rate's own variance - not shown per row since it does not "
         f"depend on the forecast. The full CORP reliability curve (one row per PAV "
         f"block) is in the run artifact, not this table.\n\n"
+        f"SEDI (Ferro & Stephenson, 2011, Weather and Forecasting, "
+        f"doi:10.1175/WAF-D-10-05030.1) is built for rare events specifically - 0 is no "
+        f"skill, 1 is perfect, and unlike CSI/HSS it does not collapse toward a fixed "
+        f"value as the bust rate shrinks. The relative economic value curve (Richardson, "
+        f"2000, doi:10.1002/qj.49712656313; Shanker, Sarkar & Mamgain, 2024, "
+        f"doi:10.1002/qj.4674) is swept over cost-loss ratios in the run artifact, not "
+        f"this table - a single number cannot represent a curve.\n\n"
     )
 
     tbl = ["| model | Brier ↓ | BSS vs climatology ↑ | ROC-AUC ↑ | 95% CI (by cycle) | "
-           "Z-AUC ↑ | F1 ↑ | MCB ↓ | DSC ↑ |",
-           "|---|---|---|---|---|---|---|---|---|"]
+           "Z-AUC ↑ | F1 ↑ | MCB ↓ | DSC ↑ | SEDI ↑ |",
+           "|---|---|---|---|---|---|---|---|---|---|"]
     for name, m in rows:
         label = f"**{name}**" if name == MODEL_ROW else name
         bd = m["brier_decomposition"]
         tbl.append(f"| {label} | {_fmt(m['brier'])} | {_fmt(m['bss'])} | "
                    f"{_fmt(m['roc_auc'])} | {_fmt_ci(m['roc_auc_ci'])} | "
                    f"{_fmt(m['z_auc'])} | {_fmt(m['f1'])} | "
-                   f"{_fmt(bd['miscalibration'])} | {_fmt(bd['discrimination'])} |")
+                   f"{_fmt(bd['miscalibration'])} | {_fmt(bd['discrimination'])} | "
+                   f"{_fmt(m['sedi'])} |")
 
     all_leads = sorted({l for d in per_lead.values() for l in d})
     lead_tbl = []
@@ -249,6 +263,7 @@ def main() -> int:
                      "z_auc": m["z_auc"], "f1": m["f1"],
                      "brier_decomposition": m["brier_decomposition"],
                      "corp_reliability": m["corp_reliability"],
+                     "sedi": m["sedi"], "economic_value": m["economic_value"],
                      "is_model": name == MODEL_ROW}
                     for name, m in rows
                 ],

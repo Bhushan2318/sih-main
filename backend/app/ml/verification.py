@@ -6,7 +6,7 @@ callers own reading the eval-events frame and writing the result. Consumed by
 ``scripts/run_baselines.py``, which already has both the arrays and the ``init_date``
 cycle id on the held-out test split.
 
-Three things live here, per D1/D2/D3 of ``docs/team-brief-2026-09-15-updated.md``
+Four things live here, per D1/D2/D3/D4 of ``docs/team-brief-2026-09-15-updated.md``
 Section 6:
 
 - ``block_bootstrap_ci``: a confidence interval for any ladder metric, resampling whole
@@ -16,6 +16,13 @@ Section 6:
   binned, Reproducible - Dimitriadis, Gneiting & Jordan, PNAS 2021,
   doi:10.1073/pnas.2016191118) reliability diagrams via isotonic regression, and the
   matching exact Brier score decomposition.
+- ``relative_economic_value`` / ``sedi``: the cost-loss decision-model value curve
+  (the general model is Richardson, 2000, QJRMS, doi:10.1002/qj.49712656313; the same
+  Shanker, Sarkar & Mamgain, 2024, QJRMS, doi:10.1002/qj.4674 already cited for D2's
+  binormal Z-AUC also covers relative economic value for NCMRWF's own ensemble system,
+  and is the more directly relevant citation here) and the Symmetric Extremal
+  Dependence Index for rare events (Ferro & Stephenson, 2011, Weather and Forecasting,
+  doi:10.1175/WAF-D-10-05030.1).
 """
 
 from __future__ import annotations
@@ -238,3 +245,139 @@ def brier_decomposition(y_true, y_prob) -> dict:
         "discrimination": discrimination,
         "miscalibration": miscalibration,
     }
+
+
+def _hit_false_alarm_rates(y_true: np.ndarray, pred: np.ndarray) -> tuple:
+    """H (hit rate / POD) and F (false-alarm rate / POFD) for one binary forecast."""
+    n_pos = int(np.sum(y_true == 1))
+    n_neg = int(np.sum(y_true == 0))
+    hits = int(np.sum((pred == 1) & (y_true == 1)))
+    false_alarms = int(np.sum((pred == 1) & (y_true == 0)))
+    h = hits / n_pos if n_pos else 0.0
+    f = false_alarms / n_neg if n_neg else 0.0
+    return h, f
+
+
+def sedi(y_true, y_prob, threshold: float = 0.5) -> float:
+    """Symmetric Extremal Dependence Index (SEDI).
+
+    Ferro & Stephenson (2011, Weather and Forecasting), doi:10.1175/WAF-D-10-05030.1:
+    built specifically for rare binary events, where scores like CSI/HSS degenerate
+    toward trivial values as the event's base rate shrinks - exactly this project's
+    situation, since a bust is defined as the rarest 10% of each variable's own error
+    distribution. Given hit rate H and false-alarm rate F at one decision threshold
+    (0.5, the same convention ``classifier._evaluate`` already uses for
+    precision/recall/F1):
+
+        SEDI = (ln F - ln H - ln(1-F) + ln(1-H)) / (ln F + ln H + ln(1-F) + ln(1-H))
+
+    Bounded in [-1, 1]: 0 for no skill (H == F), 1 in the limit of a perfect forecast
+    (H -> 1, F -> 0), negative when the forecast is worse than chance (H < F) - unlike
+    plain hit/false-alarm rates, this does not collapse toward a fixed value as the
+    base rate goes to zero, which is the entire point of using it here.
+    """
+    y = np.asarray(y_true, int)
+    pred = (np.asarray(y_prob, float) >= threshold).astype(int)
+    if len(np.unique(y)) < 2:
+        return float("nan")
+    h, f = _hit_false_alarm_rates(y, pred)
+    eps = 1e-6
+    h = min(max(h, eps), 1.0 - eps)
+    f = min(max(f, eps), 1.0 - eps)
+    ln_h, ln_f = np.log(h), np.log(f)
+    ln_1h, ln_1f = np.log(1.0 - h), np.log(1.0 - f)
+    denom = ln_f + ln_h + ln_1f + ln_1h
+    if not np.isfinite(denom) or denom == 0:
+        return float("nan")
+    return float((ln_f - ln_h - ln_1f + ln_1h) / denom)
+
+
+def _cost_loss_value(h, f, base_rate: float, alpha):
+    """Cost-loss economic value, vectorised over ``h``/``f``/``alpha`` (broadcast
+    together; ``base_rate`` is always a scalar) - not looped in Python, since this is
+    evaluated over every candidate threshold times every cost-loss ratio, and a
+    Python-level loop over both is too slow at this project's real held-out row counts
+    (measured: even after removing the O(n^2) candidate-building cost below, a plain
+    Python double loop over ~1e6 candidates x 99 ratios did not finish in 60s).
+
+    Richardson (2000, QJRMS), doi:10.1002/qj.49712656313 - the same decision model
+    Shanker, Sarkar & Mamgain (2024, QJRMS), doi:10.1002/qj.4674 apply to NCMRWF's own
+    ensemble. A user who can pay a fixed cost C to protect against a loss L, with
+    alpha = C/L, gets value
+
+        V = (min(alpha, s) - (alpha*(s*H + (1-s)*F) + s*(1-H))) / (min(alpha, s) - alpha*s)
+
+    relative to climatology (V=0, the better of "always protect"/"never protect") and a
+    perfect forecast (V=1). Re-derived and checked directly against the raw expected-cost
+    simulation before use here, not taken from memory of the formula alone - see
+    test_verification.py.
+    """
+    h, f, alpha = np.asarray(h, float), np.asarray(f, float), np.asarray(alpha, float)
+    min_as = np.minimum(alpha, base_rate)
+    denom = min_as - alpha * base_rate
+    numer = min_as - (alpha * (base_rate * h + (1 - base_rate) * f) + base_rate * (1 - h))
+    with np.errstate(invalid="ignore", divide="ignore"):
+        value = numer / denom
+    return np.where(np.abs(denom) < 1e-12, np.nan, value)
+
+
+def relative_economic_value(y_true, y_prob, cost_loss_ratios=None) -> list:
+    """Relative economic value curve, per Richardson (2000) / Shanker, Sarkar & Mamgain
+    (2024) - see ``_cost_loss_value`` for the formula and citations.
+
+    For each cost-loss ratio alpha, sweeps every probability threshold actually present
+    in ``y_prob`` (plus the two trivial "always protect" / "never protect" rules) and
+    reports the BEST achievable value - a rational decision-maker picks whichever
+    threshold suits their own alpha, not one fixed cutoff for everyone, and this is
+    also what a frontend value-vs-alpha slider (F3) needs. Floored at 0 by
+    construction: "always"/"never" always reproduce the climatology reference exactly
+    at one end of the alpha range, so the max can never go below it.
+    """
+    y = np.asarray(y_true, int)
+    p = np.asarray(y_prob, float)
+    n = len(y)
+    if cost_loss_ratios is None:
+        cost_loss_ratios = np.linspace(0.01, 0.99, 99)
+    alphas = np.asarray(cost_loss_ratios, float)
+
+    base_rate = float(y.mean()) if n else float("nan")
+    if n == 0 or not (0.0 < base_rate < 1.0):
+        return [{"cost_loss_ratio": float(a), "value": float("nan")} for a in alphas]
+
+    n_pos, n_neg = int(y.sum()), int(n - y.sum())
+
+    # Every candidate "predict yes when p >= t" threshold, computed in one sort + one
+    # cumulative-sum pass rather than re-scanning the whole array per threshold: sorting
+    # by probability descending, the set of rows predicted "yes" at any threshold is
+    # exactly some prefix of this order, so cumulative hit/false-alarm counts along it
+    # give every achievable (H, F) pair in O(n log n) total, not O(n * distinct
+    # thresholds) - the naive per-threshold rescan is quadratic at this project's real
+    # held-out row counts (measured: ~2s at n=20,000, clearly super-linear, which
+    # extrapolates to minutes-to-hours at the hundreds of thousands of rows a real
+    # held-out split reaches - see test_verification.py's timing test).
+    order = np.argsort(-p, kind="stable")
+    p_sorted, y_sorted = p[order], y[order]
+    cum_hits = np.cumsum(y_sorted)
+    cum_false_alarms = np.cumsum(1 - y_sorted)
+
+    # Only keep prefixes ending exactly at a tie boundary: splitting mid-tie would
+    # produce an (H, F) pair no real ">= threshold" rule can actually achieve, since
+    # points sharing one probability always get the same prediction.
+    is_boundary = np.empty(n, dtype=bool)
+    is_boundary[:-1] = p_sorted[:-1] != p_sorted[1:]
+    is_boundary[-1] = True
+
+    h_candidates = np.concatenate([[0.0], cum_hits[is_boundary] / n_pos])
+    f_candidates = np.concatenate([[0.0], cum_false_alarms[is_boundary] / n_neg])
+    # h_candidates[-1] == 1.0 and f_candidates[-1] == 1.0 already ("always protect" -
+    # the full sorted prefix), so only "never protect" (the leading 0.0s) needs adding.
+
+    # One (n_candidates, n_alphas) matrix via broadcasting, not a Python loop over
+    # either axis: h/f_candidates as a column, alphas as a row.
+    grid = _cost_loss_value(h_candidates[:, None], f_candidates[:, None],
+                            base_rate, alphas[None, :])
+    with np.errstate(invalid="ignore"):
+        best = np.nanmax(np.where(np.isfinite(grid), grid, np.nan), axis=0)
+    # nanmax raises a RuntimeWarning (already silenced above) and returns nan for a
+    # column that is all-nan - exactly the fallback wanted, not an error.
+    return [{"cost_loss_ratio": float(a), "value": float(v)} for a, v in zip(alphas, best)]

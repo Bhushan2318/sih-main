@@ -1,13 +1,14 @@
-"""D1/D2/D3 of the verification package: block-bootstrap CIs, binormal Z-AUC, and the
-CORP reliability curve / Brier decomposition.
+"""D1/D2/D3/D4 of the verification package: block-bootstrap CIs, binormal Z-AUC, the
+CORP reliability curve / Brier decomposition, and relative economic value / SEDI.
 
 Every metric function is checked against a value computed independently of the code
 under test - either a closed-form hand computation (via ``math.erf``, never
 ``scipy.stats``, since that is what ``binormal_auc`` itself calls), a literal
-Mann-Whitney count done by hand, or (for D3) a 4-point pool-adjacent-violators trace
-worked by hand and cross-checked against ``sklearn.isotonic.IsotonicRegression``
-directly rather than through the module under test. See ``app/ml/verification.py`` for
-the formulas and citations.
+Mann-Whitney count done by hand, a 4-point pool-adjacent-violators trace worked by hand
+and cross-checked against ``sklearn.isotonic.IsotonicRegression`` directly, or (for D4)
+a raw expected-cost simulation of the cost-loss decision model, independent of the
+closed-form formula the module itself uses. See ``app/ml/verification.py`` for the
+formulas and citations.
 """
 
 from __future__ import annotations
@@ -23,6 +24,8 @@ from app.ml.verification import (
     block_bootstrap_ci,
     brier_decomposition,
     corp_reliability_curve,
+    relative_economic_value,
+    sedi,
     trapezoidal_auc,
 )
 
@@ -299,3 +302,129 @@ def test_corp_reliability_curve_empty_input():
 def test_brier_decomposition_nan_on_empty_input():
     d = brier_decomposition([], [])
     assert all(math.isnan(v) for v in d.values())
+
+
+# ---------------------------------------------------------------------------
+# sedi
+# ---------------------------------------------------------------------------
+
+def test_sedi_matches_a_hand_computed_confusion_matrix():
+    """8 hits, 2 misses, 2 false alarms, 88 correct rejections (n=100). H=0.8,
+    F=2/90=0.02222. SEDI = (lnF-lnH-ln(1-F)+ln(1-H)) / (lnF+lnH+ln(1-F)+ln(1-H)),
+    computed here with math.log directly, not through the module."""
+    y = np.array([1] * 10 + [0] * 90)
+    p = np.concatenate([
+        np.array([0.9] * 8 + [0.1] * 2),      # positives: 8 predicted yes, 2 no
+        np.array([0.9] * 2 + [0.1] * 88),     # negatives: 2 predicted yes, 88 no
+    ])
+    H, F = 8 / 10, 2 / 90
+    ln = math.log
+    expected = (ln(F) - ln(H) - ln(1 - F) + ln(1 - H)) / (ln(F) + ln(H) + ln(1 - F) + ln(1 - H))
+    assert sedi(y, p, threshold=0.5) == pytest.approx(expected)
+    assert expected == pytest.approx(0.9132360676324364)
+
+
+def test_sedi_is_zero_at_no_skill():
+    """H == F (the forecast carries no information beyond the base rate) gives SEDI 0
+    exactly, by construction of the formula (numerator vanishes when H=F)."""
+    y = np.array([1] * 30 + [0] * 70)
+    # predict "yes" for the same fraction (30%) of positives and negatives alike
+    p = np.concatenate([[0.9] * 9 + [0.1] * 21, [0.9] * 21 + [0.1] * 49])
+    assert sedi(y, p, threshold=0.5) == pytest.approx(0.0, abs=1e-9)
+
+
+def test_sedi_is_negative_when_worse_than_chance():
+    y = np.array([1] * 10 + [0] * 90)
+    # forecast "yes" more often for negatives than positives - anti-skillful
+    p = np.concatenate([[0.9] * 2 + [0.1] * 8, [0.9] * 60 + [0.1] * 30])
+    assert sedi(y, p, threshold=0.5) < 0
+
+
+def test_sedi_nan_on_single_class():
+    assert math.isnan(sedi([0, 0, 0], [0.1, 0.5, 0.9]))
+
+
+# ---------------------------------------------------------------------------
+# relative_economic_value
+# ---------------------------------------------------------------------------
+
+def _raw_cost_loss_value(h, f, s, alpha):
+    """Independent re-derivation, not the module's closed-form formula: simulate the
+    four expense terms directly (protect at cost C on a hit or false alarm, pay loss L
+    on a miss, nothing on a correct rejection) and compare to climatology/perfect."""
+    C, L = alpha, 1.0
+    e_forecast = C * (s * h + (1 - s) * f) + L * s * (1 - h)
+    e_ref = min(C, s * L)
+    e_perfect = C * s
+    return (e_ref - e_forecast) / (e_ref - e_perfect)
+
+
+def test_relative_economic_value_is_one_for_a_perfect_forecast():
+    y = np.array([1] * 20 + [0] * 80)
+    p = np.array([0.9] * 20 + [0.1] * 80)  # perfectly separated
+    curve = relative_economic_value(y, p, cost_loss_ratios=[0.1, 0.3, 0.5, 0.7, 0.9])
+    for row in curve:
+        assert row["value"] == pytest.approx(1.0, abs=1e-9)
+
+
+def test_relative_economic_value_matches_independent_expense_simulation():
+    """2 distinct forecast values, so the only non-trivial threshold's (H, F) can be
+    worked out by hand: 3 of 10 events, forecast 'yes' for 2 of the 3 events and 1 of
+    the 7 non-events at p=0.9 (H=2/3, F=1/7); the rest predict 'no'. Checked against
+    test_raw_cost_loss_value, an independent expense simulation, not the module's own
+    closed-form formula."""
+    y = np.array([1, 1, 1, 0, 0, 0, 0, 0, 0, 0])
+    p = np.array([0.9, 0.9, 0.1, 0.9, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1])
+    base_rate = 0.3
+    h, f = 2 / 3, 1 / 7
+
+    curve = relative_economic_value(y, p, cost_loss_ratios=[0.2])
+    got = curve[0]["value"]
+
+    candidates = [0.0, 1.0, _raw_cost_loss_value(h, f, base_rate, 0.2)]
+    # 0.0 and 1.0 stand for the "never"/"always protect" trivial rules' own values,
+    # each exactly 0 at one end of the alpha range - included for completeness, but at
+    # alpha=0.2 the real threshold should win.
+    never_val = _raw_cost_loss_value(0.0, 0.0, base_rate, 0.2)
+    always_val = _raw_cost_loss_value(1.0, 1.0, base_rate, 0.2)
+    expected = max(never_val, always_val, _raw_cost_loss_value(h, f, base_rate, 0.2))
+    assert got == pytest.approx(expected)
+
+
+def test_relative_economic_value_is_never_negative():
+    """"Always"/"never protect" are always available as trivial fallback rules and each
+    exactly reproduces the climatology reference (value 0) at one end of the alpha
+    range, so the best-over-thresholds curve can never dip below 0 - checked on random,
+    deliberately unskilled data, not just the well-behaved fixtures above."""
+    rng = np.random.default_rng(7)
+    y = rng.binomial(1, 0.35, 300)
+    p = rng.uniform(0, 1, 300)  # pure noise, uncorrelated with y
+    curve = relative_economic_value(y, p)
+    assert all(row["value"] >= -1e-9 for row in curve)
+
+
+def test_relative_economic_value_nan_on_degenerate_base_rate():
+    curve = relative_economic_value([0, 0, 0], [0.1, 0.5, 0.9], cost_loss_ratios=[0.5])
+    assert math.isnan(curve[0]["value"])
+
+
+def test_relative_economic_value_stays_fast_at_realistic_scale():
+    """Regression test for a real performance bug: the first version rebuilt each
+    candidate threshold's hit/false-alarm counts with a fresh full-array scan
+    (O(n * distinct thresholds), ~quadratic with mostly-unique continuous forecasts -
+    measured 2.1s at n=20,000, clearly super-linear). A second version fixed the
+    candidate-building cost but still looped candidates x cost-loss ratios in pure
+    Python, which did not finish in 60s at n=1,000,000 x 99 ratios. The final version
+    is a sort + cumulative sum plus one broadcast matrix, no Python-level loop over
+    rows or ratios - this must stay well under a minute at real held-out row counts, on
+    the CI runner this is timed on."""
+    import time
+    rng = np.random.default_rng(9)
+    n = 300_000
+    y = rng.binomial(1, 0.3, n)
+    p = rng.uniform(0, 1, n)
+    start = time.time()
+    curve = relative_economic_value(y, p, cost_loss_ratios=np.linspace(0.01, 0.99, 99))
+    elapsed = time.time() - start
+    assert elapsed < 15.0, f"took {elapsed:.1f}s - the O(n^2)/Python-loop bug is back"
+    assert len(curve) == 99
