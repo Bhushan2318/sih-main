@@ -21,6 +21,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
+pytest.importorskip("xarray")  # the script this module loads imports xarray at collection
+# time - requirements-live.txt only, not part of the core test-suite install (see the two
+# individual importorskip calls below, which this makes redundant but harmless to leave).
+
 BACKEND = Path(__file__).resolve().parents[1]
 _spec = importlib.util.spec_from_file_location(
     "fetch_era5_cds_district_observations",
