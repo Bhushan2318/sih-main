@@ -74,6 +74,21 @@ def load_historical_bust_freq(run_id: str) -> dict:
     return {tuple(k.split("||")): v for k, v in raw.items()}
 
 
+def save_jump_climatology(run_id: str, climatology: dict) -> None:
+    """(region_id, variable) -> mean |forecast jump| on the training split (C1)."""
+    payload = {f"{r}||{v}": x for (r, v), x in climatology.items()}
+    _atomic_write(run_dir(run_id) / "jump_climatology.json", json.dumps(payload, indent=2))
+
+
+def load_jump_climatology(run_id: str) -> dict:
+    """Empty for a run trained before C1 - its models never saw jump_rel_climatology."""
+    path = run_dir(run_id) / "jump_climatology.json"
+    if not path.exists():
+        return {}
+    raw = json.loads(path.read_text())
+    return {tuple(k.split("||")): v for k, v in raw.items()}
+
+
 def save_metrics(run_id: str, metrics: dict) -> None:
     _atomic_write(run_dir(run_id) / "metrics.json", json.dumps(metrics, indent=2, default=str))
 
