@@ -351,21 +351,14 @@ def test_same_seed_gives_bit_identical_weights_on_cpu(region_ids):
     assert not mismatched, f"non-deterministic on CPU: {mismatched}"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Diagnosed 2026-09-17, see docs/known-issues.md: fit_streaming's default CUDA "
-           "path is not bit-reproducible. Root cause isolated to cuBLAS's GEMM algorithm "
-           "selection, not cuDNN convolution and not DistrictPooling's torch.sparse.mm "
-           "(both suspected, neither was it) - forcing torch.use_deterministic_algorithms"
-           "(True) alone raises RuntimeError naming cuBLAS explicitly, and adding "
-           "CUBLAS_WORKSPACE_CONFIG=:4096:8 plus torch.backends.cudnn.deterministic=True "
-           "makes every tensor bit-identical (verified by hand). None of those three "
-           "settings are applied in fit_streaming today. strict=True: if someone adds "
-           "them, this starts passing and pytest fails loudly until the marker is removed.")
 def test_same_seed_gives_bit_identical_weights_on_cuda(region_ids):
-    """Same claim as the CPU test, on CUDA - where it currently fails. See the xfail
-    reason above for the diagnosed root cause; this is deliberately not loosened per the
-    brief's own instruction."""
+    """Same claim as the CPU test, on CUDA. Diagnosed 2026-09-17 (docs/known-issues.md)
+    not bit-reproducible by default - root cause was cuBLAS's GEMM algorithm selection,
+    not the two things suspected first (cuDNN convolution, DistrictPooling's
+    torch.sparse.mm). fit_streaming now sets CUBLAS_WORKSPACE_CONFIG (train_cnn.py,
+    module import time) plus torch.backends.cudnn.deterministic and
+    torch.use_deterministic_algorithms(True) (inside fit_streaming, right after the
+    seed), which is what makes this pass rather than xfail."""
     if not torch.cuda.is_available():
         pytest.skip("no CUDA device on this machine")
     a, b = _train_twice(torch.device("cuda"), region_ids)
