@@ -130,6 +130,41 @@ def test_refuses_without_allow_local_retrain(tmp_path, monkeypatch):
 # contract against train_pooled.py's real --json output shape, not a hand-typed fixture
 # that might drift from what the CLI actually prints.
 
+def test_parse_trailing_json_handles_pretty_printed_nested_objects():
+    """Real bug 2026-09-17: train_pooled.py's --json prints json.dumps(..., indent=2) -
+    multi-line, with nested objects (split_cycles, classifier_metrics) that have their
+    own '{' on their own line. The first version of this parser looked for "the last
+    line starting with '{'" and matched split_cycles' nested brace instead of the real
+    top-level one - a run that genuinely succeeded was reported as unparseable and its
+    result discarded. The fix takes the last line that is EXACTLY '{' at column 0, which
+    only the outer object's opening brace ever is under indent=2."""
+    stdout = (
+        "training progress line 1\n"
+        "training progress line 2\n"
+        "{\n"
+        '  "run_id": "run_x",\n'
+        '  "status": "success",\n'
+        '  "split_cycles": {\n'
+        '    "train": 100,\n'
+        '    "test": 50\n'
+        "  },\n"
+        '  "classifier_metrics": {\n'
+        '    "test": {\n'
+        '      "roc_auc": 0.83\n'
+        "    }\n"
+        "  }\n"
+        "}\n"
+    )
+    result = orch._parse_trailing_json(stdout)
+    assert result["run_id"] == "run_x"
+    assert result["status"] == "success"
+    assert result["classifier_metrics"]["test"]["roc_auc"] == 0.83
+
+
+def test_parse_trailing_json_returns_none_with_no_json():
+    assert orch._parse_trailing_json("just some log lines\nno json here\n") is None
+
+
 def test_run_job_subprocess_parses_a_no_grids_style_refusal(tmp_path, monkeypatch):
     """Doesn't need real data: an empty cache_dir makes cache_year fail fast (no store to
     read), which is enough to prove the subprocess boundary itself - launch, capture
