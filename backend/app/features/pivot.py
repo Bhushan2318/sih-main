@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from app.features.engineering import EVENT_KEYS, _season
+from app.features.engineering import EVENT_KEYS, JUMP_FEATURES, _season
 
 CONF_FLOOR = 0.0
 
@@ -17,20 +17,29 @@ def build_event_frame(
 ) -> pd.DataFrame:
     df = paired.copy()
     df["pred_err"] = pred_err.reindex(df.index).to_numpy()
-    df["p90"] = df["variable"].map(p90_error)
-    df["conf"] = (1.0 - df["pred_err"] / df["p90"]).clip(CONF_FLOOR, 1.0)
+    # `variable` is categorical in the retrain's paired frame. Series.map on a categorical
+    # returns a categorical when every category maps to a distinct value - true for a
+    # real year, where no two variables share a p90 - and a categorical cannot be divided.
+    df["p90"] = df["variable"].map(p90_error).astype(np.float32)
+    pred_err32 = df["pred_err"].astype(np.float32)
+    df["conf"] = (1.0 - pred_err32 / df["p90"]).clip(CONF_FLOOR, 1.0)
 
+    # Jumpiness is one value per (event, variable) repeated on every member row, so the
+    # mean is that value. Absent when the frame predates C1.
+    jump = [c for c in JUMP_FEATURES if c in df.columns]
     em = (df.groupby(EVENT_KEYS + ["variable"], observed=True)
             .agg(fc_mean=("forecast_value", "mean"),
                  obs=("observed_value", "mean"),
                  spread=("ensemble_spread", "mean"),
                  pred_err=("pred_err", "mean"),
-                 conf=("conf", "mean"))
+                 conf=("conf", "mean"),
+                 **{c: (c, "mean") for c in jump})
             .reset_index())
     em["actual_err"] = (em["fc_mean"] - em["obs"]).abs()
 
     pe = em.pivot_table(index=EVENT_KEYS, columns="variable",
-                        values=["pred_err", "conf", "spread", "actual_err"], observed=True)
+                        values=["pred_err", "conf", "spread", "actual_err"] + jump,
+                        observed=True)
     pe.columns = [f"{a}_{b}" for a, b in pe.columns]
     pe = pe.reset_index()
 
@@ -66,7 +75,7 @@ def build_event_frame(
 
 def classifier_feature_columns(event_df: pd.DataFrame) -> list:
     per_var = [c for c in event_df.columns
-               if c.startswith(("pred_err_", "conf_"))
+               if c.startswith(("pred_err_", "conf_", "jump_"))
                or (c.startswith("spread_") and c not in ("spread_mean", "spread_max"))]
     context = ["lead_time_days", "month", "spread_mean", "spread_max",
                "historical_bust_frequency_region_season", "region_id", "season"]

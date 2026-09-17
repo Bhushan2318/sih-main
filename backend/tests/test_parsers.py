@@ -7,10 +7,11 @@ import json
 import pytest
 
 from app.ingestion.parsers import ParseError, parse_upload
-from tests.conftest import ERA5_CSV, GEFS_CSV, find_sample, iter_sample_files
+from tests.conftest import (ERA5_CSV, GEFS_CSV, find_sample, iter_parseable_samples,
+                            oversized_samples)
 
 
-@pytest.mark.parametrize("path", list(iter_sample_files()), ids=lambda p: p.name)
+@pytest.mark.parametrize("path", list(iter_parseable_samples()), ids=lambda p: p.name)
 def test_every_sample_parses(path):
     """No real file in the sample folder should raise on parse."""
     pt = parse_upload(path, path.name)
@@ -83,3 +84,20 @@ def test_records_json_ok(tmp_path):
     p.write_text(json.dumps([{"region": "Bihar", "date": "2019-06-01", "temp_c": 31.2}]))
     pt = parse_upload(p, p.name)
     assert list(pt.df.columns) == ["region", "date", "temp_c"]
+
+
+def test_oversized_samples_are_excluded_on_purpose(capsys):
+    """The parser sweep skips multi-hundred-MB samples, and says which.
+
+    Silently skipping is this repo's recurring failure mode, so the exclusion is asserted
+    and printed rather than left to be discovered. If a file appears here unexpectedly,
+    something wrote a full year into data/samples.
+    """
+    from tests.conftest import PARSE_SIZE_CAP_BYTES
+
+    skipped = oversized_samples()
+    for p in skipped:
+        print(f"  not parsed: {p.name}  {p.stat().st_size / 1e6:,.0f} MB")
+    parsed = list(iter_parseable_samples())
+    assert all(p.stat().st_size <= PARSE_SIZE_CAP_BYTES for p in parsed)
+    assert not (set(parsed) & set(skipped)), "a file cannot be both parsed and skipped"

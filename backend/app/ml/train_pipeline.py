@@ -19,6 +19,7 @@ from app.config import settings
 from app.db.base import resolve_path
 from app.features import engineering as fe
 from app.features import pivot as pv
+from app.features.history import forecast_history
 from app.ml import classifier as clf_mod
 from app.ml import explain as explain_mod
 from app.ml import regressors as reg_mod
@@ -66,13 +67,76 @@ _MAX_LEAD_DAYS = 10
 _OBS_PAD_DAYS = 3
 
 
-def _build_paired_in_chunks() -> "tuple[pd.DataFrame, int]":
+# Columns that are low-cardinality strings in every real frame, held as Python objects
+# until now. Measured on the 2017-12-15 cycle at 661 districts: these four were 53.9 MB of
+# an 88.7 MB frame - 61% - because pandas stores an object column as one pointer per row.
+# variable has 8 distinct values, ensemble_member_id 5, value_type and verification_status
+# 2 each. region_id and season were already categorical; these were simply missed.
+_CATEGORICAL_PAIRED = ("variable", "value_type", "verification_status",
+                       "ensemble_member_id")
+
+
+def _downcast_paired(df: "pd.DataFrame") -> "pd.DataFrame":
+    """Make a paired frame cheap enough to hold a year of districts.
+
+    88.7 MB -> 20.7 MB per full cycle, so 365 cycles go from 31.6 GB to 7.4 GB. Without
+    this the district-grain retrain does not fit 16 GB, and neither the box nor a CI
+    runner has more.
+
+    Values are preserved to float32 precision, not exactly. float64 -> float32 keeps
+    roughly seven significant digits - far more than any meteorological value carries, and
+    XGBoost converts to float32 internally anyway - but statistics computed on the frame
+    move in the sixth digit: a pressure bust threshold measured 2.50132446 against
+    2.50133672 on float64. Anything that recomputes a value the pipeline publishes must do
+    it on this representation.
+
+    It also makes `variable` categorical, and pandas' Series.map on a categorical returns a
+    categorical when the mapping is one-to-one; arithmetic on the result raises. Cast
+    mapped values explicitly (see pivot.build_event_frame).
+    """
+    for col in _CATEGORICAL_PAIRED:
+        if col in df.columns and not isinstance(df[col].dtype, pd.CategoricalDtype):
+            df[col] = df[col].astype("category")
+    for col in df.columns:
+        kind = df[col].dtype.kind
+        if kind == "f" and df[col].dtype.itemsize > 4:
+            df[col] = df[col].astype("float32")
+        elif kind == "i" and df[col].dtype.itemsize > 4:
+            df[col] = df[col].astype("int32")
+    return df
+
+
+def _build_paired_in_chunks(init_date_max=None, init_date_min=None) -> "tuple[pd.DataFrame, int]":
+    """init_date_max bounds which forecast cycles are read. Without it, a year still being
+    ingested - or an observation file running a few days into the next year - lands a
+    partial, sparsely labelled month at the end of the time-ordered split, i.e. in test.
+
+    init_date_min bounds the other end. With one calendar year in the store, "everything
+    up to X" and "the training window" were the same thing, so nothing needed a lower
+    bound. That stopped being true the moment a second year not meant for training landed
+    in the same store: --init-date-max alone would silently pull every earlier year in as
+    training data too. A cross-year run needs to name both ends of its training window.
+    """
     inits = parquet_store.read_dataset(
         value_types=["forecast"], columns=["init_date"], dedupe=False,
     )["init_date"].dropna().unique()
     if len(inits) == 0:
         return pd.DataFrame(), 0
     inits = sorted(pd.to_datetime(pd.Series(inits)).dt.normalize().unique())
+    # Every cycle in the store, before the window is applied: a cycle just before
+    # init_date_min is still a forecast that existed when the first cycle in the window was
+    # issued, so it feeds that cycle's jumpiness. It contributes no rows and no label.
+    store_inits = list(inits)
+    if init_date_max is not None:
+        bound = pd.Timestamp(init_date_max).normalize()
+        inits = [c for c in inits if pd.Timestamp(c) <= bound]
+        if not inits:
+            return pd.DataFrame(), 0
+    if init_date_min is not None:
+        bound = pd.Timestamp(init_date_min).normalize()
+        inits = [c for c in inits if pd.Timestamp(c) >= bound]
+        if not inits:
+            return pd.DataFrame(), 0
 
     frames, rows_read = [], 0
     for i in range(0, len(inits), _CHUNK_CYCLES):
@@ -84,6 +148,7 @@ def _build_paired_in_chunks() -> "tuple[pd.DataFrame, int]":
         )
         if fc.empty:
             continue
+        history = forecast_history(chunk[0], store_inits, exclude_provisional=True)
         ob = parquet_store.read_dataset(
             value_types=["observed"], columns=_TRAINING_COLUMNS,
             valid_date_min=(pd.Timestamp(chunk[0]) - pd.Timedelta(days=_OBS_PAD_DAYS)).date(),
@@ -93,22 +158,46 @@ def _build_paired_in_chunks() -> "tuple[pd.DataFrame, int]":
         )
         rows_read += len(fc) + len(ob)
         part = fe.build_training_frame(
-            pd.concat([fc, ob], ignore_index=True), historical_bust_freq=None)
+            pd.concat([fc, ob], ignore_index=True), historical_bust_freq=None,
+            forecast_history=history)
         if not part.empty:
-            frames.append(part)
-        del fc, ob, part
+            # Downcast per chunk, not after the concat: the whole point is never to hold
+            # the expensive version of a year at once.
+            frames.append(_downcast_paired(part))
+        del fc, ob, part, history
 
     if not frames:
         return pd.DataFrame(), rows_read
     categorical = [c for c in frames[0].columns
                    if str(frames[0][c].dtype) == "category"]
     out = pd.concat(frames, ignore_index=True)
+    # The chunk list is now fully duplicated inside `out`. At district scale across two
+    # years (152M rows) holding both cost the run a MemoryError before a single model
+    # trained - measured 2026-09-11, run_20260911T193709Z, 1948s in. Freeing it here is
+    # the difference between the peak being one copy of the frame and two.
+    frames.clear()
     for col in categorical:
         if str(out[col].dtype) != "category":
             out[col] = out[col].astype("category")
+    # `ignore_index=True` resets the index as part of the sort. A separate
+    # `.reset_index(drop=True)` afterward calls DataFrame.copy(), which consolidates
+    # mixed-dtype blocks into one contiguous array per dtype - an extra ~9 GiB allocation
+    # at this size, for no result the sort had not already produced. Same measured
+    # failure as above; this is the line it happened on.
     return (out.sort_values(fe.MEMBER_KEYS[:-1] + ["variable", "ensemble_member_id",
-                                                   "lead_time_days"])
-               .reset_index(drop=True), rows_read)
+                                                   "lead_time_days"], ignore_index=True),
+            rows_read)
+
+
+def _fit_jump_climatology(train: pd.DataFrame, others) -> dict:
+    """Mean |jump| per (district, variable), fitted on the TRAINING split only - the same
+    discipline as the bust threshold - then used to scale jump_rel_climatology in every
+    split. `train` and `others` gain the column in place."""
+    clim = fe.compute_jump_climatology(train) if "jump_abs_change" in train.columns else {}
+    for frame in (train, *others):
+        if frame is not None and not frame.empty:
+            fe.attach_jump_climatology(frame, clim)
+    return clim
 
 
 def _split_by_cycle(paired: pd.DataFrame):
@@ -119,6 +208,40 @@ def _split_by_cycle(paired: pd.DataFrame):
     a = max(1, int(round(n * TRAIN_FRAC)))
     b = max(a + 1, int(round(n * (TRAIN_FRAC + VAL_FRAC))))
     return set(cycles[:a]), set(cycles[a:b]), set(cycles[b:])
+
+
+def _split_by_year(paired: pd.DataFrame, test_year: int):
+    """Hold out a whole calendar year, rather than the tail of whatever range was loaded.
+
+    One year is one monsoon: the default `_split_by_cycle` tests on the last ~15% of
+    cycles, which for a single ingested year means Nov-Dec - so monsoon busts have never
+    been a held-out case. Splitting by year instead asks "has this model ever seen this
+    year's weather at all", holding every cycle of `test_year` out entire. The years
+    before it still get their own train/val split, at the same TRAIN_FRAC:VAL_FRAC ratio
+    `_split_by_cycle` uses, so a validation set still exists for early stopping and
+    threshold review without leaking anything from the held-out year.
+    """
+    cycles = sorted(paired["init_date"].dropna().unique())
+    test_c = {c for c in cycles if pd.Timestamp(c).year == test_year}
+    pre = [c for c in cycles if pd.Timestamp(c).year < test_year]
+    n = len(pre)
+    if n < 2:
+        return set(pre), set(), test_c
+    a = max(1, int(round(n * TRAIN_FRAC / (TRAIN_FRAC + VAL_FRAC))))
+    a = min(a, n - 1)
+    return set(pre[:a]), set(pre[a:]), test_c
+
+
+def _choose_split(paired: pd.DataFrame, test_year: int | None = None):
+    """Whether to hold out a whole calendar year or the usual chronological tail.
+
+    A dedicated dispatch function so it can be pinned by a test on its own, without
+    dragging in the rest of full_retrain - which needs a fully realistic paired frame to
+    run at all.
+    """
+    if test_year is not None:
+        return _split_by_year(paired, test_year)
+    return _split_by_cycle(paired)
 
 
 # A run may score this much worse than the current one and still ship. Deliberately
@@ -186,7 +309,8 @@ def _promotion_decision(new_metrics: dict | None) -> tuple[bool, str]:
 
 
 def full_retrain(triggered_by_batch_id: str | None = None, make_current: bool = True,
-                 *, emit_eval: bool = False) -> TrainReport:
+                 *, emit_eval: bool = False, init_date_max=None, init_date_min=None,
+                 test_year: int | None = None) -> TrainReport:
     t0 = time.time()
     run_id = registry.new_run_id()
     report = TrainReport(run_id=run_id, status="failed")
@@ -202,7 +326,8 @@ def full_retrain(triggered_by_batch_id: str | None = None, make_current: bool = 
         return report
 
     try:
-        paired, report.data_rows = _build_paired_in_chunks()
+        paired, report.data_rows = _build_paired_in_chunks(
+            init_date_max=init_date_max, init_date_min=init_date_min)
         if paired.empty:
             report.status = "no_data"
             return report
@@ -211,10 +336,13 @@ def full_retrain(triggered_by_batch_id: str | None = None, make_current: bool = 
             report.status = "no_data"
             return report
 
-        train_c, val_c, test_c = _split_by_cycle(paired)
+        train_c, val_c, test_c = _choose_split(paired, test_year=test_year)
         report.split_cycles = {
             "train": len(train_c), "val": len(val_c), "test": len(test_c),
             "train_dates": [str(pd.Timestamp(c).date()) for c in sorted(train_c)],
+            "init_date_max": str(init_date_max) if init_date_max is not None else None,
+            "init_date_min": str(init_date_min) if init_date_min is not None else None,
+            "test_year": str(test_year) if test_year is not None else None,
         }
         tr = paired[paired["init_date"].isin(train_c)].copy()
         va = paired[paired["init_date"].isin(val_c)].copy()
@@ -226,6 +354,7 @@ def full_retrain(triggered_by_batch_id: str | None = None, make_current: bool = 
                 continue
             key = list(zip(frame["region_id"].astype(str), frame["season"].astype(str)))
             frame["historical_bust_frequency_region_season"] = [hbf.get(k, np.nan) for k in key]
+        jump_clim = _fit_jump_climatology(tr, (va, te))
 
         p90_error = compute_member_p90(tr[["variable", "abs_error"]])
         event_err_tr = _event_mean_error(tr)
@@ -303,7 +432,8 @@ def full_retrain(triggered_by_batch_id: str | None = None, make_current: bool = 
             if len(sub) >= 20:
                 shap_frames.append(explain_mod.explain_model(
                     art.model, sub, art.feature_columns, _REG_CATEGORICAL,
-                    model_name=f"regressor::{var}"))
+                    model_name=f"regressor::{var}",
+                    max_rows_per_group=explain_mod.SHAP_ROWS_PER_GROUP))
         if len(event_va) >= 20:
             shap_frames.append(explain_mod.explain_model(
                 clf_art.model, event_va, clf_art.feature_columns, _CLF_CATEGORICAL,
@@ -316,12 +446,15 @@ def full_retrain(triggered_by_batch_id: str | None = None, make_current: bool = 
         registry.save_classifier(run_id, clf_art.model, clf_art.feature_columns)
         registry.save_thresholds(run_id, thresholds)
         registry.save_historical_bust_freq(run_id, hbf)
+        registry.save_jump_climatology(run_id, jump_clim)
         if not shap_summary.empty:
             shap_summary.to_parquet(registry.run_dir(run_id) / "shap_summary.parquet", index=False)
         registry.save_metrics(run_id, {
             "regressors": report.regressor_metrics,
             "classifier": report.classifier_metrics,
         })
+        shap_methods = (shap_summary.groupby("model")["method"].first().to_dict()
+                        if not shap_summary.empty else {})
         registry.save_manifest(run_id, {
             "run_id": run_id,
             "triggered_by_batch_id": triggered_by_batch_id,
@@ -330,7 +463,12 @@ def full_retrain(triggered_by_batch_id: str | None = None, make_current: bool = 
             "split_cycles": report.split_cycles,
             "modelled_variables": report.modelled_variables,
             "skipped_variables": report.skipped_variables,
-            "shap_method": (shap_summary["method"].iloc[0] if not shap_summary.empty else "none"),
+            # The classifier's method, because that is the explanation the region panel
+            # serves and /api/model/status reports; it used to be whichever model came first.
+            "shap_method": shap_methods.get("classifier",
+                                            next(iter(shap_methods.values()), "none")),
+            "shap_methods": shap_methods,
+            "shap_regressor_rows_per_group": explain_mod.SHAP_ROWS_PER_GROUP,
         })
 
         report.status = "success"
@@ -439,12 +577,23 @@ def _main() -> int:
     ap.add_argument("--emit-eval", action="store_true",
                     help="also write the scored event frames to data/analysis/eval_events "
                          "(input for scripts/run_baselines.py)")
+    ap.add_argument("--init-date-max", default=None, metavar="YYYY-MM-DD",
+                    help="train only on forecast cycles initialised on or before this date")
+    ap.add_argument("--init-date-min", default=None, metavar="YYYY-MM-DD",
+                    help="train only on forecast cycles initialised on or after this date "
+                         "- needed once more than one year's worth of cycles the run "
+                         "should NOT train on shares the store with the ones it should")
+    ap.add_argument("--test-year", type=int, default=None, metavar="YYYY",
+                    help="hold out this whole calendar year as test, instead of the "
+                         "usual chronological tail of whatever range was loaded")
     args = ap.parse_args()
 
     from app.db.base import init_db
     init_db()
 
-    r = full_retrain(make_current=not args.dry_run, emit_eval=args.emit_eval)
+    r = full_retrain(make_current=not args.dry_run, emit_eval=args.emit_eval,
+                     init_date_max=args.init_date_max, init_date_min=args.init_date_min,
+                     test_year=args.test_year)
     _print_report(r)
     if args.json:
         from dataclasses import asdict
