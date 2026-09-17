@@ -77,9 +77,10 @@ def _metrics(y, proba, ref, cycles) -> dict:
     (MCB/DSC/UNC), alongside - not replacing - the naive fixed-bin `calibration` field
     `_evaluate` already produces.
 
-    D4 addition: SEDI (rare-event skill at the same 0.5 threshold `_evaluate` already
-    uses for precision/recall/F1) and the relative economic value curve, swept over
-    cost-loss ratios."""
+    D4 addition: SEDI (at the same 0.5 threshold `_evaluate` already uses for
+    precision/recall/F1 - see verification.sedi's own docstring for why its usual
+    rare-event justification only partly applies to the ~43% aggregate y_bust label
+    scored here) and the relative economic value curve, swept over cost-loss ratios."""
     m = clf_mod._evaluate(y, proba)
     m["bss"] = bl.brier_skill_score(y, proba, ref)
     m["z_auc"] = ver.binormal_auc(y, proba)
@@ -205,9 +206,12 @@ def main() -> int:
         f"depend on the forecast. The full CORP reliability curve (one row per PAV "
         f"block) is in the run artifact, not this table.\n\n"
         f"SEDI (Ferro & Stephenson, 2011, Weather and Forecasting, "
-        f"doi:10.1175/WAF-D-10-05030.1) is built for rare events specifically - 0 is no "
-        f"skill, 1 is perfect, and unlike CSI/HSS it does not collapse toward a fixed "
-        f"value as the bust rate shrinks. The relative economic value curve (Richardson, "
+        f"doi:10.1175/WAF-D-10-05030.1) is built for rare events - 0 is no skill, 1 is "
+        f"perfect. Each variable's own bust threshold is rare by construction (its "
+        f"90th percentile), but the ~43% aggregate bust rate scored here is not (1 - "
+        f"0.9**8 before dependence) - reported anyway since it costs nothing to compute "
+        f"correctly at any base rate, without the strongest case for it. The relative "
+        f"economic value curve (Richardson, "
         f"2000, doi:10.1002/qj.49712656313; Shanker, Sarkar & Mamgain, 2024, "
         f"doi:10.1002/qj.4674) is swept over cost-loss ratios in the run artifact, not "
         f"this table - a single number cannot represent a curve.\n\n"
