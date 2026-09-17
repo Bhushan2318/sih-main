@@ -163,30 +163,53 @@ def _feature_columns_for(cached_paths: dict, years: list) -> list:
 
 def attach_hbf_column(df: "pd.DataFrame", hbf: dict,
                       out_col: str = "historical_bust_frequency_region_season") -> "pd.DataFrame":
-    """Attach the per-(region, season) historical bust frequency feature, vectorized -
-    the replacement for `df[out_col] = [hbf.get(k, np.nan) for k in key]`, which every
-    call site in this file used until the real crash 2026-09-15 (v10): that builds a
-    length-N Python list of boxed tuples and then a length-N list of boxed floats before
-    pandas can convert either back to an array, and on a 76.7M-row year that conversion
-    itself needs a large contiguous allocation - inside an already-isolated per-year
-    subprocess, proving process isolation alone does not fix an operation that is simply
-    too expensive within one call.
+    """Attach the per-(region, season) historical bust frequency feature, vectorized in
+    category-code space - never materialising a per-row string array, at any row count.
 
-    A merge on a small, separate two-column string key frame does the same lookup in
-    vectorized C code, and touches none of `df`'s other columns - unlike a `.copy()` or
-    `.assign()` on `df` itself, `how="left"` on a key frame whose right side (`hbf`,
-    built from a dict) never has duplicate keys preserves row order and row count
-    exactly, so `merged[out_col].to_numpy()` lines up positionally with `df` without
-    needing to reindex anything."""
+    History: the original `[hbf.get(k, np.nan) for k in key]` list comprehension was
+    replaced (2026-09-15, v10) by a merge on a `region_id.astype(str)` key frame, which
+    fixed the boxed-list allocation but not the underlying problem - `.astype(str)` on a
+    Categorical still builds a genuinely dense fixed-width unicode array, one entry per
+    row. That merge version worked in `pooled_stats` (a thin, freshly-read 2-3 column
+    frame) but real crash 2026-09-17: called here on the FULL wide per-year training
+    frame - already resident with every feature column - the same `.astype(str)` needed
+    an 8.27 GiB contiguous allocation for one 76.5M-row year and hit `ArrayMemoryError`,
+    the same "free but not contiguous" signature as every earlier crash in this file.
+
+    `region_id`/`season` are already Categorical (contracts.py), which means the actual
+    per-row data is already a small int codes array plus a tiny categories index - the
+    string array the merge approach built was pure waste. Building a `region x season`
+    lookup table (at most a few thousand cells - 666 districts x a handful of seasons,
+    independent of row count) and indexing it with the existing `.cat.codes` arrays does
+    the identical lookup with zero additional string materialisation, at any scale."""
+    out = np.full(len(df), np.nan, dtype=np.float64)
     if not hbf:
-        df[out_col] = np.nan
+        df[out_col] = out
         return df
-    hbf_df = pd.DataFrame(
-        [(r, s, v) for (r, s), v in hbf.items()], columns=["region_id", "season", out_col])
-    key = pd.DataFrame({"region_id": df["region_id"].astype(str).to_numpy(),
-                        "season": df["season"].astype(str).to_numpy()})
-    merged = key.merge(hbf_df, on=["region_id", "season"], how="left")
-    df[out_col] = merged[out_col].to_numpy()
+
+    def _codes_and_categories(col: "pd.Series"):
+        if isinstance(col.dtype, pd.CategoricalDtype):
+            return col.cat.codes.to_numpy(), col.cat.categories
+        # Not categorical (e.g. a hand-built test frame) - the fallback path is the one
+        # place this still costs a string array, sized to the number of DISTINCT values,
+        # not the row count, so it stays cheap even here.
+        cat = col.astype(str).astype("category")
+        return cat.cat.codes.to_numpy(), cat.cat.categories
+
+    region_codes, region_cats = _codes_and_categories(df["region_id"])
+    season_codes, season_cats = _codes_and_categories(df["season"])
+    region_pos = {r: i for i, r in enumerate(region_cats)}
+    season_pos = {s: i for i, s in enumerate(season_cats)}
+
+    lut = np.full((len(region_cats), len(season_cats)), np.nan, dtype=np.float64)
+    for (r, s), v in hbf.items():
+        ri, si = region_pos.get(r), season_pos.get(s)
+        if ri is not None and si is not None:
+            lut[ri, si] = v
+
+    valid = (region_codes >= 0) & (season_codes >= 0)
+    out[valid] = lut[region_codes[valid], season_codes[valid]]
+    df[out_col] = out
     return df
 
 
