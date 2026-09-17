@@ -1,4 +1,4 @@
-"""D1/D2/D3 wiring: scripts/run_baselines.py must actually call into
+"""D1/D2/D3/D4 wiring: scripts/run_baselines.py must actually call into
 app/ml/verification.py and put the results where /api/model/status already serves
 baselines.json from - not just have the functions exist unused. See
 app/ml/verification.py for the metric formulas themselves and their own hand-computed
@@ -78,3 +78,12 @@ def test_metrics_includes_corp_reliability_and_brier_decomposition():
     assert bd["miscalibration"] - bd["discrimination"] + bd["uncertainty"] == \
         pytest.approx(bd["brier"], abs=1e-9)
     assert bd["miscalibration"] >= -1e-9
+
+
+def test_metrics_includes_sedi_and_economic_value():
+    y, proba, ref, cycles = _fixture()
+    m = _metrics(y, proba, ref, cycles)
+    assert "sedi" in m and "economic_value" in m
+    assert -1.0 <= m["sedi"] <= 1.0
+    assert len(m["economic_value"]) >= 1
+    assert all(row["value"] >= -1e-9 for row in m["economic_value"])
