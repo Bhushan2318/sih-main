@@ -27,11 +27,34 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
+
+# Must be set before CUDA initialises - torch.use_deterministic_algorithms(True) needs it
+# for cuBLAS's GEMM op or raises RuntimeError naming cuBLAS explicitly at first use, not
+# at import time. Diagnosed 2026-09-17 (docs/known-issues.md): fit_streaming's weights
+# were not bit-reproducible on CUDA with the same seed; this was the actual cause, not the
+# two things suspected first (cuDNN convolution, DistrictPooling's torch.sparse.mm -
+# neither needed a fix once this was set). setdefault, not assignment: an operator running
+# this under their own CUBLAS_WORKSPACE_CONFIG keeps it.
+os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+
+# Windows only, load-bearing: torch must be the first thing in the process to touch its
+# own OpenMP/MKL runtime, or a later torch.onnx.export() (app.ml.cnn.export_encoder)
+# fails with a generic "DLL initialization routine failed" from onnx's compiled
+# extension - see the matching comment in tests/conftest.py for the full story and the
+# minimal repro. `app.ml.classifier` below imports pandas/xgboost before this module
+# otherwise would ever import torch (done lazily, inside functions, in app.ml.cnn), so
+# the guard belongs here, not there. A no-op today - nothing here calls export_encoder
+# yet - kept so wiring it in later doesn't reopen this on Windows.
+try:
+    import torch  # noqa: F401
+except ImportError:
+    pass
 
 from app.ingestion import grid_fields as gf
 from app.ml import classifier as clf_mod
@@ -58,6 +81,24 @@ class CNNReport:
     metrics: dict = field(default_factory=dict)
     seconds: float = 0.0
     error: str | None = None
+    device: str = ""
+
+
+def resolve_device(requested: "str | torch.device | None" = None) -> "torch.device":
+    """CUDA when available, unless the caller pins one explicitly.
+
+    Silently falling back to CPU when the caller asked for `cuda` by name would let a run
+    look GPU-trained in its own report when it was not - so an explicit `cuda` request on
+    a machine without one raises rather than degrading quietly.
+    """
+    import torch
+
+    if requested is not None:
+        device = torch.device(requested)
+        if device.type == "cuda" and not torch.cuda.is_available():
+            raise RuntimeError(f"--device {requested} requested but CUDA is not available")
+        return device
+    return torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
 
 def load_bundles(grid_dir: Path) -> dict:
@@ -67,6 +108,120 @@ def load_bundles(grid_dir: Path) -> dict:
         b = gf.load_bundle(p)
         out[str(b.init_date)] = b
     return out
+
+
+@dataclass
+class FieldIndex:
+    """Where each sample lives, and its label - never the fields themselves.
+
+    Stacking every sample into one array was 14.3 GB for a single year (X at
+    [3650, 24, 145, 141] float32 is 7.2 GB and the mask another 7.2), on a machine with
+    16 GB, and five years would be 72 GB. It passed its tests because those used ten
+    synthetic samples.
+
+    A cycle's bundle holds all ten of its lead days, so one file read yields ten samples.
+    Batching by cycle keeps the working set at tens of megabytes and makes the number of
+    years irrelevant to memory.
+    """
+
+    samples: list          # (bundle_path, lead_index)
+    labels: np.ndarray     # [n, districts]
+    aux: np.ndarray        # [n, districts]
+    extra: np.ndarray      # [n, districts, 1]
+    cycles: np.ndarray     # [n] init date per sample
+    n_channels: int
+    norm: "Normalizer | None" = None
+
+    def _load(self, i: int) -> np.ndarray:
+        path, li = self.samples[i]
+        bundle = gf.load_bundle(path)
+        return bundle.values[:, li].reshape(-1, len(bundle.lats), len(bundle.lons))
+
+    def fit_normalizer(self, idx: np.ndarray) -> "Normalizer":
+        """Channel statistics over the given samples only, accumulated one cycle at a
+        time. Fitting over the whole archive would leak the test period's climate into
+        training."""
+        from app.ml.cnn import Normalizer
+
+        n = np.zeros(self.n_channels)
+        total = np.zeros(self.n_channels)
+        sq = np.zeros(self.n_channels)
+        for i in idx:
+            f = self._load(int(i))
+            finite = np.isfinite(f)
+            n += finite.sum(axis=(1, 2))
+            total += np.where(finite, f, 0.0).sum(axis=(1, 2))
+            sq += np.where(finite, f.astype(np.float64) ** 2, 0.0).sum(axis=(1, 2))
+        mean = np.divide(total, n, out=np.zeros_like(total), where=n > 0)
+        var = np.divide(sq, n, out=np.zeros_like(sq), where=n > 0) - mean ** 2
+        std = np.sqrt(np.maximum(var, 0.0))
+        std = np.where(np.isfinite(std) & (std > 1e-6), std, 1.0)
+        self.norm = Normalizer(mean.astype(np.float32), std.astype(np.float32))
+        return self.norm
+
+    def batches(self, idx: np.ndarray, shuffle: bool = True, rng=None):
+        """One batch per cycle: every lead day of one bundle, from one file read."""
+        by_cycle: dict = {}
+        for i in idx:
+            by_cycle.setdefault(self.samples[int(i)][0], []).append(int(i))
+        order = list(by_cycle)
+        if shuffle:
+            (rng or np.random.default_rng()).shuffle(order)
+        for path in order:
+            members = by_cycle[path]
+            bundle = gf.load_bundle(path)
+            raw = np.stack([bundle.values[:, self.samples[i][1]].reshape(
+                -1, len(bundle.lats), len(bundle.lons)) for i in members])
+            if self.norm is not None:
+                x, m = self.norm.apply(raw)
+                x = np.nan_to_num(x)
+            else:
+                x, m = np.nan_to_num(raw), np.isfinite(raw).astype(np.float32)
+            yield (x.astype(np.float32), m.astype(np.float32),
+                   self.extra[members], self.labels[members], self.aux[members])
+
+
+def build_index(grid_dir, events, region_ids: list[str]) -> FieldIndex:
+    """Index the samples without reading a single field into memory."""
+    import pandas as pd
+
+    pos = {r: i for i, r in enumerate(region_ids)}
+    ev = events.copy()
+    ev["init_date"] = pd.to_datetime(ev["init_date"]).dt.date.astype(str)
+    ev["_ri"] = ev["region_id"].astype(str).map(pos)
+    ev = ev[ev["_ri"].notna()]
+    ev["_ri"] = ev["_ri"].astype(int)
+
+    n_reg = len(region_ids)
+    samples, labels, aux, extra, cycles = [], [], [], [], []
+    n_channels = 0
+    for path in sorted(Path(grid_dir).glob("*.npz")):
+        init = path.stem
+        rows = ev[ev["init_date"] == init]
+        if rows.empty:
+            continue
+        with np.load(path, allow_pickle=False) as z:
+            leads = [int(v) for v in z["leads"]]
+            n_channels = int(z["data_hi"].shape[0]) * int(z["data_hi"].shape[2])
+        for li, lead in enumerate(leads):
+            lr = rows[rows["lead_time_days"] == lead]
+            if lr.empty:
+                continue
+            y = np.full(n_reg, np.nan, dtype=np.float32)
+            a = np.full(n_reg, np.nan, dtype=np.float32)
+            y[lr["_ri"].to_numpy()] = lr["y_bust"].to_numpy(dtype=np.float32)
+            if "bust_ratio" in lr:
+                a[lr["_ri"].to_numpy()] = np.log1p(
+                    np.clip(lr["bust_ratio"].to_numpy(dtype=np.float64), 0, None))
+            samples.append((path, li))
+            labels.append(y)
+            aux.append(a)
+            extra.append(np.full((n_reg, 1), (lead - 5.5) / 4.5, dtype=np.float32))
+            cycles.append(init)
+    return FieldIndex(samples, np.stack(labels) if labels else np.zeros((0, n_reg), np.float32),
+                      np.stack(aux) if aux else np.zeros((0, n_reg), np.float32),
+                      np.stack(extra) if extra else np.zeros((0, n_reg, 1), np.float32),
+                      np.array(cycles), n_channels)
 
 
 def build_arrays(bundles: dict, events, region_ids: list[str]):
@@ -113,6 +268,113 @@ def build_arrays(bundles: dict, events, region_ids: list[str]):
     return X, np.stack(EX), np.stack(Y), np.stack(AUX), np.array(CYC)
 
 
+def fit_streaming(seed, index: "FieldIndex", tr_idx, va_idx,
+                  epochs=DEFAULT_EPOCHS, patience=DEFAULT_PATIENCE, lr=DEFAULT_LR,
+                  region_ids=None, log=True, device=None):
+    """Train from the index, reading one cycle at a time.
+
+    Same loop as _fit_one, but the fields never all exist at once: a batch is one bundle's
+    lead days, loaded, used and dropped. Peak memory is a batch rather than a year, which
+    is what lets this run on a 16 GB runner and what makes five years possible at all.
+
+    `device` moves the model and every batch onto it (CUDA when available by default -
+    see `resolve_device`). `best_state` is cloned before moving anything back, so the
+    checkpoint restored at the end lives on the same device the model already trained on.
+    """
+    import time as _t
+
+    import torch
+    import torch.nn as nn
+    from app.ml.cnn import BustCNN
+
+    device = resolve_device(device)
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    rng = np.random.default_rng(seed)
+    # Same seed must give bit-identical weights (E1, docs/team-brief-2026-09-15-updated.md
+    # Section 6) - true on CPU by default, not true on CUDA without this. deterministic
+    # algorithms cost some speed; this model is 43,969 parameters and already the slower
+    # of the two model families to iterate, so the trade is worth it for a result that has
+    # to be trusted, not just fast.
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    torch.use_deterministic_algorithms(True)
+    model = BustCNN(in_channels=index.n_channels, region_ids=region_ids).to(device)
+    opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
+    bce = nn.BCEWithLogitsLoss(reduction="none")
+    huber = nn.HuberLoss(reduction="none")
+
+    best, best_state, since = np.inf, None, 0
+    for ep in range(epochs):
+        t0 = _t.time()
+        model.train()
+        last = 0.0
+        for x, m, ex, y, aux in index.batches(tr_idx, shuffle=True, rng=rng):
+            opt.zero_grad()
+            xb, mb = torch.from_numpy(x).to(device), torch.from_numpy(m).to(device)
+            yb, ab = torch.from_numpy(y).to(device), torch.from_numpy(aux).to(device)
+            logits = model(xb, mb, torch.from_numpy(ex).to(device))
+            keep = ~torch.isnan(yb)
+            if not keep.any():
+                continue
+            loss = bce(logits[keep], yb[keep]).mean()
+            akeep = ~torch.isnan(ab)
+            if akeep.any():
+                loss = loss + AUX_WEIGHT * huber(
+                    torch.sigmoid(logits[akeep]), torch.tanh(ab[akeep])).mean()
+            loss.backward()
+            opt.step()
+            last = float(loss)
+
+        model.eval()
+        num = den = 0.0
+        with torch.no_grad():
+            for x, m, ex, y, aux in index.batches(va_idx, shuffle=False):
+                p = torch.sigmoid(model(torch.from_numpy(x).to(device),
+                                        torch.from_numpy(m).to(device),
+                                        torch.from_numpy(ex).to(device))).cpu().numpy()
+                keep = ~np.isnan(y)
+                num += float(((p[keep] - y[keep]) ** 2).sum())
+                den += int(keep.sum())
+        vb = num / max(den, 1)
+        if log:
+            print(f"    epoch {ep+1:>2}  train-loss {last:.4f}  val-Brier {vb:.4f}  "
+                  f"{_t.time()-t0:.0f}s", flush=True)
+        if vb < best - 1e-5:
+            best, since = vb, 0
+            best_state = {k: v.clone() for k, v in model.state_dict().items()}
+        else:
+            since += 1
+            if since >= patience:
+                break
+
+    if best_state is not None:
+        model.load_state_dict(best_state)
+    model.eval()
+    return model, best
+
+
+def predict_streaming(model, index: "FieldIndex", idx, device=None) -> tuple:
+    """Probabilities and labels for the given samples, in index order.
+
+    Defaults to wherever `model` already lives, so a caller that trained on CUDA does not
+    have to repeat the device at every call site; pass it explicitly to score a model on
+    a different device than it trained on (the CPU-vs-CUDA parity test does this).
+    """
+    import torch
+
+    device = device or next(model.parameters()).device
+    ps, ys = [], []
+    with torch.no_grad():
+        for x, m, ex, y, aux in index.batches(idx, shuffle=False):
+            p = torch.sigmoid(model(torch.from_numpy(x).to(device),
+                                    torch.from_numpy(m).to(device),
+                                    torch.from_numpy(ex).to(device))).cpu().numpy()
+            ps.append(p)
+            ys.append(y)
+    return np.concatenate(ps), np.concatenate(ys)
+
+
 def _fit_one(seed, Xtr, Mtr, EXtr, Ytr, AUXtr, Xva, Mva, EXva, Yva,
              epochs, patience, lr, region_ids):
     import torch
@@ -121,7 +383,16 @@ def _fit_one(seed, Xtr, Mtr, EXtr, Ytr, AUXtr, Xva, Mva, EXva, Yva,
 
     torch.manual_seed(seed)
     np.random.seed(seed)
-    model = BustCNN(in_channels=Xtr.shape[1] // 2, region_ids=region_ids)
+    # Same reproducibility requirement as fit_streaming (E1) - this path is CPU-only
+    # today (never moved to a device), so cuDNN/cuBLAS nondeterminism does not currently
+    # apply, but setting it here too means it stays true if that ever changes.
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    torch.use_deterministic_algorithms(True)
+    # Xtr carries the DATA channels; BustCNN doubles that itself because forward
+    # concatenates the mask. Halving here built an encoder for half the channels it would
+    # be handed, and nothing failed until the first batch reached the first convolution.
+    model = BustCNN(in_channels=Xtr.shape[1], region_ids=region_ids)
 
     opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
     bce = nn.BCEWithLogitsLoss(reduction="none")
@@ -138,7 +409,9 @@ def _fit_one(seed, Xtr, Mtr, EXtr, Ytr, AUXtr, Xva, Mva, EXva, Yva,
                    torch.from_numpy(AUX[j]))
 
     best, best_state, since = np.inf, None, 0
-    for _ in range(epochs):
+    import time as _t
+    for _ep in range(epochs):
+        _t0 = _t.time()
         model.train()
         for xb, mb, eb, yb, ab in batches(Xtr, Mtr, EXtr, Ytr, AUXtr):
             opt.zero_grad()
@@ -165,6 +438,8 @@ def _fit_one(seed, Xtr, Mtr, EXtr, Ytr, AUXtr, Xva, Mva, EXva, Yva,
             # Selected on Brier, not accuracy: this ships a probability to someone
             # deciding whether to warn, so calibration is the objective.
             vb = ((torch.sigmoid(vl[keep]) - vy[keep]) ** 2).mean().item()
+        print(f"    epoch {_ep+1:>2}  train-loss {float(loss):.4f}  val-Brier {vb:.4f}  "
+              f"{_t.time()-_t0:.0f}s", flush=True)
         if vb < best - 1e-5:
             best, since = vb, 0
             best_state = {k: v.clone() for k, v in model.state_dict().items()}
@@ -190,9 +465,32 @@ def _predict(model, X, M, EX, chunk=8) -> np.ndarray:
     return np.concatenate(out)
 
 
+def splits_from_eval(ev) -> dict:
+    """Cycle lists per split, read from the tabular run's own scored events.
+
+    The two families are only comparable on identical rows, so the CNN does not choose its
+    own split - it takes the one `train_pipeline --emit-eval` scored. Dates come back as
+    'YYYY-MM-DD' because that is how grid bundles are keyed (path.stem); str() of a pandas
+    Timestamp would carry a time and match nothing. A cycle in two splits is leakage and is
+    refused rather than silently assigned to one.
+    """
+    import pandas as pd
+
+    days = pd.to_datetime(ev["init_date"]).dt.strftime("%Y-%m-%d")
+    per_cycle = pd.DataFrame({"day": days, "split": ev["split"].astype(str)})
+    counts = per_cycle.drop_duplicates().groupby("day")["split"].nunique()
+    shared = sorted(counts[counts > 1].index)
+    if shared:
+        raise ValueError(f"{len(shared)} cycles appear in more than one split, e.g. "
+                         f"{', '.join(shared[:5])}")
+    return {name: sorted(set(days[per_cycle["split"] == name]))
+            for name in ("train", "val", "test")}
+
+
 def train(grid_dir: Path, events, splits: dict, region_ids: list[str],
           seeds: int = DEFAULT_SEEDS, epochs: int = DEFAULT_EPOCHS,
-          patience: int = DEFAULT_PATIENCE, lr: float = DEFAULT_LR) -> CNNReport:
+          patience: int = DEFAULT_PATIENCE, lr: float = DEFAULT_LR,
+          device=None) -> CNNReport:
     t0 = time.time()
     try:
         import torch  # noqa: F401
@@ -200,19 +498,21 @@ def train(grid_dir: Path, events, splits: dict, region_ids: list[str],
         return CNNReport(status="skipped",
                          error="torch is not installed; pip install -r requirements-train.txt")
 
-    from app.ml.cnn import Normalizer
+    device = resolve_device(device)
 
-    bundles = load_bundles(grid_dir)
-    if not bundles:
+    if not any(Path(grid_dir).glob("*.npz")):
         return CNNReport(status="skipped",
                          error=f"no grid bundles in {grid_dir}; the fetch must run first")
 
-    built = build_arrays(bundles, events, region_ids)
-    if built is None:
+    # Index, do not load. A decoded bundle is ~196 MB (12 variables x 10 leads x 2 stats on
+    # 145x141 float32), so load_bundles + build_arrays held ~71 GB for one year before a
+    # single epoch. The index holds paths and labels; each batch reads one cycle.
+    index = build_index(grid_dir, events, region_ids)
+    if not index.samples:
         return CNNReport(status="skipped",
                          error="no bundle matched a scored event; check init_date alignment")
-    X, EX, Y, AUX, CYC = built
 
+    CYC = np.asarray(index.cycles)
     tr = np.isin(CYC, [str(c) for c in splits.get("train", [])])
     va = np.isin(CYC, [str(c) for c in splits.get("val", [])])
     te = np.isin(CYC, [str(c) for c in splits.get("test", [])])
@@ -226,35 +526,36 @@ def train(grid_dir: Path, events, splits: dict, region_ids: list[str],
                    f"if it measured the model. Refusing rather than publishing it."),
             seconds=time.time() - t0)
 
+    tr_idx, va_idx, te_idx = (np.flatnonzero(m) for m in (tr, va, te))
+
     # Normaliser fit on training cycles only - whole-archive statistics leak the test
     # period's climate into training.
-    norm = Normalizer.fit(X[tr])
-    Xn, M = norm.apply(X)
-    Xn = np.nan_to_num(Xn)
+    index.fit_normalizer(tr_idx)
 
-    models, val_briers = [], []
+    models = []
     for s in range(seeds):
-        m, vb = _fit_one(s, Xn[tr], M[tr], EX[tr], Y[tr], AUX[tr],
-                         Xn[va], M[va], EX[va], Y[va], epochs, patience, lr, region_ids)
+        m, _ = fit_streaming(s, index, tr_idx, va_idx, epochs=epochs, patience=patience,
+                             lr=lr, region_ids=region_ids, device=device)
         models.append(m)
-        val_briers.append(vb)
 
-    def scored(mask):
-        if not mask.any():
+    def scored(idx):
+        if len(idx) == 0:
             return {}
         # Seed ensemble: averaging probabilities cuts variance and improves calibration,
         # which is nearly free at this model size.
-        proba = np.mean([_predict(m, Xn[mask], M[mask], EX[mask]) for m in models], axis=0)
-        keep = ~np.isnan(Y[mask])
-        return clf_mod._evaluate(Y[mask][keep], proba[keep])
+        runs = [predict_streaming(m, index, idx, device=device) for m in models]
+        proba = np.mean([p for p, _ in runs], axis=0)
+        y = runs[0][1]
+        keep = ~np.isnan(y)
+        return clf_mod._evaluate(y[keep], proba[keep])
 
-    metrics = {k: scored(m) for k, m in (("train", tr), ("val", va), ("test", te))}
+    metrics = {k: scored(i) for k, i in (("train", tr_idx), ("val", va_idx), ("test", te_idx))}
     n_params = sum(p.numel() for p in models[0].parameters())
     return CNNReport(
         status="success", seeds=seeds,
         train_cycles=n_tr_cycles, val_cycles=len(set(CYC[va])), test_cycles=len(set(CYC[te])),
         n_train_samples=int(tr.sum()), parameters=int(n_params),
-        metrics=metrics, seconds=time.time() - t0)
+        metrics=metrics, seconds=time.time() - t0, device=str(device))
 
 
 def format_comparison(cnn: CNNReport, xgb_metrics: dict) -> str:
@@ -287,29 +588,52 @@ def main() -> int:
     ap.add_argument("--seeds", type=int, default=DEFAULT_SEEDS)
     ap.add_argument("--epochs", type=int, default=DEFAULT_EPOCHS)
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--run-id", help="tabular run whose eval events to train against "
+                    "(default: the most recent in data/analysis/eval_events)")
+    ap.add_argument("--device", default=None,
+                    help="cuda | cpu (default: cuda if available, else cpu)")
     args = ap.parse_args()
 
     from dataclasses import asdict
 
-    from app.ml import inference, registry
+    import pandas as pd
+
+    from app.config import settings
+    from app.db.base import resolve_path
+    from app.ml import registry
     from app.utils.india_districts import load_registry
 
-    state = inference.load_state() if hasattr(inference, "load_state") else None
-    events = getattr(state, "events", None)
-    if events is None:
-        print("No scored events available - train the tabular pipeline first "
-              "(python -m app.ml.train_pipeline).")
+    # Events and splits come from the file the tabular run published with --emit-eval.
+    # This used to call inference.load_state(), which does not exist, and pass {} as the
+    # splits - so the CLI could not have produced a result.
+    eval_dir = resolve_path(settings.data_dir) / "analysis" / "eval_events"
+    if args.run_id:
+        path = eval_dir / f"{args.run_id}.parquet"
+    else:
+        found = sorted(eval_dir.glob("run_*.parquet"))
+        path = found[-1] if found else eval_dir / "<none>"
+    if not path.exists():
+        print(f"No eval events at {path} - run "
+              "python -m app.ml.train_pipeline --emit-eval first.")
         return 1
+    run_id = path.stem
+    events = pd.read_parquet(path)
+    splits = splits_from_eval(events)
+    print(f"events: {path.name}  {len(events):,} rows  cycles train/val/test = "
+          f"{len(splits['train'])}/{len(splits['val'])}/{len(splits['test'])}")
 
-    rep = train(args.grid_dir, events, {}, [d.region_id for d in load_registry()],
-                seeds=args.seeds, epochs=args.epochs)
-    print(f"CNN: status={rep.status} {rep.error or ''}")
+    rep = train(args.grid_dir, events, splits, [d.region_id for d in load_registry()],
+                seeds=args.seeds, epochs=args.epochs, device=args.device)
+    print(f"CNN: status={rep.status} device={rep.device} {rep.error or ''}")
     if rep.status == "success":
         print(f"  {rep.train_cycles} train cycles, {rep.n_train_samples} samples, "
               f"{rep.parameters:,} parameters, {rep.seeds} seeds, {rep.seconds:.0f}s")
-        cur = registry.current_run_id()
-        xgb = (registry.load_metrics(cur) or {}).get("classifier", {}) if cur else {}
+        # Compared against the run that scored these rows, not whichever run is current:
+        # if the gate refused that run, current is a different model on different rows.
+        xgb = (registry.load_metrics(run_id) or {}).get("classifier", {})
         print(format_comparison(rep, xgb))
+    (registry.run_dir(run_id) / "cnn.json").write_text(
+        json.dumps(asdict(rep), indent=2, default=str))
     if args.json:
         print(json.dumps(asdict(rep), indent=2, default=str))
     return 0 if rep.status in ("success", "skipped") else 1

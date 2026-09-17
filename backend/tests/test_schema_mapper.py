@@ -153,3 +153,20 @@ def test_source_profile_exact_reuse(session):
     assert mr2.profile_match == "exact"
     assert _prop(mr2, "t2m_c").decision == "confirmed"
     assert mr2.auto_accepted
+
+
+# --------------------------------------------------------------------------- district grain
+
+def test_region_id_column_is_the_region_dimension():
+    """District-grain files key rows by `region_id`. The dimension scorer only matched a
+    single-token synonym exactly, so 'region id' scored 0 and the column came back
+    unmapped - every row was then placed by coordinate alone. Fixture: the first rows of
+    a REAL 2018 fetch part (data/samples/parts-2018/), skipped if not on disk."""
+    from pathlib import Path
+    part = Path(__file__).resolve().parents[1] / "data/samples/parts-2018/2018-07-15.parquet"
+    if not part.exists():
+        pytest.skip("real 2018 part not on disk")
+    df = pd.read_parquet(part).head(200)
+    mr = SchemaMapper(filename_hint="gefs_2018_chunk_0000.parquet").map_table(df)
+    p = _prop(mr, "region_id")
+    assert p.role == "dimension" and p.suggested_variable == "region"

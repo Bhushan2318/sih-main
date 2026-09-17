@@ -19,6 +19,10 @@ pyarrow>=14.0,<17.0
 xgboost>=2.0,<2.1
 scikit-learn>=1.3,<1.5
 shap>=0.44,<0.46
+# Not new weight: scikit-learn already pulls this in transitively at the pin above.
+# Declared explicitly because app/ml/verification.py calls scipy.stats directly
+# (binormal Z-AUC needs the probit transform) rather than only through sklearn.
+scipy>=1.10,<1.18
 
 sqlalchemy>=2.0,<2.1
 

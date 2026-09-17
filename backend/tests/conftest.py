@@ -20,6 +20,24 @@ from pathlib import Path
 
 import pytest
 
+# Windows only, load-bearing: import torch before pandas, anywhere in the process, or a
+# *later* torch.onnx.export() fails with "DLL load failed while importing
+# onnx_cpp2py_export: A dynamic link library (DLL) initialization routine failed" - a
+# generic Windows message that gives no hint it's an import-order issue. Reproduced with
+# a 2-import, no-pytest script: `import pandas; import torch; torch.onnx.export(...)`
+# fails every time; swapping the first two lines makes it pass every time. Not
+# Smart-App-Control, not a protobuf pin, not pytest - torch and pandas/numpy each bundle
+# their own OpenMP/MKL runtime, and whichever loads first wins the process; onnx's
+# compiled extension only surfaces the conflict later, at its own DllMain. Below,
+# `_ensure_sample_csvs()` imports pandas before any test module gets a chance to import
+# torch first, so this has to happen here, before that call, not in app/ml/cnn.py.
+# Harmless where torch is absent (the training extra) or on a platform where load order
+# never mattered. Measured 2026-09-11 on the RTX 4060 Windows box.
+try:
+    import torch  # noqa: F401
+except ImportError:
+    pass
+
 _TMP = Path(tempfile.mkdtemp(prefix="forecastguard-test-"))
 os.environ.setdefault("DATA_DIR", str(_TMP))
 os.environ["DB_PATH"] = str(_TMP / "metadata.db")
@@ -76,6 +94,32 @@ def iter_sample_files():
         for p in sorted(Path(root).rglob("*")):
             if p.is_file() and p.suffix.lower() in exts and "_gefs_parts" not in p.parts:
                 yield p
+
+
+# Samples this big are not parsed by the parametrised parser test. The daily-density
+# fetch writes a full year into data/samples - 675 MB as parquet and 11 GB as CSV for
+# 2017 - and pulling 12.15 million rows into pandas gets the whole pytest process
+# SIGKILLed. It killed the suite twice at 85% before anyone worked out why, because the
+# wrapper's exit code hid the 137.
+#
+# Nothing is lost by skipping them: the test proves that each FORMAT parses, and the
+# 1.6 MB single-year samples are the identical format from the identical writer. What
+# would be lost is the suite.
+PARSE_SIZE_CAP_BYTES = 100 * 1024 * 1024
+
+
+def oversized_samples() -> list:
+    """Sample files excluded from the parser sweep, largest first."""
+    return sorted((p for p in iter_sample_files()
+                   if p.stat().st_size > PARSE_SIZE_CAP_BYTES),
+                  key=lambda p: -p.stat().st_size)
+
+
+def iter_parseable_samples():
+    """Every sample the parser test should actually open."""
+    for p in iter_sample_files():
+        if p.stat().st_size <= PARSE_SIZE_CAP_BYTES:
+            yield p
 
 
 def find_sample(*name_fragments: str) -> Path | None:

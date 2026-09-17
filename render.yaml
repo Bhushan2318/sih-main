@@ -18,6 +18,11 @@ services:
     region: singapore
     dockerfilePath: ./Dockerfile
     dockerContext: .
+    # Deploys are dispatched deliberately, never fired by a push. Set in the dashboard on
+    # 2026-09-10 and recorded here too, because a dashboard setting is invisible in review
+    # and is silently restored if the service is ever recreated from this blueprint -
+    # which is the whole reason this file exists.
+    autoDeploy: false
     # Cheap, and true even before a model exists - it reports model_trained either way.
     healthCheckPath: /api/health
     envVars:

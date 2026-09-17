@@ -112,6 +112,63 @@ def test_split_by_cycle_is_time_ordered_and_disjoint():
     assert max(tr) < min(va) < max(va) < min(te)
 
 
+def test_split_by_year_holds_out_the_whole_test_year():
+    """A cross-year split: everything in `test_year` is held out entire, and the years
+    before it still produce a train/val split - so training on 2017 and testing on 2018
+    can ask 'has this model ever seen this year's weather' rather than 'has it seen the
+    last few weeks of the year it trained on'."""
+    from app.ml.train_pipeline import _split_by_year
+
+    cycles = pd.to_datetime(
+        [f"2017-{m:02d}-01" for m in range(1, 13)] +
+        [f"2018-{m:02d}-01" for m in range(1, 13)])
+    paired = pd.DataFrame({"init_date": cycles})
+    tr, va, te = _split_by_year(paired, test_year=2018)
+
+    assert te == {c for c in cycles if c.year == 2018}
+    assert tr and va, "2017 must still produce a non-empty train and a non-empty val split"
+    assert not (tr & va) and not (tr & te) and not (va & te)
+    assert set(tr | va | te) == set(cycles)
+    assert max(tr) < min(va), "train must precede val within the pre-test-year cycles"
+    assert max(va) < min(te), "val must precede every cycle of the held-out year"
+
+
+def test_split_by_year_with_nothing_before_it_leaves_train_and_val_empty():
+    """If the only data on disk is the test year itself, there is nothing to train on -
+    that must come back as an empty train/val, not raise or silently reuse test cycles."""
+    from app.ml.train_pipeline import _split_by_year
+
+    cycles = pd.to_datetime([f"2018-{m:02d}-01" for m in range(1, 13)])
+    paired = pd.DataFrame({"init_date": cycles})
+    tr, va, te = _split_by_year(paired, test_year=2018)
+    assert not tr and not va
+    assert te == set(cycles)
+
+
+def test_choose_split_dispatches_to_the_year_split_when_given_one(monkeypatch):
+    """Plumbing only: full_retrain must reach for _split_by_year, not the default
+    fractional _split_by_cycle, whenever a caller asks for a specific held-out year -
+    tested against the small dispatch function full_retrain calls, not the whole
+    pipeline, so this cannot fail for a reason unrelated to which split was chosen."""
+    from app.ml import train_pipeline as tp
+
+    paired = pd.DataFrame({"init_date": pd.to_datetime(["2017-01-01"])})
+    monkeypatch.setattr(tp, "_split_by_year", lambda p, test_year: ("year-split", test_year))
+    monkeypatch.setattr(tp, "_split_by_cycle",
+                        lambda p: (_ for _ in ()).throw(
+                            AssertionError("used the fractional split, not the year split")))
+
+    assert tp._choose_split(paired, test_year=2018) == ("year-split", 2018)
+
+
+def test_choose_split_defaults_to_the_fractional_split():
+    from app.ml.train_pipeline import _choose_split, _split_by_cycle
+
+    paired = pd.DataFrame({"init_date": pd.to_datetime(
+        [f"2019-{m:02d}-01" for m in range(1, 13)])})
+    assert _choose_split(paired, test_year=None) == _split_by_cycle(paired)
+
+
 def test_oof_folds_never_split_a_forecast_cycle(_ingested_slice):
     """The classifier trains on out-of-fold regressor predictions. Cycles 24 h apart are
     heavily autocorrelated, so a random KFold would put near-duplicate rows on both sides
@@ -148,13 +205,16 @@ def test_thresholds_are_fit_on_the_train_split_only(_retrain):
     full-data ones - so this fails if anyone ever widens the frame it is fitted on.
     """
     from app.ml.thresholds import compute_error_thresholds
-    from app.ml.train_pipeline import _event_mean_error, _split_by_cycle
+    from app.ml.train_pipeline import _downcast_paired, _event_mean_error, _split_by_cycle
     from app.storage.parquet_store import read_dataset
 
     report = _retrain
     assert report.status == "success", report.error
 
-    paired = fe.build_training_frame(read_dataset())
+    # The pipeline fits thresholds on the downcast frame (float32), so recompute on that
+    # same representation. On float64 the pressure percentile differs in the sixth
+    # significant digit (2.50132446 vs 2.50133672), which is not the leak this test guards.
+    paired = _downcast_paired(fe.build_training_frame(read_dataset()))
     train_c, _, _ = _split_by_cycle(paired)
     tr = paired[paired["init_date"].isin(train_c)]
 
@@ -227,6 +287,10 @@ def test_full_retrain_end_to_end(_retrain):
     import json
     manifest = json.loads((registry.run_dir(rid) / "manifest.json").read_text())
     assert manifest["shap_method"] in {"shap", "feature_importance_fallback", "none"}
+    # The served explanation must actually be SHAP. _shap_values swallows errors, so without
+    # this a fallback to feature importance would pass every other assertion here.
+    assert manifest["shap_methods"].get("classifier") == "shap", manifest["shap_methods"]
+    assert manifest["shap_method"] == manifest["shap_methods"]["classifier"]
 
 
 def test_regressors_beat_mean_baseline_on_temperature(_retrain):
@@ -371,6 +435,103 @@ def test_replay_service_narrates_from_real_numbers(_retrain):
         if other:
             pinned = replay_service.get_replay(str(rep.init_date), focus_region=other)
             assert pinned.focus is not None and pinned.focus.region_id == other
+
+
+def test_event_frame_survives_a_categorical_variable_column(_ingested_slice):
+    """The retrain holds `variable` as category (_downcast_paired, a2f0e84). pandas'
+    Series.map on a categorical returns a categorical whenever the mapping gives each
+    category a distinct value - true at full scale, where every variable's p90 differs -
+    and dividing by a categorical raises. The 2017 district retrain died here after
+    2 h 54 min. test_classifier_features_exclude_actual_error maps every variable to the
+    same 5.0, which pandas returns as float64, so it could not see this.
+    Fixture: the real GEFS/ERA5 slice this module ingests."""
+    from app.ml.train_pipeline import _downcast_paired
+    from app.storage.parquet_store import read_dataset
+
+    paired = _downcast_paired(fe.build_training_frame(read_dataset()))
+    assert isinstance(paired["variable"].dtype, pd.CategoricalDtype)
+    cycles = sorted(paired["init_date"].dropna().unique())
+    tr = paired[paired["init_date"].isin(cycles[: max(2, len(cycles) - 1)])]
+    variables = [str(v) for v in tr["variable"].unique()]
+    p90 = {v: 2.0 + i for i, v in enumerate(variables)}     # distinct, as in a real year
+    thr = {v: 1.0 + i for i, v in enumerate(variables)}
+    ev = pv.build_event_frame(tr, pd.Series(1.0, index=tr.index), p90, thr)
+    conf = [c for c in ev.columns if c.startswith("conf_")]
+    assert conf and all(ev[c].dtype.kind == "f" for c in conf)
+
+
+def test_sort_ignore_index_matches_sort_then_reset_index():
+    """_build_paired_in_chunks used to sort, then call a separate .reset_index(drop=True)
+    - which internally calls .copy(), consolidating every mixed-dtype block into one
+    contiguous array. At district scale across two years that consolidation tried to
+    allocate ~9 GiB it did not need and the run died with a MemoryError before a single
+    model trained (measured 2026-09-11, run_20260911T193709Z). `ignore_index=True` folds
+    the reset into the sort itself, skipping that copy - this pins that the two produce
+    an identical frame, so the memory fix cannot have silently changed the result."""
+    rng = np.random.default_rng(0)
+    n = 500
+    df = pd.DataFrame({
+        "region_id": pd.Categorical(rng.choice(["a", "b", "c"], n)),
+        "variable": pd.Categorical(rng.choice(["t", "u"], n)),
+        "value": rng.normal(size=n).astype("float32"),
+    })
+    old = df.sort_values(["region_id", "variable"]).reset_index(drop=True)
+    new = df.sort_values(["region_id", "variable"], ignore_index=True)
+    pd.testing.assert_frame_equal(old, new)
+
+
+def test_paired_frame_can_be_bounded_to_a_last_init_date(_ingested_slice):
+    """A retrain must be able to say which cycles it is about. full_retrain read every
+    forecast cycle in the store, so a year being ingested alongside it - or a stray
+    observation file reaching a few days into the next year - put a partial, sparsely
+    labelled month at the end of the time-ordered split, i.e. into the test set, and made
+    the held-out set depend on how far an ingest had got. Fixture: the real slice."""
+    from app.ml.train_pipeline import _build_paired_in_chunks
+
+    everything, _ = _build_paired_in_chunks()
+    cycles = sorted(pd.to_datetime(everything["init_date"]).dt.normalize().unique())
+    assert len(cycles) >= 3
+    bound = pd.Timestamp(cycles[len(cycles) // 2]).date()
+
+    bounded, _ = _build_paired_in_chunks(init_date_max=bound)
+    got = pd.to_datetime(bounded["init_date"]).dt.date
+    assert not bounded.empty
+    assert got.max() <= bound
+    assert got.nunique() < len(cycles)
+
+
+def test_paired_frame_can_be_bounded_to_a_first_init_date(_ingested_slice):
+    """A retrain must also be able to say a training window starts somewhere - not just
+    where it ends. With four calendar years now sitting in the same store (2016-2019),
+    `--init-date-max 2019-12-31` alone would silently pull every earlier year in as
+    training data too; a cross-year run needs to name both ends of its training window."""
+    from app.ml.train_pipeline import _build_paired_in_chunks
+
+    everything, _ = _build_paired_in_chunks()
+    cycles = sorted(pd.to_datetime(everything["init_date"]).dt.normalize().unique())
+    assert len(cycles) >= 3
+    bound = pd.Timestamp(cycles[len(cycles) // 2]).date()
+
+    bounded, _ = _build_paired_in_chunks(init_date_min=bound)
+    got = pd.to_datetime(bounded["init_date"]).dt.date
+    assert not bounded.empty
+    assert got.min() >= bound
+    assert got.nunique() < len(cycles)
+
+
+def test_paired_frame_min_and_max_combine_to_a_window(_ingested_slice):
+    from app.ml.train_pipeline import _build_paired_in_chunks
+
+    everything, _ = _build_paired_in_chunks()
+    cycles = sorted(pd.to_datetime(everything["init_date"]).dt.normalize().unique())
+    assert len(cycles) >= 4
+    lo = pd.Timestamp(cycles[1]).date()
+    hi = pd.Timestamp(cycles[-2]).date()
+
+    windowed, _ = _build_paired_in_chunks(init_date_min=lo, init_date_max=hi)
+    got = pd.to_datetime(windowed["init_date"]).dt.date
+    assert not windowed.empty
+    assert got.min() >= lo and got.max() <= hi
 
 
 def test_cycle_summary_excludes_wind_direction_from_the_peak_error(monkeypatch):

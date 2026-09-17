@@ -32,6 +32,73 @@ BACKEND_DIR = SCRIPT_DIR.parent
 SAMPLES = BACKEND_DIR / "data" / "samples"
 
 
+
+# Observation sources, best coverage first. Order matters and is tested.
+#
+# The district files cover all 666 districts; the city file covers the 35 points it
+# replaced, which is why 2017's labels sat at 34 districts of 666. When a broader file
+# exists it must win, because the failure mode is silent: the backfill reads the narrow
+# file, the store keeps the old coverage, and the retrain that follows looks entirely
+# normal.
+#
+# Only whole-year files are eligible. A partial run (`--months 11`) writes
+# `..._2017_m11-11.parquet`, and ingesting that as the year would train on one month
+# while reporting twelve.
+# CDS + IMD gauge rainfall in precip_mm, with IMD's dates moved onto model dates.
+IMD_ALIGNED_STEM = "imd_aligned_district_observations_india_{year}"
+# The same merge written before IMD was found to label each day by the END of its
+# 0830 IST window: every IMD rainfall value one model day late. Never read - refused.
+IMD_STALE_STEM = "imd_merged_district_observations_india_{year}"
+
+OBSERVATION_STEMS = (
+    IMD_ALIGNED_STEM,
+    "era5_cds_district_observations_india_{year}",   # CDS, ERA5 native 0.25 deg grid
+    "era5_district_observations_india_{year}",       # Open-Meteo, districts
+    "era5_observations_india_{year}",                # city points
+)
+
+
+def observation_file(year: int, samples_dir=None, *, include_imd: bool = True):
+    """The best available observation file for `year`, or None if there is none.
+
+    Prefers .parquet over .csv for the same source: identical content, ~18x smaller,
+    which matters when these are shipped to a CI runner. The parser handles both.
+
+    Refuses a stale IMD merge (IMD_STALE_STEM) unless an aligned one also exists. Those
+    files are gitignored, so they survive on disks after the fix; as the first file
+    found they would keep feeding one-day-off rainfall labels to training without a
+    sound. Silently falling back to ERA5 would be quieter but still wrong: nobody would
+    learn their IMD year had been dropped. Rule 3 - refuse rather than patch.
+
+    `include_imd=False` skips IMD files entirely and never refuses. That is for
+    fetch_imd_district_rainfall.py, which needs the ERA5 file to merge IMD INTO - the
+    default would hand it an IMD file, and a stale one would block its own regeneration.
+    """
+    root = Path(samples_dir) if samples_dir is not None else SAMPLES
+    stems = OBSERVATION_STEMS if include_imd else tuple(
+        st for st in OBSERVATION_STEMS if st != IMD_ALIGNED_STEM)
+
+    if include_imd:
+        stale = [root / f"{IMD_STALE_STEM.format(year=year)}{ext}" for ext in (".parquet", ".csv")]
+        aligned = [root / f"{IMD_ALIGNED_STEM.format(year=year)}{ext}" for ext in (".parquet", ".csv")]
+        found = [q for q in stale if q.exists()]
+        if found and not any(q.exists() for q in aligned):
+            raise RuntimeError(
+                f"{found[0].name} is a stale IMD merge: it was written before IMD was found "
+                f"to date each day by the END of its 0830 IST window, so every IMD rainfall "
+                f"value in it sits one day late against the forecast it verifies "
+                f"(docs/known-issues.md). Regenerate it with "
+                f"`python -m scripts.fetch_imd_district_rainfall --years {year}` - that needs "
+                f"IMD {year + 1} as well - then delete {found[0].name}.")
+
+    for stem in stems:
+        base = stem.format(year=year)
+        for ext in (".parquet", ".csv"):
+            candidate = root / f"{base}{ext}"
+            if candidate.exists():
+                return candidate
+    return None
+
 def parse_years(spec: str) -> list:
     out: set = set()
     for chunk in spec.split(","):
@@ -75,8 +142,12 @@ def main() -> int:
             f = pick(f"gefs_reforecast_india_{y}")
             (plan if f.exists() else missing).append(("forecast", y, f))
         if not args.skip_observations:
-            o = pick(f"era5_observations_india_{y}")
-            (plan if o.exists() else missing).append(("observed", y, o))
+            o = observation_file(y)
+            if o is None:
+                missing.append(("observed", y,
+                                SAMPLES / f"{OBSERVATION_STEMS[0].format(year=y)}.parquet"))
+            else:
+                plan.append(("observed", y, o))
     if missing:
         for kind, y, f in missing:
             print(f"MISSING {kind} {y}: {f.name}", file=sys.stderr)
