@@ -14,56 +14,48 @@ Why merge rather than write a standalone observation file
 IMD only publishes rain (and tmin/tmax, not used here). A precip_mm-only file would be
 missing the other eight canonical variables `ingest_upload` expects, so this script reads
 the best already-fetched ERA5-family file for the year (via
-`ingest_backfill.observation_file`) and replaces only its precip_mm column - everything
-else (temperature, humidity, wind, pressure, soil moisture, water vapour) keeps coming
-from ERA5/CDS. The two products never blend inside one column: `source` is annotated so
+`ingest_backfill.observation_file(..., include_imd=False)`) and replaces only its precip_mm
+column - everything else (temperature, humidity, wind, pressure, soil moisture, water
+vapour) keeps coming from ERA5/CDS. The two products never blend inside one column: `source` is annotated so
 it is always traceable which product produced a row's rainfall.
 
-Accumulation windows - the 0830 IST rain day
----------------------------------------------
-IMD and Sanket do not mean the same 24 hours by "a day". This is the one place that
-difference gets stated rather than assumed.
+Which day IMD's rain belongs to - measured, not assumed
+--------------------------------------------------------
+IMD's gauge day accumulates 0830 IST to 0830 IST (0300 UTC to 0300 UTC). Sanket's day is
+midnight to midnight UTC on both sides of a bust label - CLAUDE.md rule 4's
+((k-1)*24, k*24] on the forecast side, `to_daily`'s (t-24h, t] on the ERA5 side.
 
-    Sanket's day D     (D 00:00 UTC, D+1 00:00 UTC]   ==  05:30 IST -> 05:30 IST
-    IMD's rain day D   (D 03:00 UTC, D+1 03:00 UTC]   ==  08:30 IST -> 08:30 IST
+IMD labels each day by the END of its window. The value IMD dates D is rain for 0830 IST
+on D-1 to 0830 IST on D:
 
-Both are half-open at the start and closed at the end - the repo's own convention for
-an accumulation, since the total is stamped when the window closes.
+    IMD value dated D     (D-1 03:00 UTC, D   03:00 UTC]
+    Sanket's day D-1      (D-1 00:00 UTC, D   00:00 UTC]   shares 21 of those 24 hours
+    Sanket's day D        (D   00:00 UTC, D+1 00:00 UTC]   shares 3
 
-The model day is fixed by CLAUDE.md rule 4 - day k is forecast hours ((k-1)*24, k*24]
-- and the ERA5 observation fetch matches it deliberately: `to_daily` in
-fetch_era5_cds_district_observations.py shifts ERA5's end-of-hour accumulation stamp
-so that a day is the half-open window (t-24h, t]. IMD's day is a rain-gauge
-convention instead: the reading taken at 0830 IST covers the previous 24 hours and is
-filed under the day that window STARTED.
+So IMD's date D is filed under model date D-1 (IMD_DATE_TO_MODEL_DATE). This script used
+to join D to D, following the project brief, which stated start-day attribution. That was
+wrong: it put every IMD rainfall value one model day late against the forecast it
+verified - the same class of bug rule 4 already records once.
 
-India is UTC+05:30 all year, with no daylight saving, so the offset is exactly three
-hours, every day.
+IMD's own product page states no date convention at all. The end-day labelling was
+established from the data, by correlating IMD district rainfall with two independent
+hourly reanalyses (ERA5 and MERRA-2) summed to UTC days, over two years and both
+monsoons; the figures are in docs/known-issues.md. `check_attribution` repeats that test
+on every merge and refuses to write rain that lands on the wrong day, so a later change
+in IMD's files cannot slip through either.
 
-THE JOIN: IMD's date D pairs with Sanket's date D. Nothing is shifted. That is not a
-convenience - IMD's day D shares 21 of its 24 hours with the model's day D and only 3
-with the model's day D+1, so the 21 hours outvote the 3. `merge_precip` therefore
-joins on (region_id, date) with no offset, and test_fetch_imd_district_rainfall.py
-pins that 21/3 ratio so a later tidy-up cannot quietly invert it. Getting this
-backwards shifts every rainfall bust label by a day - the same class of bug rule 4
-already records once.
+The residual three-hour mismatch - rain at 05:30-08:30 IST lands in the neighbouring model
+day - is known and deliberately left: re-cutting the model day to 0300 UTC would push Day
+10 to forecast hour 243, past the 240-hour end of the GEFSv12 reforecast archive.
 
-WHAT IT COSTS: re-cutting the model day to start at 0300 UTC would match IMD exactly,
-and would push Day 10 out to forecast hour 243 - past the 240-hour end of the GEFSv12
-reforecast archive. That trades rainfall at the longest lead for three hours at the
-edge of the window. The residual three-hour mismatch is a known limitation, written
-down in docs/known-issues.md rather than left implicit.
+Two consequences for `build`:
+- Model date 31 Dec needs IMD's 1 Jan of the FOLLOWING year, so each year reads two IMD
+  years. Without the second, the merge refuses rather than dropping the day.
+- Output is named imd_aligned_*. Files named imd_merged_* come from the old join, and
+  `ingest_backfill.observation_file` refuses them.
 
-NOT SETTLED HERE: that IMD attributes to the starting day is the convention the project
-brief states for the gridded product. It has not been checked against IMD's own
-documentation or the archive. Some IMD products file the 0830 reading under
-the day it was taken instead, which is a whole day out and which no amount of
-timestamp arithmetic can detect. The event tests in
-test_fetch_imd_district_rainfall.py check it against real rainfall on dates we know
-independently; they need a merged parquet on disk and skip without one.
-
-These windows live in this script because it is their only consumer. If a second IMD
-path appears, move them into app/utils/ - do not copy them.
+These windows live in this script because it is their only consumer. If a second IMD path
+appears, move them into app/utils/ - do not copy them.
 
 Access
 ------
@@ -96,7 +88,9 @@ from app.utils.district_observations import grid_cells, to_districts  # noqa: E4
 from scripts import ingest_backfill as ib  # noqa: E402
 
 OUT_DIR = BACKEND_DIR / "data" / "samples"
-SOURCE_IMD = "IMD gauge-based gridded rainfall 0.25 deg (imdpune.gov.in)"
+SOURCE_IMD = ("IMD gauge-based gridded rainfall 0.25 deg (imdpune.gov.in); "
+              "IMD date D filed as model date D-1")
+ALIGNED_STEM = ib.IMD_ALIGNED_STEM.replace("_{year}", "")
 MISSING = -999.0
 
 # --- Accumulation windows. See "the 0830 IST rain day" in the module docstring. ---
@@ -105,6 +99,8 @@ IST_OFFSET = pd.Timedelta(hours=5, minutes=30)   # India has no daylight saving
 MODEL_DAY_START_UTC = pd.Timedelta(hours=0)      # 00:00 UTC, CLAUDE.md rule 4
 IMD_DAY_START_IST = pd.Timedelta(hours=8, minutes=30)
 IMD_DAY_START_UTC = IMD_DAY_START_IST - IST_OFFSET  # = 03:00 UTC
+# IMD dates a day by the END of its 0830 IST window, so its date D is model date D-1.
+IMD_DATE_TO_MODEL_DATE = pd.Timedelta(days=-1)
 
 
 def _utc_midnight(day) -> pd.Timestamp:
@@ -135,14 +131,14 @@ def model_day_window_utc(day) -> tuple[pd.Timestamp, pd.Timestamp]:
 
 
 def imd_rain_day_window_utc(day) -> tuple[pd.Timestamp, pd.Timestamp]:
-    """IMD's gauge rain-day `day` as a (start, end] window in UTC.
+    """The (start, end] UTC window of the rainfall IMD dates `day`.
 
-    0830 IST to 0830 IST, attributed to the day the window started, so in UTC it
-    runs 03:00 to 03:00 - three hours behind `model_day_window_utc` for the same
-    calendar date.
+    0830 IST on the previous day to 0830 IST on `day` - IMD labels a gauge day by when its
+    window ENDS. In UTC that is 03:00 to 03:00, three hours after the model day it mostly
+    belongs to, `model_day_window_utc(day + IMD_DATE_TO_MODEL_DATE)`.
     """
-    start = _utc_midnight(day) + IMD_DAY_START_UTC
-    return start, start + DAY
+    end = _utc_midnight(day) + IMD_DAY_START_UTC
+    return end - DAY, end
 
 
 def window_overlap_hours(a: tuple[pd.Timestamp, pd.Timestamp],
@@ -154,6 +150,63 @@ def window_overlap_hours(a: tuple[pd.Timestamp, pd.Timestamp],
     """
     overlap = min(a[1], b[1]) - max(a[0], b[0])
     return max(pd.Timedelta(0), overlap).total_seconds() / 3600.0
+
+
+# --- Checking which day the rain is on, against an independent reanalysis --------------
+ATTRIBUTION_LAGS = (-1, 0, 1)
+MIN_PAIRED_DAYS = 30  # per region; fewer and a rank correlation is mostly noise
+
+
+def attribution_lag_correlations(rain_rows: pd.DataFrame, reference_rows: pd.DataFrame,
+                                 lags=ATTRIBUTION_LAGS) -> dict[int, float]:
+    """Mean over regions of the Spearman correlation between `rain_rows` precip_mm on date D
+    and `reference_rows` precip_mm on date D+lag.
+
+    Both are long (region_id, date, precip_mm) frames on the same calendar. Rain on the
+    right day correlates best at lag 0; one day late peaks at lag -1, one day early at +1.
+    Spearman because rainfall is zero-inflated and heavy-tailed - computed as Pearson on
+    ranks, so it needs nothing beyond pandas. Regions with fewer than MIN_PAIRED_DAYS paired
+    days, or no variation at all (an entirely dry spell), are left out.
+    """
+    def wide(rows):
+        rows = rows.assign(date=pd.to_datetime(rows["date"]))
+        return rows.pivot_table(index="date", columns="region_id", values="precip_mm",
+                                aggfunc="first")
+
+    rain, ref = wide(rain_rows), wide(reference_rows)
+    regions = rain.columns.intersection(ref.columns)
+    out = {}
+    for lag in lags:
+        moved = ref.copy()
+        moved.index = moved.index - pd.Timedelta(days=lag)  # reference D+lag now sits at D
+        per_region = []
+        for r in regions:
+            pair = pd.concat([rain[r], moved[r]], axis=1, join="inner").dropna()
+            if len(pair) < MIN_PAIRED_DAYS:
+                continue
+            x, y = pair.iloc[:, 0].rank(), pair.iloc[:, 1].rank()
+            if x.std() == 0 or y.std() == 0:
+                continue
+            per_region.append(x.corr(y))
+        out[lag] = float(np.mean(per_region)) if per_region else float("nan")
+    return out
+
+
+def check_attribution(rain_rows: pd.DataFrame, reference_rows: pd.DataFrame) -> dict[int, float]:
+    """`attribution_lag_correlations`, refusing unless the correlation peaks at lag 0."""
+    corr = attribution_lag_correlations(rain_rows, reference_rows)
+    finite = {k: v for k, v in corr.items() if np.isfinite(v)}
+    if not finite:
+        raise ValueError(f"cannot check which day the rain is on: no region had "
+                         f"{MIN_PAIRED_DAYS}+ paired days with any variation")
+    peak = max(finite, key=finite.get)
+    if peak != 0:
+        shown = {k: round(v, 3) for k, v in corr.items()}
+        raise ValueError(
+            f"rainfall correlates best with the reference at lag {peak:+d} day(s), not 0 "
+            f"({shown}) - it is on the wrong model day. Refusing to write it; see "
+            f"'Which day IMD's rain belongs to' in fetch_imd_district_rainfall.py.")
+    return corr
 
 
 def imd_to_long(imd_obj) -> pd.DataFrame:
@@ -183,15 +236,13 @@ def imd_to_long(imd_obj) -> pd.DataFrame:
 
 
 def merge_precip(base: pd.DataFrame, imd_districts: pd.DataFrame) -> pd.DataFrame:
-    """Replace `base`'s precip_mm with IMD's, matched on (region_id, date).
+    """Replace `base`'s precip_mm with IMD's, filing IMD's date D under model date D-1.
 
-    The dates are joined straight across, with NO shift, even though IMD's rain day
-    runs 0830-0830 IST and `base`'s day runs midnight-to-midnight UTC. IMD's day D
-    shares 21 of its 24 hours with the model's day D and only 3 with day D+1, so
-    date D is the right partner for date D. See "the 0830 IST rain day" in the
-    module docstring for the full window arithmetic, and
-    test_imd_date_d_pairs_with_model_date_d_by_a_21_hour_majority for the assertion
-    that stops this drifting.
+    IMD dates a gauge day by the END of its 0830 IST window, so the rain IMD labels D fell
+    mostly during model day D-1 - 21 of its 24 hours (see "Which day IMD's rain belongs
+    to"). Joining D to D, as this function once did, verified every forecast against
+    mostly the previous day's rain. Model date 31 Dec therefore needs IMD's 1 Jan of the
+    following year.
 
     Refuses if IMD covers fewer (region_id, date) pairs than `base` - a real coverage gap,
     not a row to drop silently (CLAUDE.md rule 3: refuse rather than patch). A district-date
@@ -201,16 +252,20 @@ def merge_precip(base: pd.DataFrame, imd_districts: pd.DataFrame) -> pd.DataFram
     base = base.copy()
     base["date"] = pd.to_datetime(base["date"]).dt.date
     imd = imd_districts.copy()
-    imd["date"] = pd.to_datetime(imd["date"]).dt.date
+    imd["date"] = (pd.to_datetime(imd["date"]) + IMD_DATE_TO_MODEL_DATE).dt.date
 
     base_keys = set(zip(base["region_id"], base["date"]))
     imd_keys = set(zip(imd["region_id"], imd["date"]))
     missing = base_keys - imd_keys
     if missing:
         sample = sorted(missing)[:5]
+        hint = ""
+        if any(d.month == 12 and d.day == 31 for _, d in missing):
+            hint = (" Model date 31 Dec takes IMD's 1 Jan of the following year - read that "
+                    "year's IMD file as well.")
         raise ValueError(
             f"IMD is missing {len(missing)} of {len(base_keys)} (region_id, date) pairs "
-            f"the base file covers, e.g. {sample} - refusing a silently narrower merge")
+            f"the base file covers, e.g. {sample} - refusing a silently narrower merge.{hint}")
 
     imd_lookup = imd.set_index(["region_id", "date"])["precip_mm"]
     key = list(zip(base["region_id"], base["date"]))
@@ -226,7 +281,9 @@ def build(years: list[int]) -> None:
     wanted = set(zip(np.round(cells.lat, 4), np.round(cells.lon, 4)))
 
     for year in years:
-        base_path = ib.observation_file(year)
+        # The ERA5 file to merge INTO - never an IMD file. The default lookup would return
+        # one, and refuses a stale one, which would block the regeneration that fixes it.
+        base_path = ib.observation_file(year, include_imd=False)
         if base_path is None:
             print(f"SKIP {year}: no existing ERA5-family observation file to merge into "
                   f"(run fetch_era5_cds_district_observations.py first)", file=sys.stderr)
@@ -234,8 +291,9 @@ def build(years: list[int]) -> None:
 
         cache = OUT_DIR / "_imd"
         cache.mkdir(parents=True, exist_ok=True)
-        print(f"downloading IMD rain {year} ...")
-        obj = imd.get_data("rain", year, year, fn_format="yearwise", file_dir=str(cache))
+        # Two IMD years: model date 31 Dec is IMD's 1 Jan of the following year.
+        print(f"downloading IMD rain {year}-{year + 1} ...")
+        obj = imd.get_data("rain", year, year + 1, fn_format="yearwise", file_dir=str(cache))
 
         long = imd_to_long(obj)
         key = list(zip(np.round(long.lat, 4), np.round(long.lon, 4)))
@@ -247,9 +305,15 @@ def build(years: list[int]) -> None:
                 else pd.read_csv(base_path))
         merged = merge_precip(base, imd_districts)
 
-        out = OUT_DIR / f"imd_merged_district_observations_india_{year}.parquet"
+        # Refuse to write rain that is not on the day ERA5 says it fell.
+        cols = ["region_id", "date", "precip_mm"]
+        corr = check_attribution(merged[cols], base[cols])
+        print("  dating check against ERA5, mean Spearman by lag: " +
+              "  ".join(f"{k:+d}:{v:.3f}" for k, v in sorted(corr.items())))
+
+        out = OUT_DIR / f"{ib.IMD_ALIGNED_STEM.format(year=year)}.parquet"
         merged.to_parquet(out, index=False)
-        delta = (merged["precip_mm"] - pd.read_parquet(base_path)["precip_mm"]).abs()
+        delta = (merged["precip_mm"] - base["precip_mm"]).abs()
         print(f"  -> {out.name}  {len(merged):,} rows  "
               f"mean |IMD - ERA5| precip_mm = {delta.mean():.2f}")
 
