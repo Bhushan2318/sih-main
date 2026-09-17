@@ -54,16 +54,28 @@ def run_queue(queue: list[dict], cache_dir: Path, out_path: Path, log_path: Path
 
     results: list[dict] = []
     if out_path.exists():
-        # Resume: a job already recorded (any status) is not re-run. Re-running a
-        # multi-hour job that already finished, on a re-dispatch after a crash earlier
-        # in the queue, is exactly the kind of casual re-run CLAUDE.md says not to do.
+        # Resume: only a job that actually SUCCEEDED is skipped. Re-running a finished
+        # multi-hour job on a re-dispatch is the casual re-run CLAUDE.md says not to do -
+        # but a job that crashed produced no model and nothing to lose by trying again.
+        # Real bug 2026-09-17: the first version of this skipped ANY recorded status,
+        # including "exception" - a fold that crashed 32 minutes in would have been
+        # silently skipped forever on every future resume, never producing a model, with
+        # no error and no sign anything was wrong short of reading the full report.
         results = json.loads(out_path.read_text())
-    done_keys = {(tuple(r["train_years"]), r["test_year"]) for r in results}
+    done_keys = {(tuple(sorted(r["train_years"])), r["test_year"])
+                for r in results if r.get("status") == "success"}
+    # Superseded failed attempts stay in the log for history, but are dropped from the
+    # report that gets rewritten below - a stale "exception" record next to this run's
+    # fresh "success" for the identical job would just be confusing.
+    results = [r for r in results
+              if r.get("status") == "success"
+              or (tuple(sorted(r["train_years"])), r["test_year"]) not in
+                 {(tuple(sorted(j["train_years"])), j["test_year"]) for j in queue}]
 
     for i, job in enumerate(queue):
         key = (tuple(sorted(job["train_years"])), job["test_year"])
         if key in done_keys:
-            _log(log_path, f"[{i+1}/{len(queue)}] already done: "
+            _log(log_path, f"[{i+1}/{len(queue)}] already succeeded: "
                             f"train={job['train_years']} test={job['test_year']} - skipping")
             continue
 
