@@ -314,7 +314,8 @@ def main() -> int:
                     for name, m in rows
                 ],
             }
-            (run_dir / "baselines.json").write_text(json.dumps(payload, indent=2))
+            (run_dir / "baselines.json").write_text(json.dumps(payload, indent=2),
+                                                    encoding="utf-8")
             print(f"wrote {run_dir / 'baselines.json'}")
         else:
             print(f"run directory {run_dir} not found; skipped the run artifact",
@@ -324,12 +325,15 @@ def main() -> int:
         return 0
 
     RESULTS_MD.parent.mkdir(parents=True, exist_ok=True)
-    existing = RESULTS_MD.read_text() if RESULTS_MD.exists() else "# Sanket — measured results\n\n"
+    # Explicit utf-8: the table uses unicode arrows and Path.write_text/read_text default
+    # to the platform's preferred encoding, which is cp1252 - not utf-8 - on Windows.
+    existing = (RESULTS_MD.read_text(encoding="utf-8") if RESULTS_MD.exists()
+               else "# Sanket — measured results\n\n")
     if HEADING in existing:
         head, _, tail = existing.partition(HEADING)
         nxt = tail.find("\n## ")
         existing = head + (tail[nxt + 1:] if nxt != -1 else "")
-    RESULTS_MD.write_text(existing.rstrip() + "\n\n" + section)
+    RESULTS_MD.write_text(existing.rstrip() + "\n\n" + section, encoding="utf-8")
     print(f"wrote {RESULTS_MD}")
     return 0
 

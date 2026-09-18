@@ -528,3 +528,27 @@ here rather than discovered live.
   forecast's issue time, so held-out metrics may include information a live forecast could
   not have had. Not fixed here: it changes served model behaviour and needs its own
   before/after ladder.
+
+### Time-lagged ensemble (C2) and district descriptors (C4), added 2026-09-17
+
+- **The time-lagged ensemble inherits C1's sparse-density limitation exactly.**
+  `laf_pool_std` / `laf_spread_ratio` need an earlier cycle still valid for the same
+  target date, same overlap condition as `jump_std`. In the 17-cycle-a-year backfill
+  archive that is almost never true, so the pool usually collapses to this cycle's own
+  members (`laf_spread_ratio` = 1) - real, not a bug, and it activates on the same daily
+  or dense-stride data that unlocks C1.
+- **`border_distance_km` (C4) is distance to the modelled landmass's edge, not to the
+  coast.** It is built from the union of all 666 district polygons
+  (`scripts/build_district_descriptors.py`), which has no separate reference to tell
+  coastline from international land border (Pakistan, China, Nepal, Bhutan, Bangladesh,
+  Myanmar) apart. A district near the Bangladesh border and a coastal one at the same
+  distance get the same value. Fixing this needs a real coastline dataset this repo does
+  not have.
+- **The C2/C4 before/after ladder was measured on the small CI sample, not at district
+  scale.** `data/samples/gefs_reforecast_india_2019.parquet` covers 36 districts (one per
+  state) and 17 cycles - real data, but neither the volume nor the district density
+  region_id's replacement is meant to help with. Measured 2026-09-17, same 2019 sample,
+  identical train/val/test split: ROC-AUC 0.7440 -> 0.7426, Brier 0.2012 -> 0.2037, F1
+  0.6339 -> 0.6400 - inside noise for 1,050 test events, nowhere near the promotion
+  gate's 0.05 ROC-AUC regression bar. This confirms no regression, not a proven gain;
+  re-score once a district-grain, denser-cadence store is available.
