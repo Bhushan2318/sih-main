@@ -467,11 +467,20 @@ def pull_one_file(var_prefix: str, init: str, member: str, prepared: np.ndarray)
         chosen = select_for_day(recs, spec, lead)
         if not chosen:
             continue
-        stacks = []
-        for start, end, group in merge_ranges(chosen):
-            rng = f"bytes={start}-{end - 1}" if end is not None else f"bytes={start}-"
-            blob = _get(f"{BUCKET}/{key}", headers={"Range": rng}).content
-            stacks.append(extract_grid(blob, spec)[1])
+        try:
+            stacks = []
+            for start, end, group in merge_ranges(chosen):
+                rng = f"bytes={start}-{end - 1}" if end is not None else f"bytes={start}-"
+                blob = _get(f"{BUCKET}/{key}", headers={"Range": rng}).content
+                stacks.append(extract_grid(blob, spec)[1])
+        except RuntimeError as exc:
+            # The .idx can survive on the archive after its .grib2 body was dropped -
+            # seen for real on 2008-11-21 p01/soilw_bgrnd, where the index parses fine
+            # but every byte-range GET against the body 404s. That is not transient, so
+            # retrying will not help; treat it exactly like a missing .idx and let
+            # cycle_is_complete refuse this cycle instead of the whole fetch crashing on it.
+            print(f"    ! missing body  {key}  ({exc})", file=sys.stderr)
+            return pd.DataFrame(), {}
         stack = np.concatenate(stacks, axis=0)
 
         # Day k is built from forecast hours ((k-1)*24, k*24]; collapse those 3-hourly
