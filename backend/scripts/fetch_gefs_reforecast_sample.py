@@ -49,13 +49,11 @@ Runs from anywhere; output always lands in ``backend/data/samples/``.
 from __future__ import annotations
 
 import argparse
-import io
-import json
 import sys
 import time
 import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Iterable
 
