@@ -22,7 +22,7 @@ NUMERIC_FEATURES = [
     # app.features.engineering.DISTRICT_DESCRIPTOR_FEATURES) - a district the model never
     # saw labelled in training still has a latitude, a size and a distance from the
     # country's edge, so these generalise where a 666-level categorical cannot.
-    "centroid_lat", "centroid_lon", "area_km2", "border_distance_km",
+    "centroid_lat", "centroid_lon", "area_km2", "border_distance_km", "elevation_mean",
 ]
 # state_id (~36 levels) replaces region_id (666 levels, only ~34 ever labelled) as the
 # district-identity feature - see NUMERIC_FEATURES' C4 comment above.

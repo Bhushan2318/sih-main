@@ -552,3 +552,28 @@ here rather than discovered live.
   0.6339 -> 0.6400 - inside noise for 1,050 test events, nowhere near the promotion
   gate's 0.05 ROC-AUC regression bar. This confirms no regression, not a proven gain;
   re-score once a district-grain, denser-cadence store is available.
+
+### C4 completed with elevation_mean, added 2026-09-18
+
+- **`elevation_mean` depends on a free, third-party public API this repo does not
+  control.** `scripts/fetch_grid_elevation.py` queries `api.open-elevation.com`, an
+  open-source, no-auth service whose own setup docs (fetched 2026-09-18) name its
+  dataset as the CGIAR-CSI SRTM 250m resampled product
+  (https://srtm.csi.cgiar.org) - not a NOAA/Copernicus source like everything else this
+  project fetches. If that service goes offline or changes its dataset, the cached
+  `data/geo/grid_elevation_m.parquet` (4,902 cells, fetched once) keeps working; a fresh
+  fetch would not until the service is back. Verified against three known points before
+  trusting it for all 4,902: Everest 8771 m (real ~8849 m), Mumbai 6 m, Delhi 214 m (real
+  ~216 m).
+- **250 m resolution, aggregated through a 0.25 deg (~28 km) weight table.** Elevation
+  is fetched at the same grid cells GEFS/ERA5 already use, then area-weighted per
+  district by the same `DistrictGridAggregator` - so `elevation_mean` is precise to the
+  0.25 deg cell, not to 250 m, for any district smaller than one cell. This matches every
+  other district-level value in this project (temperature, rainfall, etc. are the same
+  cell-level average), so it is consistent with the rest of the feature set, not a new
+  weakness specific to elevation.
+- **Not re-scored on the ladder separately from C2/C4's original before/after.**
+  `elevation_mean` landed after the 2026-09-17 ladder run above; it is one more numeric
+  feature alongside the other four descriptors, not expected to change that comparison's
+  conclusion (no regression, not yet proven at scale), but it has not been measured on
+  its own.
