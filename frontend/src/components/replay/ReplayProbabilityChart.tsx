@@ -3,6 +3,15 @@ import {
 } from "recharts";
 import { CHART } from "../../theme";
 
+/** Recharts injects cx/cy/payload/key into a Line's `dot` render prop at draw time; its
+ * own exported Dot type only covers the shape's own attributes, not these. */
+interface LineDotRenderProps {
+  key?: string;
+  cx?: number;
+  cy?: number;
+  payload?: { lead: number; p: number | null; busted: boolean | null };
+}
+
 export function ReplayProbabilityChart({
   points,
   currentLead,
@@ -45,7 +54,7 @@ export function ReplayProbabilityChart({
           <ReferenceLine x={currentLead} stroke={CHART.marker} strokeWidth={2} />
           <Line type="monotone" dataKey="p" name="Bust risk" stroke={CHART.forecast}
             strokeWidth={2} activeDot={{ r: 5 }} connectNulls={false}
-            dot={(props: any) => {
+            dot={(props: LineDotRenderProps) => {
               const { cx, cy, payload, key } = props;
               if (cx == null || cy == null) return <g key={key} />;
               const hit = payload?.busted === true;
