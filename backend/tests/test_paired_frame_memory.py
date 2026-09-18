@@ -23,6 +23,9 @@ _VARIABLES = ["temperature_c", "humidity_pct", "rainfall_mm", "pressure_hpa",
               "atmospheric_moisture_kgm2", "soil_moisture_pct", "wind_speed_ms",
               "wind_direction_deg"]
 _MEMBERS = ["gec00", "gep01", "gep02", "gep03", "gep04"]
+# ~36 real Indian states/UTs, not 666 districts - state_id (C4) is a genuinely
+# low-cardinality column, unlike example_column's generic one-value-per-row placeholder.
+_STATES = [f"IN-S{i:02d}" for i in range(36)]
 
 
 def _frame(n: int = 20_000) -> pd.DataFrame:
@@ -35,6 +38,7 @@ def _frame(n: int = 20_000) -> pd.DataFrame:
     df["value_type"] = "forecast"
     df["verification_status"] = "final"
     df["ensemble_member_id"] = rng.choice(_MEMBERS, n)
+    df["state_id"] = rng.choice(_STATES, n)
     return df
 
 
