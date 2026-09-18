@@ -70,6 +70,35 @@ def test_pairing_and_target(_ingested_slice):
     assert t["fc_temperature_c"].isna().all()
 
 
+def test_build_event_frame_copy_input_false_mutates_caller_frame_but_same_result(
+    _ingested_slice,
+):
+    """Real crash 2026-09-17/18: build_event_frame's defensive `paired.copy()` doubled
+    a 76.5M-row frame's footprint right before its own groupby needed that headroom.
+    The two year-events workers now pass copy_input=False since they own their frame
+    exclusively. Pin that the result is identical either way, and that copy_input=False
+    really does skip the copy (caller's frame gains the columns build_event_frame adds)."""
+    from app.storage.parquet_store import read_dataset
+
+    canon = read_dataset()
+    paired = fe.build_training_frame(canon)
+    cycles = sorted(paired["init_date"].dropna().unique())
+    tr = paired[paired["init_date"].isin(cycles[: max(2, len(cycles) - 1)])]
+    oof = pd.Series(np.random.default_rng(1).random(len(tr)), index=tr.index)
+    p90 = {v: 5.0 for v in tr["variable"].unique()}
+    thr = {v: 3.0 for v in tr["variable"].unique()}
+
+    tr_copied = tr.copy()
+    ev_copied = pv.build_event_frame(tr_copied, oof, p90, thr)
+    assert "pred_err" not in tr_copied.columns
+
+    tr_uncopied = tr.copy()
+    ev_uncopied = pv.build_event_frame(tr_uncopied, oof, p90, thr, copy_input=False)
+    assert "pred_err" in tr_uncopied.columns
+
+    pd.testing.assert_frame_equal(ev_copied, ev_uncopied)
+
+
 def test_classifier_features_exclude_actual_error(_ingested_slice):
     from app.storage.parquet_store import read_dataset
 

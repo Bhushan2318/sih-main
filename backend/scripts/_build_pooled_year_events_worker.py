@@ -27,6 +27,12 @@ them stay resident through the OOF-prediction loop and are never freed before
 itself already does exactly this cleanup ("del fold_models ... gc.collect()") after this
 worker's subprocess returns, but that never helped the worker's OWN peak, only the
 parent's. Freed explicitly below, right before the call that needs the headroom.
+
+That cleanup alone was still not enough - the identical crash recurred through both
+retry attempts on the next run. The actual remaining cost was `build_event_frame`'s own
+defensive `paired.copy()`, doubling this frame's footprint right before the groupby that
+needed the room the copy had just consumed. `df` here is freshly loaded by this worker
+and read by nothing else afterward, so it is passed with `copy_input=False`.
 """
 from __future__ import annotations
 
@@ -91,7 +97,7 @@ def main() -> int:
             gc.collect()
 
             result["event_frame"] = pv.build_event_frame(
-                df, oof, p90_error, bust_threshold, hbf)
+                df, oof, p90_error, bust_threshold, hbf, copy_input=False)
     except Exception:
         result["error"] = traceback.format_exc()
 

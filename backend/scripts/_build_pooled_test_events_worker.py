@@ -59,7 +59,7 @@ def main() -> int:
                     result["test_metrics"][var] = reg_mod._evaluate(
                         df.loc[tmask, "abs_error"], p)
             result["event_frame"] = pv.build_event_frame(
-                df, pred, job["p90_error"], job["bust_threshold"], hbf)
+                df, pred, job["p90_error"], job["bust_threshold"], hbf, copy_input=False)
     except Exception:
         result["error"] = traceback.format_exc()
 
