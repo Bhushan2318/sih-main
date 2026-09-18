@@ -35,7 +35,3 @@ export function RiskBadge({ band }: { band: string | null }) {
   if (!band) return <span className="badge badge--unknown">unknown</span>;
   return <span className={`badge badge--${band}`}>{bandLabel(band)}</span>;
 }
-
-export function StatusBadge({ status, label }: { status: string; label: string }) {
-  return <span className={`badge badge--${status}`}>{label}</span>;
-}
