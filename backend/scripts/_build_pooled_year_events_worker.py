@@ -17,10 +17,27 @@ signature as every earlier crash in this file's history.
 So each year's raw-frame work (the part with real memory cost) now happens in a fresh
 process that exits right after, returning only the small, already event-reduced
 DataFrame to the parent - mirroring the fix already applied to per-variable training.
+
+Real crash 2026-09-17/18: process isolation alone was not enough - the SAME 584-586 MiB
+groupby allocation failed again, twice, each ~1.8 hours into a real 3-year pool, inside
+this already-isolated worker. `fold_models` (real XGBoost Booster/regressor objects, one
+per variable per fold - up to 24 for 8 variables x 3 folds) and the `job` dict holding
+them stay resident through the OOF-prediction loop and are never freed before
+`build_event_frame`'s own groupby needs its contiguous block - `full_retrain_pooled`
+itself already does exactly this cleanup ("del fold_models ... gc.collect()") after this
+worker's subprocess returns, but that never helped the worker's OWN peak, only the
+parent's. Freed explicitly below, right before the call that needs the headroom.
+
+That cleanup alone was still not enough - the identical crash recurred through both
+retry attempts on the next run. The actual remaining cost was `build_event_frame`'s own
+defensive `paired.copy()`, doubling this frame's footprint right before the groupby that
+needed the room the copy had just consumed. `df` here is freshly loaded by this worker
+and read by nothing else afterward, so it is passed with `copy_input=False`.
 """
 from __future__ import annotations
 
 import argparse
+import gc
 import pickle
 import sys
 import traceback
@@ -70,8 +87,17 @@ def main() -> int:
                     if not fmask.any():
                         continue
                     oof.loc[fmask] = model.predict(reg_mod._prep_X(df.loc[fmask], cols))
+
+            # fold_models (real Booster objects, up to 24 of them) and job (which holds
+            # them, plus p90_error/bust_threshold we've already pulled out below) are
+            # done being useful the moment oof is filled in - freed here, not left
+            # resident through build_event_frame's own big allocation.
+            p90_error, bust_threshold = job["p90_error"], job["bust_threshold"]
+            del fold_models, job
+            gc.collect()
+
             result["event_frame"] = pv.build_event_frame(
-                df, oof, job["p90_error"], job["bust_threshold"], hbf)
+                df, oof, p90_error, bust_threshold, hbf, copy_input=False)
     except Exception:
         result["error"] = traceback.format_exc()
 

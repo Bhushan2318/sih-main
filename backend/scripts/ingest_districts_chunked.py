@@ -28,7 +28,6 @@ death at 80% resumes rather than restarting.
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 import time
 from pathlib import Path
