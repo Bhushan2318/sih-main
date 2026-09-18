@@ -8,8 +8,10 @@ from app.features.engineering import (
     EVENT_KEYS,
     JUMP_FEATURES,
     LAF_FEATURES,
+    MJO_FEATURES,
     _season,
     attach_district_descriptors,
+    attach_mjo_index,
 )
 
 CONF_FLOOR = 0.0
@@ -57,6 +59,7 @@ def build_event_frame(
     pe["month"] = pe["valid_date"].dt.month
     pe["season"] = _season(pe["month"])
     pe = attach_district_descriptors(pe)
+    pe = attach_mjo_index(pe)
     pe["region_id"] = pe["region_id"].astype("category")
     pe["lead_time_days"] = pe["lead_time_days"].astype(int)
 
@@ -90,7 +93,7 @@ def classifier_feature_columns(event_df: pd.DataFrame) -> list:
                or (c.startswith("spread_") and c not in ("spread_mean", "spread_max"))]
     context = (["lead_time_days", "month", "spread_mean", "spread_max",
                 "historical_bust_frequency_region_season"]
-               + list(DISTRICT_DESCRIPTOR_FEATURES) + ["season"])
+               + list(DISTRICT_DESCRIPTOR_FEATURES) + list(MJO_FEATURES) + ["season"])
     ordered, seen = [], set()
     for c in per_var + context:
         if c in event_df.columns and c not in seen:

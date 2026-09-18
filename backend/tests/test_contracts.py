@@ -37,7 +37,9 @@ def test_paired_row_columns_are_frozen():
     right after season, where attach_district_descriptors actually inserts them. C2
     (2026-09-17) added the four laf_* (time-lagged ensemble) columns, also printed from a
     real call: they land right after jump_rel_climatology, before month. C4 (2026-09-18)
-    completed with elevation_mean, landing right after border_distance_km.
+    completed with elevation_mean, landing right after border_distance_km. C3
+    (2026-09-18) added mjo_rmm1/mjo_rmm2/mjo_amplitude, landing right after
+    elevation_mean.
 
     If this fails you either added a feature - update the contract in the same commit and
     say so in the message - or something upstream changed shape without meaning to.
@@ -51,6 +53,7 @@ def test_paired_row_columns_are_frozen():
         "month", "season",
         "state_id", "centroid_lat", "centroid_lon", "area_km2", "border_distance_km",
         "elevation_mean",
+        "mjo_rmm1", "mjo_rmm2", "mjo_amplitude",
         "ensemble_spread",
         "ensemble_member_count", "pressure_rate_of_change", "moisture_rate_of_change",
         "forecast_error_lag", "fc_atmospheric_moisture_kgm2", "fc_humidity_pct",

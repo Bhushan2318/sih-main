@@ -31,6 +31,10 @@ import pandas as pd
 # C4 (2026-09-18) completed with elevation_mean - the district descriptor deferred
 # earlier for needing a new external fetch (scripts/fetch_grid_elevation.py). Printed
 # from a real call: lands right after border_distance_km, before ensemble_spread.
+#
+# C3 (2026-09-18) added the three MJO columns - mjo_rmm1, mjo_rmm2, mjo_amplitude
+# (scripts/fetch_mjo_index.py, NOAA PSL's OMI index) - printed from a real call: land
+# right after elevation_mean, before ensemble_spread.
 PAIRED_ROW_COLUMNS: tuple[str, ...] = (
     "region_id", "variable", "valid_date", "forecast_value", "value_type",
     "init_date", "lead_time_days", "ensemble_member_id", "observed_value",
@@ -40,6 +44,7 @@ PAIRED_ROW_COLUMNS: tuple[str, ...] = (
     "month", "season",
     "state_id", "centroid_lat", "centroid_lon", "area_km2", "border_distance_km",
     "elevation_mean",
+    "mjo_rmm1", "mjo_rmm2", "mjo_amplitude",
     "ensemble_spread",
     "ensemble_member_count", "pressure_rate_of_change", "moisture_rate_of_change",
     "forecast_error_lag", "fc_atmospheric_moisture_kgm2", "fc_humidity_pct",
@@ -72,6 +77,7 @@ _KINDS: dict[str, str] = {
     "month": "i", "season": "C",
     "state_id": "C", "centroid_lat": "f", "centroid_lon": "f", "area_km2": "f",
     "border_distance_km": "f", "elevation_mean": "f",
+    "mjo_rmm1": "f", "mjo_rmm2": "f", "mjo_amplitude": "f",
     "ensemble_spread": "f",
     "ensemble_member_count": "i", "pressure_rate_of_change": "f",
     "moisture_rate_of_change": "f", "forecast_error_lag": "f",
@@ -88,7 +94,9 @@ _KINDS: dict[str, str] = {
 # laf_pool_std/laf_spread_ratio (C2) need earlier cycles covering the same valid date -
 # none exist at the reforecast's sampled density, where initialisations are 14-35 days
 # apart - and a climatology for the relative jump. laf_spread_ratio and laf_pool_std are
-# additionally NaN whenever this cycle itself has fewer than 2 surviving members.
+# additionally NaN whenever this cycle itself has fewer than 2 surviving members. The
+# mjo_* columns (C3) are NaN before the OMI record begins (1991-01-01) or whenever the
+# as-of join finds no reading within MJO_ASOF_TOLERANCE_DAYS of init_date.
 NULLABLE: frozenset[str] = frozenset({
     "pressure_rate_of_change", "moisture_rate_of_change", "forecast_error_lag",
     "fc_atmospheric_moisture_kgm2", "fc_humidity_pct", "fc_pressure_hpa",
@@ -97,6 +105,7 @@ NULLABLE: frozenset[str] = frozenset({
     "historical_bust_frequency_region_season",
     "jump_abs_change", "jump_std", "jump_sign_flips", "jump_rel_climatology",
     "laf_pool_std", "laf_spread_ratio",
+    "mjo_rmm1", "mjo_rmm2", "mjo_amplitude",
 })
 
 
