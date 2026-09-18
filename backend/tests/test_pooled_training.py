@@ -344,3 +344,17 @@ def test_cuda_probe_is_a_plain_bool_when_torch_is_present():
     got = pt._cuda_available()
     assert isinstance(got, bool)
     assert got == bool(torch.cuda.is_available())
+
+
+def test_cuda_probe_honours_pooled_force_cpu(monkeypatch):
+    """POOLED_FORCE_CPU=1 overrides the real answer to False, even with a real GPU
+    present - added 2026-09-18 to test whether GPU/CUDA paths contribute to a real
+    memory-pressure signature observed mid-run, without touching the CUDA probe itself."""
+    monkeypatch.setenv("POOLED_FORCE_CPU", "1")
+    assert pt._cuda_available() is False
+
+
+def test_cuda_probe_ignores_pooled_force_cpu_when_unset(monkeypatch):
+    monkeypatch.delenv("POOLED_FORCE_CPU", raising=False)
+    torch = pytest.importorskip("torch")
+    assert pt._cuda_available() == bool(torch.cuda.is_available())

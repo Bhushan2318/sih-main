@@ -100,7 +100,7 @@ def _parse_cycle(text: str) -> tuple:
         init, hour = date.fromisoformat(parts[0]), f"{int(parts[1]):02d}"
     except ValueError:
         raise ValueError(f"cannot read cycle {text!r}; expected YYYY-MM-DDTHH, "
-                         f"e.g. 2026-08-31T00")
+                         f"e.g. 2026-08-31T00") from None
     if hour not in ("00", "06", "12", "18"):
         raise ValueError(f"{hour}Z is not a GEFS cycle hour (00, 06, 12 or 18)")
     return init, hour
