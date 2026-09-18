@@ -3,8 +3,16 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from app.utils import india_districts as idist
+
 FORECAST = "forecast"
 OBSERVED = "observed"
+
+# C4, district descriptors: static, geometry-derived per-district features that replace
+# region_id as a raw model feature - see scripts/build_district_descriptors.py.
+DISTRICT_DESCRIPTOR_FEATURES = (
+    "state_id", "centroid_lat", "centroid_lon", "area_km2", "border_distance_km",
+)
 
 _RATE_OF_CHANGE_VARS = {
     "pressure_hpa": "pressure_rate_of_change",
@@ -28,6 +36,14 @@ MEMBER_KEYS = EVENT_KEYS + ["ensemble_member_id"]
 JUMP_FEATURES = ("jump_abs_change", "jump_std", "jump_sign_flips", "jump_rel_climatology")
 # Cycles in the std / sign-flip window, the row's own cycle included.
 JUMP_WINDOW = 5
+
+# C2, time-lagged ensemble (lagged-average forecasting): a GEFS reforecast cycle carries
+# only 5 of the operational feed's 31 members. This cycle's own members are pooled with
+# up to LAF_WINDOW-1 earlier cycles' ensemble means, each counted as one extra pooled
+# value, for the same (district, variable, valid date) - causal, the same discipline as
+# C1's jumpiness.
+LAF_FEATURES = ("laf_pool_mean", "laf_pool_std", "laf_pool_size", "laf_spread_ratio")
+LAF_WINDOW = JUMP_WINDOW
 # A cycle issued this many days earlier still reaches the same valid date: Day 10 of
 # init-9 is valid on init (valid_date = init + (lead - 1)). Anything older cannot overlap.
 MAX_LEAD_DAYS = 10
@@ -66,8 +82,11 @@ def build_training_frame(
     trajectories = [forecast_trajectories(fc)]
     if forecast_history is not None and not forecast_history.empty:
         trajectories.insert(0, forecast_trajectories(forecast_history))
-    jumps = compute_jumpiness(pd.concat(trajectories, ignore_index=True))
+    all_trajectories = pd.concat(trajectories, ignore_index=True)
     del trajectories
+    jumps = compute_jumpiness(all_trajectories)
+    laf = compute_time_lagged_ensemble(fc, all_trajectories)
+    del all_trajectories
     ob_cols = ["region_id", "valid_date", "variable", "value"]
     has_vs = "verification_status" in df.columns
     if has_vs:
@@ -110,8 +129,11 @@ def build_training_frame(
     paired = _merge_jumpiness(paired, jumps)
     del jumps
     paired = attach_jump_climatology(paired, jump_climatology)
+    paired = _merge_laf(paired, laf)
+    del laf
     paired["month"] = paired["valid_date"].dt.month
     paired["season"] = _season(paired["month"])
+    paired = attach_district_descriptors(paired)
     paired["region_id"] = paired["region_id"].astype("category")
 
     grp = paired.groupby(EVENT_KEYS + ["variable"], observed=True)["forecast_value"]
@@ -279,6 +301,108 @@ def _merge_jumpiness(paired: pd.DataFrame, jumps: pd.DataFrame) -> pd.DataFrame:
     return paired.merge(jumps, on=_TRAJECTORY_KEYS, how="left")
 
 
+def compute_time_lagged_ensemble(fc: pd.DataFrame, trajectories: pd.DataFrame,
+                                 window: int = LAF_WINDOW) -> pd.DataFrame:
+    """laf_pool_mean, laf_pool_std, laf_pool_size and laf_spread_ratio per trajectory row
+    (C2, time-lagged ensemble / lagged-average forecasting).
+
+    A GEFS reforecast cycle carries only 5 of the operational feed's 31 members
+    (CLAUDE.md known limitations). This widens it cheaply: this cycle's own real members
+    are pooled with up to `window - 1` EARLIER cycles that are also valid for the same
+    date, each contributing its ensemble MEAN as one extra pooled value - not its
+    individual members, which forecast_trajectories/forecast_history already discard for
+    memory. Causal: only cycles issued on or before this row's own init_date are pooled.
+
+    This cycle's own contribution (mean0, var0, n0) is a plain, non-circular mean/variance
+    over its raw member values - the same simplification `ensemble_spread` (below) already
+    makes; a genuinely circular pooled variance is not implemented. Earlier cycles enter
+    only through their (circular-aware) trajectory mean, one pseudo-member each, with no
+    within-cycle variance of their own to add - forecast_trajectories never carried it.
+    Combining them uses the exact pooled-variance identity for grouped samples, not an
+    approximation:
+
+        SS = (n0-1)*var0 + n0*(mean0-pool_mean)^2 + sum_j (mean_j-pool_mean)^2
+        pool_var = SS / (n0 + n_prior - 1)
+
+    n0=1 correctly contributes zero within-cycle variance ((n0-1)=0), not a fabricated
+    value. No earlier cycle at all (n_prior=0) makes the pool identical to this cycle's own
+    members, so laf_spread_ratio is exactly 1 by construction - guarded explicitly so a
+    cycle whose members happen to agree exactly (own_std=0, real for a dry-day rainfall
+    forecast) never turns into a 0/0 division.
+
+    Too few cycles/members for a variance is NaN, never 0 - the same discipline as C1.
+    """
+    feats = ["laf_pool_mean", "laf_pool_std", "laf_pool_size"]
+    all_feats = feats + ["laf_spread_ratio"]
+    if trajectories.empty:
+        return pd.DataFrame(columns=_TRAJECTORY_KEYS + all_feats)
+
+    own = fc.copy()
+    own["value"] = pd.to_numeric(own["value"], errors="coerce")
+    # Match forecast_trajectories' own explicit conversion - own_stats' merge key must be
+    # the same dtype as trajectories', or the merge below raises rather than silently
+    # coercing (real failure: fc's raw valid_date/init_date arrived as object dtype).
+    own["valid_date"] = pd.to_datetime(own["valid_date"])
+    own["init_date"] = pd.to_datetime(own["init_date"])
+    own = own[own["value"].notna() & own["init_date"].notna() & own["region_id"].notna()]
+    own = own[~((own["variable"] == "soil_moisture_pct") & (own["value"] >= _SOIL_SATURATED))]
+    g = own.groupby(_TRAJECTORY_KEYS, sort=False, observed=True)["value"]
+    # "var" (pandas' built-in, ddof=1 by default - identical to var(ddof=1)) uses the
+    # cythonised groupby path; a Python lambda here does not; measured real difference at
+    # full-year training volume, not visible in any small test. See CLAUDE.md: this repo
+    # fails on volume, not on a green suite.
+    own_stats = g.agg(mean0="mean", var0="var", n0="count").reset_index()
+    del own
+
+    out = trajectories.sort_values(_TRAJECTORY_KEYS, ignore_index=True)
+    out = out.merge(own_stats, on=_TRAJECTORY_KEYS, how="left")
+    del own_stats
+
+    k = max(int(window), 1)
+    grp = out.groupby(["region_id", "variable", "valid_date"], sort=False,
+                      observed=True)["fc_mean"]
+    # column j (1-indexed) is the ensemble mean j cycles back; NaN once a trajectory has
+    # no earlier cycle - never treated as zero.
+    prior = (np.column_stack([grp.shift(j).to_numpy(dtype=float) for j in range(1, k)])
+            if k > 1 else np.empty((len(out), 0)))
+
+    n0 = out["n0"].to_numpy(dtype=float)
+    mean0 = out["mean0"].to_numpy(dtype=float)
+    var0 = out["var0"].to_numpy(dtype=float)
+    n_prior = np.sum(~np.isnan(prior), axis=1) if prior.size else np.zeros(len(out))
+    sum_prior = np.nansum(prior, axis=1) if prior.size else np.zeros(len(out))
+    pool_size = n0 + n_prior
+
+    with np.errstate(invalid="ignore", divide="ignore"):
+        pool_mean = (n0 * mean0 + sum_prior) / pool_size
+        within = np.where(n0 >= 2, (n0 - 1) * var0, 0.0)
+        own_between = n0 * (mean0 - pool_mean) ** 2
+        prior_between = (np.nansum((prior - pool_mean[:, None]) ** 2, axis=1)
+                        if prior.size else np.zeros(len(out)))
+        ss = within + own_between + prior_between
+        pool_var = np.where(pool_size >= 2, ss / (pool_size - 1), np.nan)
+        pool_std = np.sqrt(pool_var)
+
+        own_std = np.where(n0 >= 2, np.sqrt(var0), np.nan)
+        ratio = np.where(n_prior == 0, 1.0, pool_std / own_std)
+        ratio = np.where(n0 < 2, np.nan, ratio)
+
+    out["laf_pool_mean"] = pool_mean
+    out["laf_pool_std"] = pool_std
+    out["laf_pool_size"] = pool_size
+    out["laf_spread_ratio"] = ratio
+    return out[_TRAJECTORY_KEYS + all_feats]
+
+
+def _merge_laf(paired: pd.DataFrame, laf: pd.DataFrame) -> pd.DataFrame:
+    feats = ["laf_pool_mean", "laf_pool_std", "laf_pool_size", "laf_spread_ratio"]
+    if laf.empty:
+        for col in feats:
+            paired[col] = np.nan
+        return paired
+    return paired.merge(laf, on=_TRAJECTORY_KEYS, how="left")
+
+
 def compute_jump_climatology(frame: pd.DataFrame) -> dict:
     """(region_id, variable) -> mean jump_abs_change. Fit on TRAINING rows only.
 
@@ -312,6 +436,23 @@ def attach_jump_climatology(frame: pd.DataFrame, climatology: dict | None) -> pd
     del key
     clim = np.where(clim > 0, clim, np.nan)
     frame[col] = pd.to_numeric(frame["jump_abs_change"], errors="coerce").to_numpy(float) / clim
+    return frame
+
+
+def attach_district_descriptors(frame: pd.DataFrame) -> pd.DataFrame:
+    """Merge the static per-district descriptors (C4) onto `frame` by region_id.
+
+    A left merge, not a lookup dict: the descriptor table is ~666 rows regardless of how
+    many rows `frame` has, so this is a thin-table merge like attach_jump_climatology, not
+    a per-row Python call. A region_id absent from the descriptor table (should not
+    happen - the descriptors are built from the same registry every region_id comes from)
+    gets NaN, never a fabricated value.
+    """
+    desc = idist.load_district_descriptors()
+    key = pd.DataFrame({"region_id": frame["region_id"].astype(str).to_numpy()})
+    merged = key.merge(desc, on="region_id", how="left")
+    for col in DISTRICT_DESCRIPTOR_FEATURES:
+        frame[col] = merged[col].to_numpy()
     return frame
 
 

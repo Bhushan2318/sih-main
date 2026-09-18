@@ -35,6 +35,9 @@ from app.db.base import resolve_path
 REGISTRY_FILENAME = "india_districts.json"
 WEIGHTS_FILENAME = "district_grid_weights.parquet"
 GEOJSON_FILENAME = "india_districts.geojson"
+# C4: static district descriptors (state_id, centroid, area_km2, border_distance_km) that
+# replace region_id as a model feature - see scripts/build_district_descriptors.py.
+DESCRIPTORS_FILENAME = "district_descriptors.parquet"
 
 # Weights were built on a 0.25 deg grid; a lat/lon is matched to a cell by rounding to
 # that grid, so a feed whose points sit on the same grid needs no interpolation.
@@ -92,6 +95,15 @@ def load_registry() -> tuple[DistrictRecord, ...]:
         )
         for r in raw
     )
+
+
+@functools.lru_cache(maxsize=1)
+def load_district_descriptors() -> pd.DataFrame:
+    """(region_id, state_id, centroid_lat, centroid_lon, area_km2, border_distance_km) -
+    one static row per district. Built once by scripts/build_district_descriptors.py from
+    the same registry and geometry this module already loads; not regenerated here."""
+    path = geo_dir() / DESCRIPTORS_FILENAME
+    return pd.read_parquet(path)
 
 
 @functools.lru_cache(maxsize=1)
