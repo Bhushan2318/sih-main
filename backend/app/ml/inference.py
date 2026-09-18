@@ -190,7 +190,7 @@ def score_cycle(
         mask = frame["variable"] == var
         if not mask.any():
             continue
-        X = _prep(frame.loc[mask], cols, fe_categorical=True)
+        X = _prep(frame.loc[mask], cols)
         pred.loc[mask] = model.predict(X)
     frame["pred_err"] = pred
 
@@ -202,7 +202,7 @@ def score_cycle(
         scored, scored["pred_err"], state.thresholds.p90_error,
         bust_threshold=None, historical_bust_freq=state.historical_bust_freq or None,
     )
-    X_evt = _prep(events, state.classifier_columns, fe_categorical=False)
+    X_evt = _prep(events, state.classifier_columns)
     events["bust_probability"] = state.classifier.predict_proba(X_evt)[:, 1]
     events["risk_band"] = [state.thresholds.band_for(p) for p in events["bust_probability"]]
 
@@ -224,7 +224,7 @@ def score_cycle(
     return result
 
 
-def _prep(df: pd.DataFrame, cols: list, fe_categorical: bool) -> pd.DataFrame:
+def _prep(df: pd.DataFrame, cols: list) -> pd.DataFrame:
     categorical = {"region_id", "season"}
     X = pd.DataFrame(index=df.index)
     for c in cols:
