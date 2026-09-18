@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 import pandas as pd
+
+log = logging.getLogger(__name__)
 
 try:
     import shap  # type: ignore
@@ -50,8 +54,8 @@ def _shap_values(model, X: pd.DataFrame) -> np.ndarray | None:
         return np.asarray(vals)
     except Exception as exc:  # noqa: BLE001
         # Still a fallback, no longer a silent one: the served explanation changes kind here.
-        print(f"SHAP failed ({type(exc).__name__}: {str(exc)[:200]}); "
-              f"falling back to feature importance", flush=True)
+        log.error("SHAP failed (%s: %s); falling back to feature importance",
+                  type(exc).__name__, str(exc)[:200])
         return None
 
 

@@ -69,7 +69,7 @@ def score_run_on_year(run_id: str, year: int) -> pd.DataFrame:
         mask = paired["variable"] == var
         if not mask.any():
             continue
-        X = inference._prep(paired.loc[mask], cols, fe_categorical=True)
+        X = inference._prep(paired.loc[mask], cols)
         pred.loc[mask] = model.predict(X)
 
     events = pv.build_event_frame(
@@ -77,7 +77,7 @@ def score_run_on_year(run_id: str, year: int) -> pd.DataFrame:
     if events.empty or "y_bust" not in events:
         raise ValueError(f"{year} produced no scoreable events against {run_id}'s thresholds")
 
-    X_evt = inference._prep(events, state.classifier_columns, fe_categorical=False)
+    X_evt = inference._prep(events, state.classifier_columns)
     events["model_proba"] = state.classifier.predict_proba(X_evt)[:, 1]
     events["split"] = "test"
     events["scored_run_id"] = run_id

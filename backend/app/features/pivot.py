@@ -23,8 +23,15 @@ def build_event_frame(
     p90_error: dict,
     bust_threshold: dict | None,
     historical_bust_freq: dict | None = None,
+    copy_input: bool = True,
 ) -> pd.DataFrame:
-    df = paired.copy()
+    """`copy_input=False` skips the defensive copy for a caller that owns `paired`
+    exclusively (freshly loaded, never read again afterward) - real crash
+    2026-09-17/18: the copy doubled a 76.5M-row training-year frame's footprint
+    right before the groupby below needed its own ~584 MiB contiguous block, and
+    that block was what ran out. Freeing fold_models first (see
+    _build_pooled_year_events_worker.py) was not enough on its own."""
+    df = paired.copy() if copy_input else paired
     df["pred_err"] = pred_err.reindex(df.index).to_numpy()
     # `variable` is categorical in the retrain's paired frame. Series.map on a categorical
     # returns a categorical when every category maps to a distinct value - true for a
