@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Topology } from "topojson-specification";
 import type { RiskBand } from "../api/types";
 import { AlertsPage } from "../components/alerts/AlertsPage";
+import { BaselineLadderCard } from "../components/dashboard/BaselineLadderCard";
 import { BustSummaryChart } from "../components/dashboard/BustSummaryChart";
 import { FeedFreshness } from "../components/dashboard/FeedFreshness";
 import { HeroDivergence } from "../components/dashboard/HeroDivergence";
@@ -153,6 +154,7 @@ export function DashboardPage() {
           <section className={heroFills ? "screen1" : undefined}>
             <HeroDivergence data={ensembleQuery.data} />
             <KpiStrip all={allRegions} day={regions} />
+            <BaselineLadderCard data={statusQuery.data} />
             {heroFills ? <OpeningCues onReplay={() => setView("replay")} /> : null}
             {regions?.regions.length ? (
               <RiskTicker
