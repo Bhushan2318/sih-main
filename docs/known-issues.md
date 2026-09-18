@@ -335,6 +335,29 @@ here rather than discovered live.
   test read the parquet only) - use it for any multi-year finalise, not just as an
   optimisation. Fixed by deleting the runaway `.partial` and re-running 2014/2015 with
   `--no-csv`; both finalised correctly once disk pressure was gone. Measured 2026-09-18.
+- **Subprocess isolation for the per-year event-building worker was not, by itself,
+  enough - the crash it was built to prevent recurred inside it.** `_build_pooled_year_
+  events_worker.py`'s own docstring already documented the 2026-09-15 (v9) crash this
+  subprocess exists to avoid: `ArrayMemoryError` in pandas' groupby internals, ~586 MiB,
+  on a full year's row count. It recurred anyway, twice, each ~1.8 hours into a real
+  3-year pooled run (2026-09-17/18) - process isolation stopped it accumulating ACROSS
+  years, but within one worker's own lifetime, `fold_models` (real XGBoost Booster
+  objects, up to 24 of them for 8 variables x 3 folds) and the `job` dict holding them
+  stayed resident through the whole OOF-prediction loop and were never freed before
+  `build_event_frame`'s own big allocation needed its contiguous block.
+  `full_retrain_pooled` itself already does exactly this cleanup
+  (`del fold_models; gc.collect()`) - but only after the subprocess RETURNS, which never
+  helped the worker's own peak. Fixed by freeing `fold_models`/`job` explicitly inside
+  the worker, right before the call that needs the headroom, plus a retry
+  (`_run_year_events_subprocess` now tries twice) since a fresh OS process is a
+  genuinely different memory state, not a hope - at ~1.8 hours to reach this point,
+  losing the whole job to one allocation is a far worse trade than the retry's cost.
+  Per the existing caveat on this exact class of fix elsewhere in this file: Python's GC
+  cannot defragment a process's native heap, only the OS reclaiming the whole process
+  can - `gc.collect()` reduces the chance, it does not guarantee it, which is why the
+  retry exists too. Not yet re-verified against a full real run (each attempt costs
+  ~1.8 hours to even reach this point) - fixed and reasoned from the diagnosis, not
+  re-measured end to end. Found 2026-09-18.
 
 ## Data
 
