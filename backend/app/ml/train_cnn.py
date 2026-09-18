@@ -31,6 +31,7 @@ import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -48,9 +49,10 @@ os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
 # fails with a generic "DLL initialization routine failed" from onnx's compiled
 # extension - see the matching comment in tests/conftest.py for the full story and the
 # minimal repro. `app.ml.classifier` below imports pandas/xgboost before this module
-# otherwise would ever import torch (done lazily, inside functions, in app.ml.cnn), so
-# the guard belongs here, not there. A no-op today - nothing here calls export_encoder
-# yet - kept so wiring it in later doesn't reopen this on Windows.
+# otherwise would ever import torch (app.ml.cnn imports it at module level, but this file
+# only reaches that module lazily, inside fit_normalizer), so the guard belongs here, not
+# there. A no-op today - nothing here calls export_encoder yet - kept so wiring it in
+# later doesn't reopen this on Windows.
 try:
     import torch  # noqa: F401
 except ImportError:
@@ -58,6 +60,13 @@ except ImportError:
 
 from app.ingestion import grid_fields as gf
 from app.ml import classifier as clf_mod
+
+if TYPE_CHECKING:
+    # app.ml.cnn imports torch at module level; this file must not, so callers who only
+    # need FieldIndex/streaming utilities are not forced to have torch installed. The
+    # annotations below are strings (from __future__ import annotations), so this import
+    # never runs - it exists solely so static analysis can resolve the name.
+    from app.ml.cnn import Normalizer
 
 # Below this, a run says nothing about the architecture - only about the sample size.
 MIN_TRAIN_CYCLES = 120
@@ -225,7 +234,12 @@ def build_index(grid_dir, events, region_ids: list[str]) -> FieldIndex:
 
 
 def build_arrays(bundles: dict, events, region_ids: list[str]):
-    """Grid bundles + scored events -> (X, mask, extra, y, aux, cycle) aligned by sample.
+    """Grid bundles + scored events -> (X, extra, y, aux, cycle) aligned by sample.
+
+    Legacy: materialises every bundle up front, which is what made `train()` need ~71 GB
+    for a full year (see the streaming path - build_index/fit_streaming/predict_streaming -
+    that replaced it there; a test pins that `train()` never calls this any more). Kept
+    only because other tests still exercise this alignment logic directly.
 
     One sample is a (cycle, lead day) pair: the whole field, and one label per district.
     Districts are columns, not rows, because the network predicts all 666 at once - which
@@ -240,7 +254,7 @@ def build_arrays(bundles: dict, events, region_ids: list[str]):
     ev = ev[ev["_ri"].notna()]
     ev["_ri"] = ev["_ri"].astype(int)
 
-    X, M, EX, Y, AUX, CYC = [], [], [], [], [], []
+    X, EX, Y, AUX, CYC = [], [], [], [], []
     n_reg = len(region_ids)
     for init, bundle in sorted(bundles.items()):
         rows = ev[ev["init_date"] == init]

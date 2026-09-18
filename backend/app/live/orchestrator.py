@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 import threading
 from datetime import date, datetime, timedelta, timezone
-from pathlib import Path
 from typing import Optional
 
 from sqlalchemy.orm import Session
