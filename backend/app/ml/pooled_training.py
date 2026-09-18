@@ -375,14 +375,26 @@ def _run_year_events_subprocess(cached_path: Path, train_cycles: set, hbf: dict,
     (v9), ArrayMemoryError inside pandas' own groupby machinery on a 76.7M-row year,
     the same fragmentation signature the per-variable training subprocess fix (below)
     already solved for the training phase. Only the small, event-reduced result needs
-    to survive back into the parent."""
+    to survive back into the parent.
+
+    Real crash 2026-09-17/18: process isolation alone was not enough - the identical
+    ~586 MiB groupby allocation failed again, twice, each ~1.8 hours into a real 3-year
+    pool (fixed in the worker itself by freeing fold_models before the call - see its
+    docstring). Retrying once here too, same reasoning as `_run_variable_subprocess`'s
+    retry: a fresh OS process is a genuinely different memory state, not a hope, and at
+    ~1.8 hours to reach this point, losing the whole job to one allocation is a far
+    worse trade than one retry costing a few extra seconds of subprocess startup."""
     job = {"cached_path": cached_path, "train_cycles": train_cycles, "hbf": hbf,
           "p90_error": p90_error, "bust_threshold": bust_threshold,
           "fold_models": fold_models, "fold_of": fold_of, "columns": columns}
-    result = _run_worker_subprocess(_YEAR_EVENTS_WORKER_SCRIPT, job)
-    if result.get("error"):
-        raise RuntimeError(f"year-events worker failed:\n{result['error']}")
-    return result["event_frame"]
+    errors = []
+    for attempt in range(2):
+        result = _run_worker_subprocess(_YEAR_EVENTS_WORKER_SCRIPT, job)
+        if not result.get("error"):
+            return result["event_frame"]
+        errors.append(result["error"])
+    raise RuntimeError(
+        f"year-events worker failed on both attempts:\n" + "\n---\n".join(errors))
 
 
 def build_pooled_train_events(cached_paths: dict, train_years: list, train_cycles: set,
