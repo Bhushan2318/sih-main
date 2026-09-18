@@ -526,7 +526,21 @@ def _cuda_available() -> bool:
     without torch - CI's core install, any XGBoost-only environment - before the
     "no GPU, everything on CPU" branch below could run. No torch means no probe, which
     is the same answer as no GPU.
+
+    `POOLED_FORCE_CPU=1` overrides this to False regardless of the real answer. Added
+    2026-09-18: a real 3-year pool's parent process was observed at 37.8 GB private
+    bytes with a near-zero working set (Get-Process, live, mid-run) - the exact
+    "committed but not resident" signature of severe Windows memory pressure - right
+    before the year-events worker failed on the same ~584 MiB allocation for the fourth
+    time running, on two different (fresh-process, non-fragmented-by-definition)
+    attempts. GPU/CUDA paths have been the recurring source of trouble all session (the
+    CNN's own cuBLAS non-determinism, earlier). This is a genuinely different
+    configuration to test that hypothesis, not another retry of the identical one that
+    already failed four times - not a confirmed diagnosis.
     """
+    import os
+    if os.environ.get("POOLED_FORCE_CPU") == "1":
+        return False
     try:
         import torch
     except ImportError:
