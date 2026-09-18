@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import functools
+
 import numpy as np
 import pandas as pd
 
+from app.config import settings
+from app.db.base import resolve_path
 from app.utils import india_districts as idist
 
 FORECAST = "forecast"
@@ -56,6 +60,15 @@ TRAJECTORY_COLUMNS = _TRAJECTORY_KEYS + ["fc_mean"]
 # Same mask build_training_frame applies to paired rows: the archive saturates soil
 # moisture at 100 where it has no value.
 _SOIL_SATURATED = 99.5
+
+# C3, MJO (Madden-Julian Oscillation): a global daily index, not per-district, attached
+# by an as-of join on init_date - see scripts/fetch_mjo_index.py for why NOAA PSL's OMI
+# rather than BOM's RMM, and for the RMM1/RMM2 transform.
+MJO_FEATURES = ("mjo_rmm1", "mjo_rmm2", "mjo_amplitude")
+# A forecast issued more than this many days after the last known MJO reading treats it
+# as unknown, not stale-but-current - the MJO evolves on a ~30-90 day cycle, so a few
+# days' lag is a reasonable "still current" window, not an arbitrary one.
+MJO_ASOF_TOLERANCE_DAYS = 5
 
 
 def _season(month: pd.Series) -> pd.Series:
@@ -135,6 +148,7 @@ def build_training_frame(
     paired["month"] = paired["valid_date"].dt.month
     paired["season"] = _season(paired["month"])
     paired = attach_district_descriptors(paired)
+    paired = attach_mjo_index(paired)
     paired["region_id"] = paired["region_id"].astype("category")
 
     grp = paired.groupby(EVENT_KEYS + ["variable"], observed=True)["forecast_value"]
@@ -453,6 +467,58 @@ def attach_district_descriptors(frame: pd.DataFrame) -> pd.DataFrame:
     key = pd.DataFrame({"region_id": frame["region_id"].astype(str).to_numpy()})
     merged = key.merge(desc, on="region_id", how="left")
     for col in DISTRICT_DESCRIPTOR_FEATURES:
+        frame[col] = merged[col].to_numpy()
+    return frame
+
+
+@functools.lru_cache(maxsize=1)
+def load_mjo_index() -> pd.DataFrame:
+    """(date, mjo_rmm1, mjo_rmm2, mjo_amplitude) - one row per calendar day, built once
+    by scripts/fetch_mjo_index.py. Not regenerated here.
+
+    A missing file degrades to an empty index - MJO becomes NaN everywhere, not a hard
+    failure - the same discipline `_merge_jumpiness`/`_merge_laf` already apply to a
+    missing climatology: "the code path is complete; the data is not there" is a real,
+    named state (docs/known-issues.md), not something training should crash over.
+    """
+    path = resolve_path(settings.data_dir) / "mjo_omi_index.parquet"
+    if not path.exists():
+        return pd.DataFrame(columns=["date", *MJO_FEATURES])
+    df = pd.read_parquet(path, columns=["date", *MJO_FEATURES])
+    df["date"] = pd.to_datetime(df["date"])
+    return df.sort_values("date", ignore_index=True)
+
+
+def attach_mjo_index(frame: pd.DataFrame, mjo: pd.DataFrame | None = None) -> pd.DataFrame:
+    """Merge the global daily MJO index (C3) onto `frame` by an as-of join on init_date.
+
+    Backward-only (`direction="backward"`): the MJO reading for a day after a forecast
+    was issued could not have been known at issue time, so only readings on or before
+    init_date are ever eligible - the same causality discipline as C1's jumpiness and
+    C2's time-lagged ensemble. `tolerance` refuses a match older than
+    MJO_ASOF_TOLERANCE_DAYS: a forecast issued long after the last known reading gets an
+    unknown MJO state, not a stale one presented as current.
+    """
+    if mjo is None:
+        mjo = load_mjo_index()
+    if mjo.empty:
+        for col in MJO_FEATURES:
+            frame[col] = np.nan
+        return frame
+    # A member-grain frame can be millions of rows over a handful of distinct cycles;
+    # as-of join only the unique init_dates, then map back with a plain equality merge -
+    # the same "thin-table merge, not a per-row lookup" discipline as
+    # attach_district_descriptors.
+    dates = pd.DataFrame({
+        "init_date": pd.to_datetime(frame["init_date"]).drop_duplicates().sort_values(),
+    })
+    asof = pd.merge_asof(
+        dates, mjo.sort_values("date"), left_on="init_date", right_on="date",
+        direction="backward", tolerance=pd.Timedelta(days=MJO_ASOF_TOLERANCE_DAYS),
+    )[["init_date", *MJO_FEATURES]]
+    key = pd.DataFrame({"init_date": pd.to_datetime(frame["init_date"]).to_numpy()})
+    merged = key.merge(asof, on="init_date", how="left")
+    for col in MJO_FEATURES:
         frame[col] = merged[col].to_numpy()
     return frame
 

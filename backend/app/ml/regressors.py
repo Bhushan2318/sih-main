@@ -23,6 +23,9 @@ NUMERIC_FEATURES = [
     # saw labelled in training still has a latitude, a size and a distance from the
     # country's edge, so these generalise where a 666-level categorical cannot.
     "centroid_lat", "centroid_lon", "area_km2", "border_distance_km", "elevation_mean",
+    # C3: global daily MJO state (see app.features.engineering.MJO_FEATURES), attached by
+    # an as-of join on init_date - identical for every district issued the same day.
+    "mjo_rmm1", "mjo_rmm2", "mjo_amplitude",
 ]
 # state_id (~36 levels) replaces region_id (666 levels, only ~34 ever labelled) as the
 # district-identity feature - see NUMERIC_FEATURES' C4 comment above.

@@ -572,8 +572,42 @@ here rather than discovered live.
   other district-level value in this project (temperature, rainfall, etc. are the same
   cell-level average), so it is consistent with the rest of the feature set, not a new
   weakness specific to elevation.
-- **Not re-scored on the ladder separately from C2/C4's original before/after.**
-  `elevation_mean` landed after the 2026-09-17 ladder run above; it is one more numeric
-  feature alongside the other four descriptors, not expected to change that comparison's
-  conclusion (no regression, not yet proven at scale), but it has not been measured on
-  its own.
+- **Re-scored on the same real 2019 CI sample as C2/C4's original ladder.** ROC-AUC
+  unchanged at 0.7426, Brier 0.2037 -> 0.2038, F1 0.6400 -> 0.6450 - within noise, as
+  expected for one more numeric feature on a 36-district sample. Same caveat as before:
+  confirms no regression, not a proven gain at district scale.
+
+### MJO (C3), added 2026-09-18
+
+- **This is NOAA PSL's OMI index, not BOM's canonical RMM index.** BOM's real-time text
+  file (http://www.bom.gov.au/climate/mjo/graphics/rmm.74toRealtime.txt) returns HTTP 403
+  - "The Bureau of Meteorology website does not support web scraping" - for any
+  automated request, verified 2026-09-18. `scripts/fetch_mjo_index.py` uses NOAA PSL's OMI
+  instead (real, no-auth, government-hosted, daily since 1991) and transforms it to the
+  RMM1/RMM2 convention per PSL's own documented mapping (RMM1 = OMI PC2, RMM2 = -OMI
+  PC1), correlation > 0.93 with BOM's RMM per PSL. Anyone comparing this project's
+  mjo_rmm1/mjo_rmm2 against a paper or plot that cites BOM's RMM directly should expect
+  small differences, not an exact match.
+- **No discrete MJO phase (1-8).** Phase-boundary conventions differ across sources and
+  could not be independently verified given BOM's access block, so only the continuous
+  mjo_rmm1/mjo_rmm2/mjo_amplitude are built. A model can still learn phase-like structure
+  from the continuous pair directly.
+- **MISO (the Indian-region monsoon analogue C3 was also named for) is not built.** No
+  verified public real-time source was found for it.
+- **The MJO index is global, not per-district**, and is attached by a backward as-of join
+  on init_date, tolerant of up to `MJO_ASOF_TOLERANCE_DAYS` (5) days of gap - a forecast
+  issued longer after the last known reading gets an unknown MJO state, not a stale one.
+  `scripts/fetch_mjo_index.py` is re-run in full each time (not idempotent like the geo
+  builds): the source is a small, continuously-growing daily file (~13,000 rows, under
+  1 MB as of 2026-09-18), not a multi-GB archive, so a full re-fetch is the simplest
+  correct way to pick up new days.
+- **`load_mjo_index` degrades to all-NaN, not a crash, when the cache file is absent** -
+  the same "the code path is complete; the data is not there" discipline as C1's
+  jump_* columns, so a fresh checkout that has not yet run the fetch script still trains,
+  just without this feature contributing anything.
+- **Measured on the same real 2019 CI sample.** Before C3 (with C1/C2/C4 complete):
+  ROC-AUC 0.7426, Brier 0.2038, F1 0.6450. After C3: ROC-AUC 0.7516, Brier 0.2010, F1
+  0.6681 - a small, real improvement in the same direction on every metric, though on
+  1,050 test events this is not distinguishable from noise on its own (the reported 95%
+  CI on ROC-AUC is roughly +-0.05 wide). Not proof C3 adds real skill; consistent with
+  it not hurting.
