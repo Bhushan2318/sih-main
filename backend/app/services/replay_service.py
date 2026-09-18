@@ -5,6 +5,7 @@ from typing import Optional
 import pandas as pd
 
 from app.api import schemas
+from app.ingestion.canonical_schema import CIRCULAR_VARIABLES
 from app.ml import inference
 from app.services.region_service import (
     NOT_TRAINED_MSG,
@@ -31,6 +32,7 @@ def _cycle_summary(state, init) -> Optional[schemas.ReplayCycleSummary]:
 
     verified_leads = 0
     peak_abs_err = None
+    peak_dom_var = None
     growth = 0.0
     pv = sc.per_variable
     if not pv.empty and "observed_value" in pv.columns:
@@ -42,8 +44,12 @@ def _cycle_summary(state, init) -> Optional[schemas.ReplayCycleSummary]:
             & (pv["region_id"].astype(str) == str(peak["region_id"]))
             & (pv["variable"] == dom)
         ]
-        if not prz.empty:
+        # wind_direction_deg is circular (0 and 360 are the same bearing); a naive abs
+        # difference can read as a ~345 degree "miss" for an actual 15 degree one, so it's
+        # excluded here the same way ensemble_service and _focus_variable_for exclude it.
+        if not prz.empty and dom not in CIRCULAR_VARIABLES:
             peak_abs_err = float((prz["predicted_value"] - prz["observed_value"]).abs().mean())
+            peak_dom_var = str(dom)
 
     near = ev.loc[ev["lead_time_days"] <= 3, "bust_probability"].mean()
     far = ev.loc[ev["lead_time_days"] >= 4, "bust_probability"].mean()
@@ -62,6 +68,8 @@ def _cycle_summary(state, init) -> Optional[schemas.ReplayCycleSummary]:
         verified=verified_leads > 0,
         verified_lead_days=verified_leads,
         peak_region_abs_error=_f(peak_abs_err),
+        peak_region_variable=peak_dom_var,
+        peak_region_unit=_unit(peak_dom_var),
         medium_range_growth=round(growth, 4),
     )
 
@@ -225,7 +233,7 @@ def _summarise(sc: inference.ScoredCycle, steps: list[schemas.ReplayLeadStep]) -
 def _focus_variable_for(v_region: pd.DataFrame, dominant: Optional[str], state) -> Optional[str]:
     if v_region.empty:
         return None
-    if dominant and dominant != "wind_direction_deg" and (v_region["variable"] == dominant).any():
+    if dominant and dominant not in CIRCULAR_VARIABLES and (v_region["variable"] == dominant).any():
         return dominant
     v = v_region.copy()
     v["abs_err"] = (v["predicted_value"] - v["observed_value"]).abs()
@@ -246,7 +254,7 @@ def _focus_for_region(
         (pv["region_id"].astype(str) == region_id)
         & pv["observed_value"].notna()
         & pv["predicted_value"].notna()
-        & (pv["variable"] != "wind_direction_deg")
+        & (~pv["variable"].isin(CIRCULAR_VARIABLES))
     ].copy()
     var = _focus_variable_for(v, dominant, state)
     if var is None:
