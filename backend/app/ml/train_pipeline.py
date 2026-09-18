@@ -72,8 +72,10 @@ _OBS_PAD_DAYS = 3
 # an 88.7 MB frame - 61% - because pandas stores an object column as one pointer per row.
 # variable has 8 distinct values, ensemble_member_id 5, value_type and verification_status
 # 2 each. region_id and season were already categorical; these were simply missed.
+# state_id (C4, ~36 real values) merges in from district_descriptors.parquet as a plain
+# object column - the same miss, caught before it shipped rather than after.
 _CATEGORICAL_PAIRED = ("variable", "value_type", "verification_status",
-                       "ensemble_member_id")
+                       "ensemble_member_id", "state_id")
 
 
 def _downcast_paired(df: "pd.DataFrame") -> "pd.DataFrame":

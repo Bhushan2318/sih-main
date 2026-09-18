@@ -225,7 +225,9 @@ def score_cycle(
 
 
 def _prep(df: pd.DataFrame, cols: list, fe_categorical: bool) -> pd.DataFrame:
-    categorical = {"region_id", "season"}
+    # C4: state_id replaces region_id as the district-identity feature (see
+    # app.ml.regressors.CATEGORICAL_FEATURES / app.ml.classifier.CATEGORICAL).
+    categorical = {"state_id", "season"}
     X = pd.DataFrame(index=df.index)
     for c in cols:
         if c in df.columns:

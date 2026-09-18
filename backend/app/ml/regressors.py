@@ -16,8 +16,17 @@ NUMERIC_FEATURES = [
     "pressure_rate_of_change", "moisture_rate_of_change",
     "forecast_error_lag", "historical_bust_frequency_region_season",
     "jump_abs_change", "jump_std", "jump_sign_flips", "jump_rel_climatology",
+    # C2: time-lagged ensemble (see app.features.engineering.LAF_FEATURES).
+    "laf_pool_mean", "laf_pool_std", "laf_pool_size", "laf_spread_ratio",
+    # C4: district descriptors, replacing region_id as a raw feature (see
+    # app.features.engineering.DISTRICT_DESCRIPTOR_FEATURES) - a district the model never
+    # saw labelled in training still has a latitude, a size and a distance from the
+    # country's edge, so these generalise where a 666-level categorical cannot.
+    "centroid_lat", "centroid_lon", "area_km2", "border_distance_km",
 ]
-CATEGORICAL_FEATURES = ["region_id", "season"]
+# state_id (~36 levels) replaces region_id (666 levels, only ~34 ever labelled) as the
+# district-identity feature - see NUMERIC_FEATURES' C4 comment above.
+CATEGORICAL_FEATURES = ["state_id", "season"]
 CONCURRENT_PREFIX = "fc_"
 
 XGB_PARAMS = dict(

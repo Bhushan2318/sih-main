@@ -17,11 +17,25 @@ import pandas as pd
 # Measured against the real 2017 store on 2026-09-10 by running
 # fe.build_training_frame over one cycle: 10,695 rows, 28 columns. Not transcribed from
 # the feature code - printed from the frame it actually produces.
+#
+# C4 (2026-09-17) added the five district-descriptor columns - state_id, centroid_lat,
+# centroid_lon, area_km2, border_distance_km - printed from a real build_training_frame
+# call and inserted where attach_district_descriptors actually places them: right after
+# season, before ensemble_spread.
+#
+# C2 (2026-09-17) added the four time-lagged-ensemble columns - laf_pool_mean,
+# laf_pool_std, laf_pool_size, laf_spread_ratio - printed from a real build_training_frame
+# call and inserted where they actually land: right after jump_rel_climatology, before
+# month.
 PAIRED_ROW_COLUMNS: tuple[str, ...] = (
     "region_id", "variable", "valid_date", "forecast_value", "value_type",
     "init_date", "lead_time_days", "ensemble_member_id", "observed_value",
     "verification_status", "abs_error", "jump_abs_change", "jump_std",
-    "jump_sign_flips", "jump_rel_climatology", "month", "season", "ensemble_spread",
+    "jump_sign_flips", "jump_rel_climatology",
+    "laf_pool_mean", "laf_pool_std", "laf_pool_size", "laf_spread_ratio",
+    "month", "season",
+    "state_id", "centroid_lat", "centroid_lon", "area_km2", "border_distance_km",
+    "ensemble_spread",
     "ensemble_member_count", "pressure_rate_of_change", "moisture_rate_of_change",
     "forecast_error_lag", "fc_atmospheric_moisture_kgm2", "fc_humidity_pct",
     "fc_pressure_hpa", "fc_rainfall_mm", "fc_soil_moisture_pct", "fc_temperature_c",
@@ -47,7 +61,13 @@ _KINDS: dict[str, str] = {
     "value_type": "C", "init_date": "M", "lead_time_days": "i",
     "ensemble_member_id": "C", "observed_value": "f", "verification_status": "C",
     "abs_error": "f", "jump_abs_change": "f", "jump_std": "f", "jump_sign_flips": "f",
-    "jump_rel_climatology": "f", "month": "i", "season": "C", "ensemble_spread": "f",
+    "jump_rel_climatology": "f",
+    "laf_pool_mean": "f", "laf_pool_std": "f", "laf_pool_size": "f",
+    "laf_spread_ratio": "f",
+    "month": "i", "season": "C",
+    "state_id": "C", "centroid_lat": "f", "centroid_lon": "f", "area_km2": "f",
+    "border_distance_km": "f",
+    "ensemble_spread": "f",
     "ensemble_member_count": "i", "pressure_rate_of_change": "f",
     "moisture_rate_of_change": "f", "forecast_error_lag": "f",
     "fc_atmospheric_moisture_kgm2": "f", "fc_humidity_pct": "f", "fc_pressure_hpa": "f",
@@ -59,9 +79,11 @@ _KINDS: dict[str, str] = {
 # Columns that are legitimately sparse, and why. Nulls here are real signal, never a
 # value to fill: soil moisture is masked past day 3 and wind past day 5 in the archive,
 # the lag features have no predecessor on the first cycle, and the historical bust
-# frequency is absent until a climatology exists. The jump_* columns (C1) need earlier
-# cycles covering the same valid date - none exist at the reforecast's sampled density,
-# where initialisations are 14-35 days apart - and a climatology for the relative one.
+# frequency is absent until a climatology exists. The jump_* columns (C1) and
+# laf_pool_std/laf_spread_ratio (C2) need earlier cycles covering the same valid date -
+# none exist at the reforecast's sampled density, where initialisations are 14-35 days
+# apart - and a climatology for the relative jump. laf_spread_ratio and laf_pool_std are
+# additionally NaN whenever this cycle itself has fewer than 2 surviving members.
 NULLABLE: frozenset[str] = frozenset({
     "pressure_rate_of_change", "moisture_rate_of_change", "forecast_error_lag",
     "fc_atmospheric_moisture_kgm2", "fc_humidity_pct", "fc_pressure_hpa",
@@ -69,6 +91,7 @@ NULLABLE: frozenset[str] = frozenset({
     "fc_wind_direction_deg", "fc_wind_speed_ms",
     "historical_bust_frequency_region_season",
     "jump_abs_change", "jump_std", "jump_sign_flips", "jump_rel_climatology",
+    "laf_pool_std", "laf_spread_ratio",
 })
 
 
