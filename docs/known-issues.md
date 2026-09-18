@@ -359,6 +359,17 @@ here rather than discovered live.
   ~1.8 hours to even reach this point) - fixed and reasoned from the diagnosis, not
   re-measured end to end. Found 2026-09-18.
 
+## Geography
+
+- **Display and aggregation boundary geometry are the same GADM 4.1 file now**, not two
+  separate ones — CLAUDE.md's note about them being reviewed separately predates the
+  districts migration. India's 2021 Geospatial Data Guidelines (DST, 15 Feb 2021, clause
+  xiii) name Survey of India boundary data as the standard for any political map of
+  India; this project's district inclusion already matches India's official territorial
+  position by design (see `build_district_geo.py`), but nobody has compared GADM's
+  boundary *lines* against SoI's own data, and no such comparison is recorded anywhere.
+  Full writeup, sources, and a Datameet alternative comparison: `docs/boundary-geometry-licensing.md`.
+
 ## Data
 
 - **`docs/results.md` is generated, not committed.** Baselines are written into the model
