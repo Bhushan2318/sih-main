@@ -16,7 +16,9 @@ from sklearn.metrics import (
 
 from app.features.pivot import classifier_feature_columns
 
-CATEGORICAL = ["region_id", "season"]
+# C4: state_id (~36 levels) replaces region_id (666 levels, only ~34 ever labelled) as the
+# district-identity feature - see app.ml.regressors.CATEGORICAL_FEATURES.
+CATEGORICAL = ["state_id", "season"]
 
 XGB_PARAMS = dict(
     n_estimators=400,
