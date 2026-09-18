@@ -66,6 +66,7 @@ from shapely.geometry import Point, shape
 from shapely.ops import transform, unary_union
 
 from app.utils import india_districts as idist
+from scripts.fetch_grid_elevation import OUT_FILENAME as ELEVATION_FILENAME
 
 KM_PER_DEG_LAT = 110.574
 KM_PER_DEG_LON_AT_EQUATOR = 111.320
@@ -102,6 +103,15 @@ def _boundary_distance_km(point_lon: float, point_lat: float, boundary_geom,
     return float(p.distance(b))
 
 
+def _elevation_by_district(elevation: pd.DataFrame, aggregator=None) -> pd.Series:
+    """Area-weighted mean elevation per district, via the SAME DistrictGridAggregator
+    GEFS/ERA5 aggregation already uses (CLAUDE.md: one weight table) - not a second
+    spatial join. `elevation` is scripts/fetch_grid_elevation.py's output: one row per
+    weight-table cell, real values fetched from a real elevation source."""
+    agg = aggregator or idist.get_aggregator()
+    return agg.aggregate(elevation["lat"], elevation["lon"], elevation["elevation_m"])
+
+
 def _district_geometries() -> dict:
     """region_id -> unified Shapely geometry. A district can be more than one GeoJSON
     feature (disputed-territory dissolution in build_district_geo.py), so features
@@ -128,6 +138,14 @@ def build() -> pd.DataFrame:
     closed = unary_union([g.buffer(CLOSE_DEG) for g in geoms.values()]).buffer(-CLOSE_DEG)
     boundary = closed.boundary
 
+    elevation_path = idist.geo_dir() / ELEVATION_FILENAME
+    if not elevation_path.exists():
+        raise RuntimeError(
+            f"{elevation_path} does not exist - run "
+            "`python -m scripts.fetch_grid_elevation` first (CLAUDE.md: refuse rather "
+            "than fabricate a missing value).")
+    elevation_by_district = _elevation_by_district(pd.read_parquet(elevation_path))
+
     rows = []
     for rid, geom in geoms.items():
         d = registry.get(rid)
@@ -141,6 +159,7 @@ def build() -> pd.DataFrame:
             "area_km2": _polygon_area_km2(geom, d.centroid_lat, d.centroid_lon),
             "border_distance_km": _boundary_distance_km(
                 d.centroid_lon, d.centroid_lat, boundary, india_lat0, india_lon0),
+            "elevation_mean": elevation_by_district.get(rid, np.nan),
         })
     missing = set(registry) - set(geoms)
     if missing:
@@ -154,7 +173,7 @@ def main() -> None:
     path = idist.geo_dir() / OUT_FILENAME
     out.to_parquet(path, index=False)
     print(f"{len(out)} districts -> {path} ({path.stat().st_size / 1024:.1f} KB)")
-    print(out[["area_km2", "border_distance_km"]].describe().to_string())
+    print(out[["area_km2", "border_distance_km", "elevation_mean"]].describe().to_string())
 
 
 if __name__ == "__main__":

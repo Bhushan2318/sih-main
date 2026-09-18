@@ -12,6 +12,7 @@ OBSERVED = "observed"
 # region_id as a raw model feature - see scripts/build_district_descriptors.py.
 DISTRICT_DESCRIPTOR_FEATURES = (
     "state_id", "centroid_lat", "centroid_lon", "area_km2", "border_distance_km",
+    "elevation_mean",
 )
 
 _RATE_OF_CHANGE_VARS = {
