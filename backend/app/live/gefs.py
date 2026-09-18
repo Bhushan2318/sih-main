@@ -191,7 +191,7 @@ def choose_transport(init: date, hh: str, member: str = "gec00") -> str:
         _get(f"{S3_BUCKET}/{_s3_key(init, hh, member, 3)}.idx")
         return "s3"
     except Exception as exc:  # noqa: BLE001
-        raise CycleUnavailable(f"cycle {init} {hh}Z not published at NOMADS or S3: {exc}")
+        raise CycleUnavailable(f"cycle {init} {hh}Z not published at NOMADS or S3: {exc}") from exc
 
 
 def _extract_points(blob: bytes, cities: pd.DataFrame, scratch: Path) -> dict:
