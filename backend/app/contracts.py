@@ -27,6 +27,10 @@ import pandas as pd
 # laf_pool_std, laf_pool_size, laf_spread_ratio - printed from a real build_training_frame
 # call and inserted where they actually land: right after jump_rel_climatology, before
 # month.
+#
+# C4 (2026-09-18) completed with elevation_mean - the district descriptor deferred
+# earlier for needing a new external fetch (scripts/fetch_grid_elevation.py). Printed
+# from a real call: lands right after border_distance_km, before ensemble_spread.
 PAIRED_ROW_COLUMNS: tuple[str, ...] = (
     "region_id", "variable", "valid_date", "forecast_value", "value_type",
     "init_date", "lead_time_days", "ensemble_member_id", "observed_value",
@@ -35,6 +39,7 @@ PAIRED_ROW_COLUMNS: tuple[str, ...] = (
     "laf_pool_mean", "laf_pool_std", "laf_pool_size", "laf_spread_ratio",
     "month", "season",
     "state_id", "centroid_lat", "centroid_lon", "area_km2", "border_distance_km",
+    "elevation_mean",
     "ensemble_spread",
     "ensemble_member_count", "pressure_rate_of_change", "moisture_rate_of_change",
     "forecast_error_lag", "fc_atmospheric_moisture_kgm2", "fc_humidity_pct",
@@ -66,7 +71,7 @@ _KINDS: dict[str, str] = {
     "laf_spread_ratio": "f",
     "month": "i", "season": "C",
     "state_id": "C", "centroid_lat": "f", "centroid_lon": "f", "area_km2": "f",
-    "border_distance_km": "f",
+    "border_distance_km": "f", "elevation_mean": "f",
     "ensemble_spread": "f",
     "ensemble_member_count": "i", "pressure_rate_of_change": "f",
     "moisture_rate_of_change": "f", "forecast_error_lag": "f",
