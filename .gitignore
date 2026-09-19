@@ -77,3 +77,7 @@ backend/data/samples/grids-*/
 backend/data/samples/parts-*/
 backend/data/samples/_era5_cells/
 *.db-journal
+
+# Local run-orchestration scratch (machine-specific paths, not shared)
+backend/data/_*.sh
+backend/data/_resolution_fixed

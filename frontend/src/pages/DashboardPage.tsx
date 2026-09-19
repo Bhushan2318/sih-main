@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Topology } from "topojson-specification";
 import type { RiskBand } from "../api/types";
 import { AlertsPage } from "../components/alerts/AlertsPage";
@@ -18,6 +18,7 @@ import { AboutPage } from "../components/about/AboutPage";
 import { ReplayView } from "../components/replay/ReplayView";
 import { useAllRegions, useEnsembleDivergence, useModelStatus } from "../hooks/useDashboardData";
 import { useLiveSocket } from "../hooks/useLiveSocket";
+import { stateNamesFrom } from "../lib/stateNames";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 
 type View = "live" | "alerts" | "model" | "replay" | "about";
@@ -49,6 +50,8 @@ export function DashboardPage() {
   useEffect(() => {
     loadTopology().then(setTopology).catch(setTopoError);
   }, []);
+
+  const stateNames = useMemo(() => stateNamesFrom(topology), [topology]);
 
   const allRegions = regionsQuery.data;
   const regions =
@@ -159,6 +162,7 @@ export function DashboardPage() {
                 regions={regions.regions}
                 leadDay={regions.lead_time_days}
                 onSelect={selectAndReveal}
+                stateNames={stateNames}
               />
             ) : null}
           </section>
