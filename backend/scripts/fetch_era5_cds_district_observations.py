@@ -259,6 +259,13 @@ def fetch_month(client, year: int, month: int, cache: Path) -> pd.DataFrame:
     parts = []
     for i, req in enumerate(_requests_for(year, month)):
         path = cache / f"era5_{year}{month:02d}_{i}.zip"
+        # Existence alone is not validity - real crash 2026-09-19: a download cut short
+        # (disk ran out of space mid-write) left a truncated zip cached at this exact
+        # path, and every retry after that trusted it as already-fetched and failed
+        # trying to open it, forever, without ever re-downloading. A corrupt cache file
+        # is deleted and re-fetched rather than trusted.
+        if path.exists() and not zipfile.is_zipfile(path):
+            path.unlink()
         if not path.exists():
             cache.mkdir(parents=True, exist_ok=True)
             client.retrieve(DATASET, req, str(path))

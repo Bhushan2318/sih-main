@@ -201,6 +201,49 @@ def test_a_single_timestep_keeps_valid_time_a_dimension():
     assert "valid_time" in df.columns
 
 
+def test_fetch_month_redownloads_a_corrupted_cache_file(tmp_path, monkeypatch):
+    """Real crash 2026-09-19: a CDS download cut short by a full disk left a truncated,
+    unreadable zip cached at era5_<year><month>_<i>.zip. Every subsequent run trusted
+    its mere existence, never re-downloaded it, and failed forever trying to open it."""
+    monkeypatch.setattr(cds, "_read_archive", lambda path: pd.DataFrame(
+        {"lat": [0.0], "lon": [0.0]}))
+    calls = []
+
+    class FakeClient:
+        def retrieve(self, dataset, req, target):
+            calls.append(target)
+            Path(target).write_bytes(b"not a zip")
+
+    corrupt_path = tmp_path / "era5_200601_0.zip"
+    corrupt_path.write_bytes(b"truncated garbage, not a real zip")
+    (tmp_path / "era5_200601_1.zip").write_bytes(b"also truncated garbage")
+
+    cds.fetch_month(FakeClient(), 2006, 1, tmp_path)
+
+    assert str(corrupt_path) in calls, "corrupted cache file was never re-fetched"
+
+
+def test_fetch_month_trusts_a_valid_cached_zip(tmp_path, monkeypatch):
+    """Regression guard alongside the corrupted-cache test above: a real, readable zip
+    already in cache must NOT be re-downloaded on every run."""
+    monkeypatch.setattr(cds, "_read_archive", lambda path: pd.DataFrame(
+        {"lat": [0.0], "lon": [0.0]}))
+    calls = []
+
+    class FakeClient:
+        def retrieve(self, dataset, req, target):
+            calls.append(target)
+
+    import zipfile as zf
+    for i in (0, 1):
+        with zf.ZipFile(tmp_path / f"era5_200601_{i}.zip", "w") as z:
+            z.writestr("data.nc", b"placeholder")
+
+    cds.fetch_month(FakeClient(), 2006, 1, tmp_path)
+
+    assert calls == [], f"valid cached zips were re-fetched unnecessarily: {calls}"
+
+
 def test_normalise_leaves_a_multi_hour_dataset_alone():
     xr = pytest.importorskip("xarray")
     ds = xr.Dataset(
