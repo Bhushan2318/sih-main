@@ -407,3 +407,104 @@ same scale. The honest statement is that EMOS is unstable across splits and year
 negative on the Nov–Dec 2017 within-year test, positive on the full-2019 cross-year test —
 not that district scale sinks it. Generalising a ladder position from one split was the
 same mistake in miniature that the seasonality finding exposed in the headline numbers.
+
+---
+
+# Overnight log — 2026-09-19/20
+
+Brief: six hours, fix what needs fixing, break nothing, no visual changes.
+
+## Limits I held to
+
+- No visual changes, as asked. Everything below is backend, docs, or git.
+- No training on this Mac (CLAUDE.md: training lives on the 4060).
+- No `Co-Authored-By` trailers.
+- No `--admin` merges. Every PR went through the required checks.
+- Where a fix is a *data* decision, I measured it and wrote it down rather than
+  deciding it for you.
+
+## What shipped
+
+**PR #14 — the serve-time feature contract (`f82992a`).** The one real code bug.
+`inference._prep` hardcoded `categorical = {"state_id", "season"}` — the contract the
+*current* code trains with — and applied it to whatever model was loaded. C4 swapped the
+district-identity feature from `region_id` to `state_id`, so against any pre-C4 model
+`region_id` (present, populated, dtype `category`, zero nulls) fell through to
+`pd.to_numeric(errors="coerce")` and became **NaN for 100% of rows**. Nothing raised.
+XGBoost routes NaN down a default branch learned at training; `region_id` was never NaN
+in training, so that direction is arbitrary and identical for every row — one constant
+shove toward "bust" for all 666 districts.
+
+Now `categorical_features(model)` reads the booster's own `feature_types`, and `_prep`
+refuses when a column that arrived carrying data comes back entirely NaN. Six tests,
+written first and watched fail.
+
+**PR #15 — three geography findings (`bbc8043`).** Documentation only.
+
+## What I measured
+
+**The 100%-everywhere map was local only.** Live is healthy and always was: median 0.274,
+2.8% above 0.9, 26 low / 7 medium / 3 high. I had reported it as project-wide; that was
+wrong, and the correction matters more than the finding. Local was serving a 10 Sep model
+against post-C4 code.
+
+**Proof it was not distribution shift:** a 2017 cycle the model had *trained on* scored
+median 0.9927 — as degenerate as the unseen 2018 one. Only a train/serve code-path split
+explains that.
+
+**The live feed doesn't use the district weight table.** `app/live/gefs.py` reads
+`india_cities.json` — 36 city points — and takes `sel(..., method="nearest")`. Training
+uses `DistrictGrid.aggregate`. Both write district `region_id`s, so one row can say
+`IN-WB-KOLKATA` as an area mean and another as the nearest grid centre. Kolkata is one of
+the ten districts CLAUDE.md names as having **no grid centre at all**. This is why the
+deployed site scores 36 regions, not 666.
+
+**Soil moisture: the missing values are the correct half.** The four districts the docs
+asked about are Nicobar Islands, Lakshadweep, Diu and Mumbai City — sea-covered, and
+`soilw_bgrnd` is a land field, so the NaNs are right. Where they are *not* NaN they carry
+~98%. In the store: forecast median **99.78**, observed median **0.00** — GEFS reports sea
+as saturated ground, ERA5 as empty. Paired, median absolute error **100.00** against a
+35.68 threshold, so those districts are a soil-moisture bust on **100.0%** of their 3,915
+paired rows against **0.9%** elsewhere.
+
+**And it is not four districts — it is a missing land mask.** Ranking all 666 by median
+forecast soil moisture gives almost exactly "how much sea does this contain": Nicobar
+100.00, Lakshadweep 100.00, Mumbai City 99.37, Diu 91.50, Daman 87.31, Mahe 83.56, South
+Andaman 77.55, Mumbai Suburban 55.54, Chennai 54.13 — against an all-district median of
+**14.79**. All coastal or island; the one top-15 exception is Lahul & Spiti at 40.85, high
+Himalaya, presumably snow. The area-weighted mean is right for a field defined everywhere
+and wrong for a land-only one, because sea cells are not missing — they carry a saturated
+sentinel. Three more districts (Daman, Mahe, South Andaman) run an **87.5%** soil-moisture
+bust rate over 3,366 paired rows.
+
+**Opinion:** this is the most consequential thing I found, and the fix is a per-variable
+land mask on the one weight table — not an exclusion list, and not a reader patch. It
+needs a re-ingest, so it is your call, not mine.
+
+## Housekeeping
+
+- `develop` fast-forwarded to `main` (`c5e5479..f82992a`), 16 behind and 0 ahead, so no
+  merge, no conflict.
+- Two doc figures corrected: CLAUDE.md said the CNN has 39,361 parameters "capped by a
+  test" (43,969; the test caps at 200,000), and the 2017 CNN-vs-XGBoost line was written
+  in the opposite column order to the three above it — read positionally it claimed the
+  CNN won.
+
+## Left alone deliberately
+
+- The land mask, the live-feed geometry, and re-ingesting the affected years. All three
+  change training data.
+- Any retrain. Training belongs on the 4060.
+- The CNN-vs-XGBoost re-run. The gap is 0.08–0.13 ROC-AUC across every split on two
+  independent years; a re-run cannot move that, and if the land mask is fixed the ladder
+  is re-scored as a consequence anyway.
+
+## Open, in the order I would take them
+
+1. **Land mask for land-only variables**, then re-ingest. Removes a guaranteed fabricated
+   bust label from seven districts and a graded bias from every coastal one.
+2. **Decide whether the live feed should move onto the weight table.** It means pulling
+   gridded fields rather than points each cycle — a real change to the live fetch's cost
+   and failure modes.
+3. **F3/F4 are built and merged but unseen in production** until the next retrain ships a
+   `baselines.json`. They populate on their own; nothing to do but check.
