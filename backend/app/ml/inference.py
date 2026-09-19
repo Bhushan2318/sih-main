@@ -190,7 +190,7 @@ def score_cycle(
         mask = frame["variable"] == var
         if not mask.any():
             continue
-        X = _prep(frame.loc[mask], cols)
+        X = _prep(frame.loc[mask], cols, categorical_features(model))
         pred.loc[mask] = model.predict(X)
     frame["pred_err"] = pred
 
@@ -202,7 +202,8 @@ def score_cycle(
         scored, scored["pred_err"], state.thresholds.p90_error,
         bust_threshold=None, historical_bust_freq=state.historical_bust_freq or None,
     )
-    X_evt = _prep(events, state.classifier_columns)
+    X_evt = _prep(events, state.classifier_columns,
+                  categorical_features(state.classifier))
     events["bust_probability"] = state.classifier.predict_proba(X_evt)[:, 1]
     events["risk_band"] = [state.thresholds.band_for(p) for p in events["bust_probability"]]
 
@@ -224,21 +225,76 @@ def score_cycle(
     return result
 
 
-def _prep(df: pd.DataFrame, cols: list) -> pd.DataFrame:
-    # C4: state_id replaces region_id as the district-identity feature (see
-    # app.ml.regressors.CATEGORICAL_FEATURES / app.ml.classifier.CATEGORICAL).
-    categorical = {"state_id", "season"}
+_FALLBACK_CATEGORICAL = {"state_id", "season"}
+
+
+def categorical_features(model) -> set:
+    """Which of a model's features are categorical, according to that model.
+
+    Read from the booster's own `feature_types` rather than from a constant in this
+    module. The constant describes what the *current* code trains with; a loaded model
+    may have been trained under an earlier feature contract, and it is the model's
+    contract that has to be honoured at scoring time.
+
+    This is not hypothetical. C4 swapped the district-identity feature from `region_id`
+    to `state_id`; against a model trained before that, a hardcoded `{"state_id",
+    "season"}` sent `region_id` down the numeric-coercion branch and silently destroyed
+    it - see tests/test_inference_feature_contract.py for what that did to the scores.
+
+    Falls back to the current contract only when a model carries no type information,
+    which is the best that can be done for one that never recorded it.
+    """
+    booster = getattr(model, "get_booster", None)
+    if booster is None:
+        return set(_FALLBACK_CATEGORICAL)
+    try:
+        b = booster()
+        names, types = b.feature_names, b.feature_types
+    except Exception:  # noqa: BLE001 - a model that cannot describe itself gets the default
+        return set(_FALLBACK_CATEGORICAL)
+    if not names or not types or len(names) != len(types):
+        return set(_FALLBACK_CATEGORICAL)
+    return {n for n, t in zip(names, types) if t == "c"}
+
+
+def _prep(df: pd.DataFrame, cols: list, categorical: "set | None" = None) -> pd.DataFrame:
+    categorical = set(_FALLBACK_CATEGORICAL if categorical is None else categorical)
     X = pd.DataFrame(index=df.index)
     for c in cols:
         if c in df.columns:
             X[c] = df[c]
         else:
             X[c] = np.nan
+
+    # Which columns arrived carrying real data. Anything that is all-null on the way in
+    # is missing data, which is legitimate - wind stops at day 5 and soil moisture at
+    # day 3 in the reforecast archive - and must not be confused with damage done below.
+    had_data = {c for c in cols if c in df.columns and df[c].notna().any()}
+
+    destroyed = []
     for c in cols:
         if c in categorical:
             X[c] = X[c].astype("category")
         else:
             X[c] = pd.to_numeric(X[c], errors="coerce")
+        if c in had_data and X[c].isna().all():
+            destroyed.append(c)
+
+    if destroyed:
+        # Refuse rather than patch (CLAUDE.md rule 3). These columns held real values and
+        # are now entirely NaN, which only happens when a non-numeric column was coerced -
+        # i.e. the model expects it as categorical and we did not treat it as one. Scoring
+        # on it would not fail, it would quietly produce confident nonsense, so the only
+        # safe move is to stop and say which feature and why.
+        raise ValueError(
+            f"feature contract mismatch: {', '.join(sorted(destroyed))} "
+            f"had data but became entirely NaN after type coercion. The model expects "
+            f"{'these' if len(destroyed) > 1 else 'this'} as categorical but "
+            f"{'they were' if len(destroyed) > 1 else 'it was'} not in the categorical "
+            f"set {sorted(categorical)}. This usually means the model artifact predates "
+            f"a change to the feature pipeline - retrain, or score with the model whose "
+            f"contract matches this code."
+        )
     return X
 
 
