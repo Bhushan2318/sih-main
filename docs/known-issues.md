@@ -520,10 +520,60 @@ here rather than discovered live.
   fetch script). Measured identically in 2017 and 2018. Models see no wind features for
   days 6-10 and no soil-moisture features for days 4-10; this is the source, not a gap in
   the fetch.
-- **Soil moisture has intermittent holes inside its three days.** In 2017 some cycles are
-  60 values short (four districts × 3 leads × 5 members), starting 2017-11-16 and
-  recurring after; in 2018 the year is 6,240 values short per lead. The ingest propagates
-  the gap rather than filling it. Which districts, and why, is not yet established.
+- **Soil moisture's holes are four sea-covered districts, and the bigger problem is the
+  cycles where they are *not* holes.** The counts recorded earlier were right - 2017 is 60
+  values short per cycle (four districts × 3 leads × 5 members) from 2017-11-16, 2018 is
+  6,240 short per lead. Resolved 2026-09-20: the four are the same in both years, and they
+  are **Nicobar Islands, Lakshadweep, Diu and Mumbai City** - islands and tiny coastal
+  districts whose overlapping 0.25° cells are sea. `soilw_bgrnd` is a land-surface field,
+  so there is nothing there to read. The missingness is correct.
+
+  What is not correct is the other half. Where those districts are *not* NaN they carry
+  **~98% volumetric soil moisture** (2017 before 2017-11-16: mean 97.89, min 91.1, max
+  100.0, n=19,140), against inland Nagpur's **20.61** over the same window. That is the
+  ocean being read as saturated ground rather than masked, and it enters the store as a
+  real measurement with a real `source_grib`.
+
+  Which behaviour you get depends on the year, not on the data - measured across every
+  sample file on disk, at lead ≤ 3:
+
+  | years | behaviour |
+  |---|---|
+  | 2010, 2011, 2014, 2015 | masked (NaN), no saturated values |
+  | 2012, 2013, 2016, 2019 | no NaN at all; saturated values passed through |
+  | 2017 | 19,560 saturated, 2,340 masked (masking starts 2017-11-16) |
+  | 2018 | 18,720 masked, 3,180 saturated |
+
+  A year-dependent split like that follows fetch vintage, not meteorology.
+
+  **In the canonical store this produces a guaranteed, fabricated bust label.** The two
+  products disagree diametrically over water, and the pipeline pairs them anyway
+  (measured 2026-09-20 over the whole store):
+
+  | | n | mean | median |
+  |---|---|---|---|
+  | forecast, the four | 22,740 | 97.88 | **99.78** |
+  | observed, the four | 1,475 | 1.72 | **0.00** |
+  | observed, other 662 districts | 242,155 | 27.78 | 25.99 |
+
+  GEFS reports sea as saturated ground; ERA5 reports it as empty. Pairing those gives:
+
+  | | paired rows | median abs error | over the 35.68 threshold |
+  |---|---|---|---|
+  | the four | 3,915 | **100.00** | **100.0%** |
+  | all other districts | 724,479 | 8.90 | 0.9% |
+
+  So those four districts are labelled a soil-moisture bust on **every single paired row**,
+  against a 0.9% rate everywhere else, and they hold 22,740 of the store's ~24,841
+  readings above 90%. Any model trained on this can learn "these districts always bust"
+  as a district-identity shortcut - worth noting that `region_id` ranks in the classifier's
+  top five SHAP features.
+
+  Rule 1 says every value must trace to a real GRIB2 message. These do, and that is the
+  point: the message is real and means "sea", and the pipeline records it as ground. Not
+  fixed here - fixing it means deciding the land-mask rule once and re-ingesting the
+  affected years, not patching the reader, and it should be one decision rather than four
+  districts' worth of special cases.
 - **The parser test's collected count is not portable across machines.**
   `tests/test_parsers.py` runs one test per real file `conftest.iter_sample_files()`
   finds, which scans two roots: `backend/data/samples/` (repo, real fetch output) and,
