@@ -77,6 +77,9 @@ backend/data/samples/grids-*/
 backend/data/samples/parts-*/
 backend/data/samples/_era5_cells/
 *.db-journal
+# WAL mode (enabled in 6b52dea) writes these two beside the db instead of a journal.
+*.db-shm
+*.db-wal
 
 # Local run-orchestration scratch (machine-specific paths, not shared)
 backend/data/_*.sh
