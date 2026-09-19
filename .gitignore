@@ -81,3 +81,26 @@ backend/data/samples/_era5_cells/
 # Local run-orchestration scratch (machine-specific paths, not shared)
 backend/data/_*.sh
 backend/data/_resolution_fixed
+
+# Pooled-training external-memory cache: one full year's paired frame per file,
+# multiple GB each, rebuilt by app.ml.pooled_training.cache_year from the canonical
+# store on demand.
+backend/data/_pooled_cache/
+
+# IMD gauge rainfall: the raw per-year fetch cache and the merged-into-CDS output are
+# both rebuildable from scripts/fetch_imd_district_rainfall.py against the canonical
+# store and the CDS observation files.
+backend/data/samples/_imd/
+backend/data/samples/imd_merged_district_observations_india_*.parquet
+backend/data/samples/imd_aligned_district_observations_india_*.parquet
+
+# One-off CNN multi-seed training scratch (checkpoints/predictions per seed run).
+backend/data/_cnn_parallel/
+backend/data/_cnn_parallel_2018/
+
+# Run logs from local/CI job launches - not source, and can be large.
+backend/logs/
+
+# Per-machine training-handoff tooling and its bundled AI-memory snapshot - same
+# rationale as HANDOFF.md above: internal, machine-specific, not for the shared repo.
+_handoff_4060/

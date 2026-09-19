@@ -27,14 +27,46 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 
+# Must be set before CUDA initialises - torch.use_deterministic_algorithms(True) needs it
+# for cuBLAS's GEMM op or raises RuntimeError naming cuBLAS explicitly at first use, not
+# at import time. Diagnosed 2026-09-17 (docs/known-issues.md): fit_streaming's weights
+# were not bit-reproducible on CUDA with the same seed; this was the actual cause, not the
+# two things suspected first (cuDNN convolution, DistrictPooling's torch.sparse.mm -
+# neither needed a fix once this was set). setdefault, not assignment: an operator running
+# this under their own CUBLAS_WORKSPACE_CONFIG keeps it.
+os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+
+# Windows only, load-bearing: torch must be the first thing in the process to touch its
+# own OpenMP/MKL runtime, or a later torch.onnx.export() (app.ml.cnn.export_encoder)
+# fails with a generic "DLL initialization routine failed" from onnx's compiled
+# extension - see the matching comment in tests/conftest.py for the full story and the
+# minimal repro. `app.ml.classifier` below imports pandas/xgboost before this module
+# otherwise would ever import torch (app.ml.cnn imports it at module level, but this file
+# only reaches that module lazily, inside fit_normalizer), so the guard belongs here, not
+# there. A no-op today - nothing here calls export_encoder yet - kept so wiring it in
+# later doesn't reopen this on Windows.
+try:
+    import torch  # noqa: F401
+except ImportError:
+    pass
+
 from app.ingestion import grid_fields as gf
 from app.ml import classifier as clf_mod
+
+if TYPE_CHECKING:
+    # app.ml.cnn imports torch at module level; this file must not, so callers who only
+    # need FieldIndex/streaming utilities are not forced to have torch installed. The
+    # annotations below are strings (from __future__ import annotations), so this import
+    # never runs - it exists solely so static analysis can resolve the name.
+    from app.ml.cnn import Normalizer
 
 # Below this, a run says nothing about the architecture - only about the sample size.
 MIN_TRAIN_CYCLES = 120
@@ -58,6 +90,24 @@ class CNNReport:
     metrics: dict = field(default_factory=dict)
     seconds: float = 0.0
     error: str | None = None
+    device: str = ""
+
+
+def resolve_device(requested: "str | torch.device | None" = None) -> "torch.device":
+    """CUDA when available, unless the caller pins one explicitly.
+
+    Silently falling back to CPU when the caller asked for `cuda` by name would let a run
+    look GPU-trained in its own report when it was not - so an explicit `cuda` request on
+    a machine without one raises rather than degrading quietly.
+    """
+    import torch
+
+    if requested is not None:
+        device = torch.device(requested)
+        if device.type == "cuda" and not torch.cuda.is_available():
+            raise RuntimeError(f"--device {requested} requested but CUDA is not available")
+        return device
+    return torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
 
 def load_bundles(grid_dir: Path) -> dict:
@@ -184,7 +234,12 @@ def build_index(grid_dir, events, region_ids: list[str]) -> FieldIndex:
 
 
 def build_arrays(bundles: dict, events, region_ids: list[str]):
-    """Grid bundles + scored events -> (X, mask, extra, y, aux, cycle) aligned by sample.
+    """Grid bundles + scored events -> (X, extra, y, aux, cycle) aligned by sample.
+
+    Legacy: materialises every bundle up front, which is what made `train()` need ~71 GB
+    for a full year (see the streaming path - build_index/fit_streaming/predict_streaming -
+    that replaced it there; a test pins that `train()` never calls this any more). Kept
+    only because other tests still exercise this alignment logic directly.
 
     One sample is a (cycle, lead day) pair: the whole field, and one label per district.
     Districts are columns, not rows, because the network predicts all 666 at once - which
@@ -199,7 +254,7 @@ def build_arrays(bundles: dict, events, region_ids: list[str]):
     ev = ev[ev["_ri"].notna()]
     ev["_ri"] = ev["_ri"].astype(int)
 
-    X, M, EX, Y, AUX, CYC = [], [], [], [], [], []
+    X, EX, Y, AUX, CYC = [], [], [], [], []
     n_reg = len(region_ids)
     for init, bundle in sorted(bundles.items()):
         rows = ev[ev["init_date"] == init]
@@ -229,12 +284,16 @@ def build_arrays(bundles: dict, events, region_ids: list[str]):
 
 def fit_streaming(seed, index: "FieldIndex", tr_idx, va_idx,
                   epochs=DEFAULT_EPOCHS, patience=DEFAULT_PATIENCE, lr=DEFAULT_LR,
-                  region_ids=None, log=True):
+                  region_ids=None, log=True, device=None):
     """Train from the index, reading one cycle at a time.
 
     Same loop as _fit_one, but the fields never all exist at once: a batch is one bundle's
     lead days, loaded, used and dropped. Peak memory is a batch rather than a year, which
     is what lets this run on a 16 GB runner and what makes five years possible at all.
+
+    `device` moves the model and every batch onto it (CUDA when available by default -
+    see `resolve_device`). `best_state` is cloned before moving anything back, so the
+    checkpoint restored at the end lives on the same device the model already trained on.
     """
     import time as _t
 
@@ -242,10 +301,19 @@ def fit_streaming(seed, index: "FieldIndex", tr_idx, va_idx,
     import torch.nn as nn
     from app.ml.cnn import BustCNN
 
+    device = resolve_device(device)
     torch.manual_seed(seed)
     np.random.seed(seed)
     rng = np.random.default_rng(seed)
-    model = BustCNN(in_channels=index.n_channels, region_ids=region_ids)
+    # Same seed must give bit-identical weights (E1, docs/team-brief-2026-09-15-updated.md
+    # Section 6) - true on CPU by default, not true on CUDA without this. deterministic
+    # algorithms cost some speed; this model is 43,969 parameters and already the slower
+    # of the two model families to iterate, so the trade is worth it for a result that has
+    # to be trusted, not just fast.
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    torch.use_deterministic_algorithms(True)
+    model = BustCNN(in_channels=index.n_channels, region_ids=region_ids).to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
     bce = nn.BCEWithLogitsLoss(reduction="none")
     huber = nn.HuberLoss(reduction="none")
@@ -257,9 +325,9 @@ def fit_streaming(seed, index: "FieldIndex", tr_idx, va_idx,
         last = 0.0
         for x, m, ex, y, aux in index.batches(tr_idx, shuffle=True, rng=rng):
             opt.zero_grad()
-            xb, mb = torch.from_numpy(x), torch.from_numpy(m)
-            yb, ab = torch.from_numpy(y), torch.from_numpy(aux)
-            logits = model(xb, mb, torch.from_numpy(ex))
+            xb, mb = torch.from_numpy(x).to(device), torch.from_numpy(m).to(device)
+            yb, ab = torch.from_numpy(y).to(device), torch.from_numpy(aux).to(device)
+            logits = model(xb, mb, torch.from_numpy(ex).to(device))
             keep = ~torch.isnan(yb)
             if not keep.any():
                 continue
@@ -276,8 +344,9 @@ def fit_streaming(seed, index: "FieldIndex", tr_idx, va_idx,
         num = den = 0.0
         with torch.no_grad():
             for x, m, ex, y, aux in index.batches(va_idx, shuffle=False):
-                p = torch.sigmoid(model(torch.from_numpy(x), torch.from_numpy(m),
-                                        torch.from_numpy(ex))).numpy()
+                p = torch.sigmoid(model(torch.from_numpy(x).to(device),
+                                        torch.from_numpy(m).to(device),
+                                        torch.from_numpy(ex).to(device))).cpu().numpy()
                 keep = ~np.isnan(y)
                 num += float(((p[keep] - y[keep]) ** 2).sum())
                 den += int(keep.sum())
@@ -299,15 +368,23 @@ def fit_streaming(seed, index: "FieldIndex", tr_idx, va_idx,
     return model, best
 
 
-def predict_streaming(model, index: "FieldIndex", idx) -> tuple:
-    """Probabilities and labels for the given samples, in index order."""
+def predict_streaming(model, index: "FieldIndex", idx, device=None) -> tuple:
+    """Probabilities and labels for the given samples, in index order.
+
+    Defaults to wherever `model` already lives, so a caller that trained on CUDA does not
+    have to repeat the device at every call site; pass it explicitly to score a model on
+    a different device than it trained on (the CPU-vs-CUDA parity test does this).
+    """
     import torch
 
+    device = device or next(model.parameters()).device
     ps, ys = [], []
     with torch.no_grad():
         for x, m, ex, y, aux in index.batches(idx, shuffle=False):
-            ps.append(torch.sigmoid(model(torch.from_numpy(x), torch.from_numpy(m),
-                                          torch.from_numpy(ex))).numpy())
+            p = torch.sigmoid(model(torch.from_numpy(x).to(device),
+                                    torch.from_numpy(m).to(device),
+                                    torch.from_numpy(ex).to(device))).cpu().numpy()
+            ps.append(p)
             ys.append(y)
     return np.concatenate(ps), np.concatenate(ys)
 
@@ -320,6 +397,12 @@ def _fit_one(seed, Xtr, Mtr, EXtr, Ytr, AUXtr, Xva, Mva, EXva, Yva,
 
     torch.manual_seed(seed)
     np.random.seed(seed)
+    # Same reproducibility requirement as fit_streaming (E1) - this path is CPU-only
+    # today (never moved to a device), so cuDNN/cuBLAS nondeterminism does not currently
+    # apply, but setting it here too means it stays true if that ever changes.
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    torch.use_deterministic_algorithms(True)
     # Xtr carries the DATA channels; BustCNN doubles that itself because forward
     # concatenates the mask. Halving here built an encoder for half the channels it would
     # be handed, and nothing failed until the first batch reached the first convolution.
@@ -420,13 +503,16 @@ def splits_from_eval(ev) -> dict:
 
 def train(grid_dir: Path, events, splits: dict, region_ids: list[str],
           seeds: int = DEFAULT_SEEDS, epochs: int = DEFAULT_EPOCHS,
-          patience: int = DEFAULT_PATIENCE, lr: float = DEFAULT_LR) -> CNNReport:
+          patience: int = DEFAULT_PATIENCE, lr: float = DEFAULT_LR,
+          device=None) -> CNNReport:
     t0 = time.time()
     try:
         import torch  # noqa: F401
     except ImportError:
         return CNNReport(status="skipped",
                          error="torch is not installed; pip install -r requirements-train.txt")
+
+    device = resolve_device(device)
 
     if not any(Path(grid_dir).glob("*.npz")):
         return CNNReport(status="skipped",
@@ -463,7 +549,7 @@ def train(grid_dir: Path, events, splits: dict, region_ids: list[str],
     models = []
     for s in range(seeds):
         m, _ = fit_streaming(s, index, tr_idx, va_idx, epochs=epochs, patience=patience,
-                             lr=lr, region_ids=region_ids)
+                             lr=lr, region_ids=region_ids, device=device)
         models.append(m)
 
     def scored(idx):
@@ -471,7 +557,7 @@ def train(grid_dir: Path, events, splits: dict, region_ids: list[str],
             return {}
         # Seed ensemble: averaging probabilities cuts variance and improves calibration,
         # which is nearly free at this model size.
-        runs = [predict_streaming(m, index, idx) for m in models]
+        runs = [predict_streaming(m, index, idx, device=device) for m in models]
         proba = np.mean([p for p, _ in runs], axis=0)
         y = runs[0][1]
         keep = ~np.isnan(y)
@@ -483,7 +569,7 @@ def train(grid_dir: Path, events, splits: dict, region_ids: list[str],
         status="success", seeds=seeds,
         train_cycles=n_tr_cycles, val_cycles=len(set(CYC[va])), test_cycles=len(set(CYC[te])),
         n_train_samples=int(tr.sum()), parameters=int(n_params),
-        metrics=metrics, seconds=time.time() - t0)
+        metrics=metrics, seconds=time.time() - t0, device=str(device))
 
 
 def format_comparison(cnn: CNNReport, xgb_metrics: dict) -> str:
@@ -518,6 +604,8 @@ def main() -> int:
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--run-id", help="tabular run whose eval events to train against "
                     "(default: the most recent in data/analysis/eval_events)")
+    ap.add_argument("--device", default=None,
+                    help="cuda | cpu (default: cuda if available, else cpu)")
     args = ap.parse_args()
 
     from dataclasses import asdict
@@ -549,8 +637,8 @@ def main() -> int:
           f"{len(splits['train'])}/{len(splits['val'])}/{len(splits['test'])}")
 
     rep = train(args.grid_dir, events, splits, [d.region_id for d in load_registry()],
-                seeds=args.seeds, epochs=args.epochs)
-    print(f"CNN: status={rep.status} {rep.error or ''}")
+                seeds=args.seeds, epochs=args.epochs, device=args.device)
+    print(f"CNN: status={rep.status} device={rep.device} {rep.error or ''}")
     if rep.status == "success":
         print(f"  {rep.train_cycles} train cycles, {rep.n_train_samples} samples, "
               f"{rep.parameters:,} parameters, {rep.seeds} seeds, {rep.seconds:.0f}s")

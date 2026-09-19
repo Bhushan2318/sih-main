@@ -49,13 +49,11 @@ Runs from anywhere; output always lands in ``backend/data/samples/``.
 from __future__ import annotations
 
 import argparse
-import io
-import json
 import sys
 import time
 import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Iterable
 
@@ -467,18 +465,20 @@ def pull_one_file(var_prefix: str, init: str, member: str, prepared: np.ndarray)
         chosen = select_for_day(recs, spec, lead)
         if not chosen:
             continue
+        stacks = []
         try:
-            stacks = []
             for start, end, group in merge_ranges(chosen):
                 rng = f"bytes={start}-{end - 1}" if end is not None else f"bytes={start}-"
                 blob = _get(f"{BUCKET}/{key}", headers={"Range": rng}).content
                 stacks.append(extract_grid(blob, spec)[1])
         except RuntimeError as exc:
-            # The .idx can survive on the archive after its .grib2 body was dropped -
-            # seen for real on 2008-11-21 p01/soilw_bgrnd, where the index parses fine
-            # but every byte-range GET against the body 404s. That is not transient, so
-            # retrying will not help; treat it exactly like a missing .idx and let
-            # cycle_is_complete refuse this cycle instead of the whole fetch crashing on it.
+            # The .idx can survive on the archive after its .grib2 body was dropped - seen
+            # for real on 2008-11-21 p01/soilw_bgrnd, where the index parses fine and lists
+            # real messages but every byte-range GET against the body 404s. Not a transient
+            # fault: retries were exhausted and neighbouring dates fetch fine, so the file
+            # is genuinely absent rather than partially usable. Treat it exactly like a
+            # missing .idx and let cycle_is_complete refuse this one cycle, instead of the
+            # whole multi-year fetch crashing on it.
             print(f"    ! missing body  {key}  ({exc})", file=sys.stderr)
             return pd.DataFrame(), {}
         stack = np.concatenate(stacks, axis=0)
@@ -576,7 +576,7 @@ def _write_grid_bundle(init: str, grids_by: dict, members: list) -> Path | None:
     return gf.save_bundle(GRID_DIR / f"{init}.npz", bundle)
 
 
-def build(inits: list, members: list, resume: bool) -> None:
+def build(inits: list, members: list, resume: bool, no_csv: bool = False) -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     GRID_DIR.mkdir(parents=True, exist_ok=True)
     part_dir = OUT_DIR / "_gefs_parts"
@@ -656,7 +656,7 @@ def build(inits: list, members: list, resume: bool) -> None:
         for init, why in refused:
             print(f"  {init}  {why}", file=sys.stderr)
 
-    _finalise(part_dir, sorted({int(i[:4]) for i in inits}))
+    _finalise(part_dir, sorted({int(i[:4]) for i in inits}), no_csv=no_csv)
 
 
 def _canonicalise(df: pd.DataFrame) -> pd.DataFrame:
@@ -712,7 +712,56 @@ def _canonicalise(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def _finalise(part_dir: Path, years: list) -> None:
+def _refuse_if_git_tracked(path: Path) -> None:
+    """A finalise target that git already tracks is, twice now, a committed test fixture
+    of the same name rather than a stray leftover - and overwriting it produced no error
+    of its own, just a fixture that was silently wrong until `git status` caught it after
+    the fact. Refuse before a single part is read rather than rely on catching this again.
+
+    Deliberately a refusal, not a silent rename: someone finalising into a tracked path
+    needs to choose the real target themselves (see --no-csv's sibling, `--source` on
+    the ingest side), not have it renamed for them without asking.
+
+    Degrades to "allow" outside a git repo (a fresh clone's temp dir, CI's own scratch
+    space) - there is nothing to check against, so nothing to refuse.
+    """
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["git", "ls-files", "--error-unmatch", str(path)],
+            cwd=path.parent, capture_output=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return
+    if result.returncode == 0:
+        raise SystemExit(
+            f"{path} is tracked by git - finalising here would silently overwrite a "
+            f"committed file (most likely a test fixture of the same name, as happened "
+            f"with 2019's legacy 36-city sample). Pass an explicit output path instead "
+            f"of letting this land on a tracked file.")
+
+
+def _replace_with_retry(tmp: Path, dest: Path, tries: int = 8, delay: float = 0.5) -> None:
+    """`Path.replace()` raised `PermissionError: [WinError 32]` renaming a freshly-written
+    year file into place on Windows - twice in a row, with the write itself already
+    complete. Some other process (Windows Defender's real-time scan, VS Code's file
+    watcher, the search indexer - all three were running) briefly had the destination
+    open; POSIX rename has no such restriction, so this is Windows-only and, empirically,
+    transient. Retrying with backoff clears it without risking the data, which was
+    already fully written to `tmp` before this is ever called.
+    """
+    last: PermissionError | None = None
+    for attempt in range(tries):
+        try:
+            tmp.replace(dest)
+            return
+        except PermissionError as exc:
+            last = exc
+            if attempt < tries - 1:
+                time.sleep(delay * (attempt + 1))
+    raise last
+
+
+def _finalise(part_dir: Path, years: list, no_csv: bool = False) -> None:
     """Write one CSV/parquet per year, from that year's cached parts.
 
     Per year, and only for the years this run asked for, on purpose. An earlier version
@@ -742,11 +791,12 @@ def _finalise(part_dir: Path, years: list) -> None:
                 + (f"\n  ... and {len(stale) - 5} more" if len(stale) > 5 else "")
                 + "\nDelete them and re-fetch those initialisations."
             )
-        _write_year(parts, year)
+        _write_year(parts, year, no_csv=no_csv)
 
 
-def _write_year(parts: list, year: int) -> None:
-    """Stream a year's parts into one Parquet and one CSV, a part at a time.
+def _write_year(parts: list, year: int, no_csv: bool = False) -> None:
+    """Stream a year's parts into one Parquet (and, unless `no_csv`, one CSV), a part at
+    a time.
 
     This used to pd.concat every part first. A district part is ~71 MB in pandas (the
     src_* provenance strings dominate), so a year at daily density is ~26 GB before
@@ -757,6 +807,13 @@ def _write_year(parts: list, year: int) -> None:
     Both files are written under a .partial name and renamed only when every part is in:
     a year file that stopped at part 200 would otherwise look like a finished, shorter
     year to the next step.
+
+    `no_csv` exists because a district-scale year's CSV twin is tens of GB (measured
+    ~12 GB for one year at daily density) and nothing reads it - the ingest, the training
+    pipeline and every test read the parquet. Skipping it also sidesteps a Windows-only
+    failure mode: the search indexer holds a rename lock on a freshly-written multi-GB
+    text file far longer than on the binary parquet, which cost four failed finalise
+    attempts on the RTX 4060 box before this flag existed.
     """
     import pyarrow as pa
     import pyarrow.csv as pacsv
@@ -765,6 +822,10 @@ def _write_year(parts: list, year: int) -> None:
     pq_path = OUT_DIR / f"gefs_reforecast_india_{year}.parquet"
     csv_tmp = csv_path.with_name(csv_path.name + ".partial")
     pq_tmp = pq_path.with_name(pq_path.name + ".partial")
+
+    _refuse_if_git_tracked(pq_path)
+    if not no_csv:
+        _refuse_if_git_tracked(csv_path)
 
     value_cols = ["t2m_c", "rh2m_pct", "apcp_mm", "mslp_hpa", "psfc_hpa",
                   "pwat_kgm2", "wspd10m_ms", "wdir10m_deg", "soilw_vol_pct"]
@@ -781,7 +842,8 @@ def _write_year(parts: list, year: int) -> None:
             if schema is None:
                 schema = table.schema
                 pq_writer = pq.ParquetWriter(pq_tmp, schema)
-                csv_writer = pacsv.CSVWriter(csv_tmp, schema.remove_metadata())
+                if not no_csv:
+                    csv_writer = pacsv.CSVWriter(csv_tmp, schema.remove_metadata())
             elif not table.schema.equals(schema, check_metadata=False):
                 try:
                     table = table.cast(schema)
@@ -789,7 +851,8 @@ def _write_year(parts: list, year: int) -> None:
                     raise SystemExit(f"{q.name} does not match the schema of {parts[0].name}: "
                                      f"{exc}") from exc
             pq_writer.write_table(table)
-            csv_writer.write_table(table.replace_schema_metadata(None))
+            if csv_writer is not None:
+                csv_writer.write_table(table.replace_schema_metadata(None))
 
             s = table.select([c for c in stat_cols + value_cols
                               if c in table.column_names]).to_pandas()
@@ -810,11 +873,14 @@ def _write_year(parts: list, year: int) -> None:
         if csv_writer is not None:
             csv_writer.close()
 
-    pq_tmp.replace(pq_path)
-    csv_tmp.replace(csv_path)
+    _replace_with_retry(pq_tmp, pq_path)
+    if no_csv:
+        csv_tmp.unlink(missing_ok=True)
+    else:
+        _replace_with_retry(csv_tmp, csv_path)
 
     print("\n" + "=" * 78)
-    print(f"FORECAST SAMPLE  ->  {csv_path.relative_to(BACKEND_DIR)}")
+    print(f"FORECAST SAMPLE  ->  {'(csv skipped)' if no_csv else csv_path.relative_to(BACKEND_DIR)}")
     print(f"                     {pq_path.relative_to(BACKEND_DIR)}")
     print("=" * 78)
     print(f"rows            : {rows:,}")
@@ -859,6 +925,9 @@ def main() -> None:
                     help="comma list, subset of c00,p01,p02,p03,p04")
     ap.add_argument("--resume", action="store_true", help="skip init dates already in _gefs_parts/")
     ap.add_argument("--list-only", action="store_true", help="print the plan and exit")
+    ap.add_argument("--no-csv", action="store_true",
+                    help="skip the CSV twin - a district-scale year's CSV is tens of GB "
+                         "and nothing reads it; only the parquet is used downstream")
     args = ap.parse_args()
 
     if args.inits:
@@ -904,7 +973,7 @@ def main() -> None:
             print("  init", i)
         return
 
-    build(inits, members, resume=args.resume)
+    build(inits, members, resume=args.resume, no_csv=args.no_csv)
 
 
 if __name__ == "__main__":

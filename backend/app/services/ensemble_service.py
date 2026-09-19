@@ -8,6 +8,7 @@ from typing import Optional
 import pandas as pd
 
 from app.api import schemas
+from app.ingestion.canonical_schema import CIRCULAR_VARIABLES
 from app.ml import inference
 from app.storage import parquet_store
 
@@ -17,7 +18,7 @@ NOT_TRAINED_MSG = "No model has been trained yet, so no cycle can be scored."
 NO_SCORE_MSG = "No forecast cycle in the store could be scored by the current model."
 
 # 0 and 360 degrees are the same bearing, so member traces around north look like a collapse.
-_UNCHARTABLE = {"wind_direction_deg"}
+_UNCHARTABLE = CIRCULAR_VARIABLES
 
 _PRIOR_MAX_GAP = timedelta(days=7)
 

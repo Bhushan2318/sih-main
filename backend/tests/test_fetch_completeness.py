@@ -91,3 +91,26 @@ def test_completeness_is_relative_to_the_members_asked_for():
     results = {(v, "c00"): pd.DataFrame({"region_id": ["x"], v: [1.0]}) for v in ALL_VARS}
     ok, why = fetch.cycle_is_complete(results, subset)
     assert ok, why
+
+
+def test_pull_one_file_treats_a_missing_body_the_same_as_a_missing_idx(monkeypatch):
+    """Measured on the real archive 2026-09-12: soilw_bgrnd_2008112100_p01.grib2.idx
+    returns 200 and lists real messages, but the .grib2 body itself 404s - a genuine
+    inconsistency in NOAA's public bucket, not a transient network fault (5 retries all
+    404, and neighbouring members/dates on either side are fine). pull_one_file already
+    treats a missing .idx as one absent file - see the ``except RuntimeError`` around the
+    idx fetch above - and returns empty rows/grids so `cycle_is_complete` can refuse just
+    that (variable, member) rather than the whole month job crashing on an unhandled
+    exception. A body 404 despite a live idx must be caught the same way, not left to
+    propagate out of pull_one_file and abort every other cycle in the month."""
+    idx_text = "1:0:d=2008112100:TMP:2 m above ground:3 hour fcst:ENS=+1\n"
+
+    def fake_get(url, headers=None):
+        if url.endswith(".idx"):
+            return type("R", (), {"text": idx_text})()
+        raise RuntimeError(f"GET failed after 5 tries: {url}\n  last error: 404")
+
+    monkeypatch.setattr(fetch, "_get", fake_get)
+    rows, grids = fetch.pull_one_file("tmp_2m", "2008-11-21", "p01", prepared=None)
+    assert rows.empty
+    assert grids == {}
