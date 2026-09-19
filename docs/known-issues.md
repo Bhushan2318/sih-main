@@ -237,7 +237,10 @@ here rather than discovered live.
   version), 3-seed CNN ensemble vs the tabular classifier: train 0.7721 vs 0.8505, val
   0.7023 vs 0.8247, test 0.7454 vs 0.8711 - XGBoost ahead by 0.08-0.13 ROC-AUC on every
   split. A separate one-off run on 2017 (run_20260911T163128Z, 1 seed) showed the same
-  pattern more sharply: 0.8466 vs 0.6840. Plausible cause: ~2,550 training samples against
+  pattern more sharply: XGBoost 0.8466 vs CNN 0.6840. (Both models are named explicitly
+  there because that pair is written in the opposite order to the three above it, where
+  the CNN is quoted first - read positionally rather than by name it says the CNN won.)
+  Plausible cause: ~2,550 training samples against
   43,969 parameters is little sample efficiency margin for a CNN relative to a tree
   ensemble on effectively tabular-shaped inputs. The CNN remains a challenger per
   CLAUDE.md, not a regression to fix - but two years now agree it is not currently
