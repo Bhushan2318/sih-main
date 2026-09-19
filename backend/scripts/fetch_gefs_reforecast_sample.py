@@ -472,10 +472,13 @@ def pull_one_file(var_prefix: str, init: str, member: str, prepared: np.ndarray)
                 blob = _get(f"{BUCKET}/{key}", headers={"Range": rng}).content
                 stacks.append(extract_grid(blob, spec)[1])
         except RuntimeError as exc:
-            # Seen on the real archive: the .idx sidecar is live and lists real messages,
-            # but the .grib2 body itself 404s - a genuine inconsistency in NOAA's bucket,
-            # not a transient fault (retries exhausted, neighbouring dates fine). Treat
-            # exactly like a missing idx: the whole file is absent, not partially usable.
+            # The .idx can survive on the archive after its .grib2 body was dropped - seen
+            # for real on 2008-11-21 p01/soilw_bgrnd, where the index parses fine and lists
+            # real messages but every byte-range GET against the body 404s. Not a transient
+            # fault: retries were exhausted and neighbouring dates fetch fine, so the file
+            # is genuinely absent rather than partially usable. Treat it exactly like a
+            # missing .idx and let cycle_is_complete refuse this one cycle, instead of the
+            # whole multi-year fetch crashing on it.
             print(f"    ! missing body  {key}  ({exc})", file=sys.stderr)
             return pd.DataFrame(), {}
         stack = np.concatenate(stacks, axis=0)
