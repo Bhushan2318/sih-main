@@ -373,6 +373,38 @@ here rather than discovered live.
   boundary *lines* against SoI's own data, and no such comparison is recorded anywhere.
   Full writeup, sources, and a Datameet alternative comparison: `docs/boundary-geometry-licensing.md`.
 
+- **The live operational feed does not go through the district weight table.** Training
+  and reforecast ingestion aggregate every 0.25° cell a district polygon overlaps, via
+  `india_districts.DistrictGrid.aggregate` (`fetch_gefs_reforecast_sample.py`,
+  `fetch_era5_cds_district_observations.py`). The live path does not: `app/live/gefs.py`
+  reads `scripts/india_cities.json` - **36 city points, one per state/UT** - and samples
+  `ds[sn].sel(latitude=..., longitude=..., method="nearest")`. Neither `app/live/gefs.py`
+  nor `app/live/orchestrator.py` references the weight table at all. Those rows are then
+  geo-resolved onto district `region_id`s, so a live row and a training row can carry the
+  same `IN-WB-KOLKATA` while having been produced by two different spatial methods -
+  area mean over the polygon in one case, value of the single nearest grid centre in the
+  other.
+
+  This is the method CLAUDE.md's Geography section specifically rejects, and Kolkata is
+  one of the ten districts it names as containing *no grid centre at all* - so for that
+  district the live value comes from a cell whose centre lies outside it. Kolkata and
+  Hyderabad are both in `india_cities.json`.
+
+  Scale of the disagreement is already measured, in CLAUDE.md's own validation of the
+  district method against the 35 city points it replaced: correlation 0.9896, median
+  absolute difference 0.31 °C. Small next to the temperature bust threshold of 4.45 °C,
+  so this is a consistency problem rather than a visibly wrong number - but it is a
+  train/serve geography mismatch, and CLAUDE.md's "there is exactly one weight table"
+  and "both sides of the bust label are area means over the same polygon" describe the
+  archive path only, not what the deployed site ingests each cycle.
+
+  Consequence a visitor sees: the live deployment scores **36 regions**, not 666. The
+  About page discloses "city points, not full regional coverage of India", which is
+  accurate for the live feed and stale for the archive work. Not fixed here: moving the
+  live path onto the weight table means pulling gridded fields rather than points per
+  cycle, which is a real change to the live fetch's cost and failure modes, and not
+  something to do untested. Found 2026-09-20.
+
 ## Data
 
 - **`docs/results.md` is generated, not committed.** Baselines are written into the model
