@@ -1,5 +1,5 @@
 import { geoMercator, geoPath } from "d3-geo";
-import { useDeferredValue, useMemo, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import { feature, merge } from "topojson-client";
 import type { Feature, FeatureCollection, Geometry, MultiPolygon, Polygon } from "geojson";
 import type {
@@ -9,6 +9,7 @@ import type {
   Topology,
 } from "topojson-specification";
 import topoData from "../../assets/geo/india_districts.topojson?url";
+import claimedTerritoryUrl from "../../assets/geo/claimed_territory.geojson?url";
 import type { RegionSummary, RiskBand } from "../../api/types";
 import { bandLabel } from "../../theme";
 
@@ -79,6 +80,24 @@ export function IndiaChoroplethMap({
   const [activeState, setActiveState] = useState<string | null>(null);
   const [aggregation, setAggregation] = useState<Aggregation>("worst");
   const deferredQuery = useDeferredValue(query);
+
+  // Gilgit-Baltistan, Aksai Chin, the Shaksgam Valley and Siachen: territory India
+  // claims but does not administer, so no GADM district - disputed-prefixed or not -
+  // exists there and the district file's own northern edge stops at 35.50 deg N,
+  // well short of the ~37.05 deg N claim. Loaded once, independent of the district
+  // topology, and drawn only as a silhouette - see build_claimed_territory_geo.py.
+  const [claimedTerritory, setClaimedTerritory] =
+    useState<Feature<Geometry, unknown> | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    fetch(claimedTerritoryUrl)
+      .then((r) => r.json())
+      .then((fc: FeatureCollection) => {
+        if (!cancelled) setClaimedTerritory(fc.features[0] ?? null);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
 
   const byRegionId = useMemo(() => {
     const m = new Map<string, RegionSummary>();
@@ -151,16 +170,23 @@ export function IndiaChoroplethMap({
     [districts, activeState],
   );
 
-  // Refit whenever the level changes, so a drilled state fills the frame.
+  // Refit whenever the level changes, so a drilled state fills the frame. The claimed-
+  // territory silhouette joins the fit only at the national level - a drilled state's
+  // own frame should still fill with just that state's real districts - so the
+  // projection actually zooms out to include it rather than clipping it at the edge.
   const pathFor = useMemo(() => {
     if (!topology) return () => "";
-    const fitTo: Feature<Geometry, unknown>[] = activeState ? shown : (states as never[]);
+    const fitTo: Feature<Geometry, unknown>[] = activeState
+      ? shown
+      : claimedTerritory
+        ? [...(states as never[]), claimedTerritory]
+        : (states as never[]);
     if (!fitTo.length) return () => "";
     const fc = { type: "FeatureCollection", features: fitTo } as FeatureCollection;
     const projection = geoMercator().fitSize([WIDTH, HEIGHT], fc);
     const path = geoPath(projection);
     return (g: Geometry) => path(g) ?? "";
-  }, [topology, activeState, shown, states]);
+  }, [topology, activeState, shown, states, claimedTerritory]);
 
   const suggestions = useMemo(() => {
     const q = deferredQuery.trim().toLowerCase();
@@ -256,6 +282,32 @@ export function IndiaChoroplethMap({
         aria-label={activeState ? `${activeStateName} by district` : "India forecast bust risk by state"}
       >
         <g>
+          {!activeState && claimedTerritory ? (
+            <path
+              className={`region region--claimed region--${
+                bandFor(stateRollup.get("IN-JK")?.value ?? null, cuts) ?? "nodata"}`}
+              d={pathFor(claimedTerritory.geometry)}
+              aria-label="Claimed territory, not scored: no district-level forecast data"
+              // Hoverable but not clickable: there is nothing to drill into, and the
+              // colour is inherited from Jammu and Kashmir rather than measured here.
+              // Saying so on hover is the whole point - otherwise this reads as a
+              // scored region.
+              onMouseMove={(e) => {
+                const rect = (e.currentTarget.ownerSVGElement as SVGSVGElement).getBoundingClientRect();
+                setHover({
+                  x: e.clientX - rect.left,
+                  y: e.clientY - rect.top,
+                  title: "Claimed territory",
+                  body: [
+                    "Not scored - no forecast or observation data",
+                    "Shown so India's outline is complete",
+                    "Shaded like Jammu and Kashmir, not measured",
+                  ],
+                });
+              }}
+              onMouseLeave={() => setHover(null)}
+            />
+          ) : null}
           {!activeState
             ? states.map((f) => {
                 const roll = stateRollup.get(f.properties.state_id);

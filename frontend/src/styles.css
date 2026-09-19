@@ -337,9 +337,11 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 .ticker__track {
   display: flex; width: max-content; will-change: transform;
   backface-visibility: hidden; transform: translate3d(0, 0, 0);
+  /* Fallback only. RiskTicker measures the track and sets animationDuration inline so
+     the ticker holds a constant *speed*; a constant duration here meant the speed rose
+     with the region count, and at 666 districts it was ~4,040 px/s. */
   animation: sk-slide 60s linear infinite;
 }
-.ticker:hover .ticker__track {  }
 @keyframes sk-slide {
   from { transform: translate3d(0, 0, 0); }
   to   { transform: translate3d(-50%, 0, 0); }
@@ -421,9 +423,19 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 .app__body--ops .map-wrap {
   flex: 1 1 0; min-height: 0;
   align-self: start; aspect-ratio: 620 / 680; max-width: 100%;
+  /* A column, so the map can take what the controls above it leave. */
+  display: flex; flex-direction: column;
 }
 
-.app__body--ops .map { height: 100%; }
+.app__body--ops .map-controls, .app__body--ops .map-notice { flex: none; }
+
+/* NOT height: 100%. The card's height is set by the flex row above; the search box and
+   controls sit inside that same height, so a 100%-tall map made the card's contents
+   taller than the card by exactly the controls' height (~87px measured) and the bottom
+   of the map - peninsular India and the Andamans, which sit lowest - painted outside the
+   card. Filling the leftover space instead keeps the whole map inside the frame; the
+   viewBox letterboxes within it. */
+.app__body--ops .map { flex: 1 1 0; min-height: 0; height: auto; }
 
 .app__body--ops > .panel {
   height: 100%; margin-bottom: 0; overflow-y: auto; overscroll-behavior: contain;
@@ -521,9 +533,10 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 
 .kpis--flush { padding: 0; margin-bottom: 16px; }
 
-.ladder { margin: 12px 1.3rem 0; }
+/* No gutter of its own: the ladder now sits inside .app__below, which already supplies
+ * the page's horizontal padding. Its old `margin: 12px 1.3rem 0` was for the first
+ * screen, where it was a direct child of .screen1 and had to indent itself. */
 .ladder .dtable { font-size: 12.5px; }
-@media (max-width: 900px) { .ladder { margin-inline: 1rem; } }
 
 .card--table { padding-bottom: 0.6rem; }
 
@@ -613,6 +626,16 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 .region--medium { fill: var(--watch); }
 .region--high { fill: var(--bust); }
 .region--nodata { fill: var(--nodata); cursor: default; }
+/* Claimed but not administered (Gilgit-Baltistan, Aksai Chin, Shaksgam, Siachen): a
+   silhouette only, never a scored district, so it must never read as clickable or as
+   a colour on the low/watch/bust scale. */
+/* No stroke: this layer's edge runs along the Line of Control, through the middle of the
+   fused Kashmir shape, so `.region`'s card-coloured stroke drew a white gash across it.
+   The districts painted on top keep their own borders. */
+/* Hoverable (it explains itself in the tooltip) but never clickable, and no hover
+   lift - there is nothing underneath it to open. */
+.region--claimed { stroke: none; cursor: default; }
+.region--claimed:hover { opacity: 1; stroke: none; }
 .region--selected { stroke: var(--ink); stroke-width: 1.4; }
 .region:hover { stroke: var(--ink-2); stroke-width: 0.9; }
 
@@ -1026,4 +1049,48 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 .recharts-default-tooltip {
   border: 1px solid var(--rule) !important; border-radius: 9px !important;
   box-shadow: var(--shadow); font-family: var(--f-b) !important; font-size: 12px !important;
+}
+
+/* ---- Workstream D evidence: economic value (F3) and CORP reliability (F4) ---------
+ *
+ * Both live on the Model tab beside the baseline ladder: they are the answer to "why
+ * should I believe this", which is a different question from the dashboard's "what is
+ * happening today". Chart heights are fixed rather than aspect-ratio'd because these
+ * sit in a normal document flow, not the ops grid's constrained column - a percentage
+ * height inside an auto-height card collapses to zero, which is the bug the map had. */
+.evcard__chart, .corpcard__chart { height: 240px; margin-top: 4px; }
+
+.evcard__slider { margin: 10px 0 2px; }
+.evcard__slider label {
+  display: block; font-size: 12.5px; color: var(--ink-2); margin-bottom: 6px;
+}
+.evcard__slider input[type="range"] { width: 100%; accent-color: var(--accent); }
+
+.evcard__read {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px; margin: 10px 0 2px;
+}
+.evcard__read dt {
+  font-family: var(--f-m); font-size: 9.5px; letter-spacing: 0.13em;
+  text-transform: uppercase; color: var(--ink-3); margin-bottom: 2px;
+}
+.evcard__read dd {
+  margin: 0; font-family: var(--f-d); font-size: 20px;
+  font-variation-settings: "wdth" 100, "wght" 700;
+}
+
+/* Light-card equivalent of .hero__tip, which is built for the dark hero panel. */
+.charttip {
+  display: flex; flex-direction: column; gap: 2px;
+  background: var(--ink); color: #fff; padding: 8px 11px; border-radius: 9px;
+  font-size: 11.5px; box-shadow: 0 12px 26px -12px rgba(11, 18, 32, 0.6);
+}
+.charttip strong {
+  font-family: var(--f-d); font-variation-settings: "wdth" 100, "wght" 700; font-size: 13px;
+}
+.charttip__meta { color: rgba(255, 255, 255, 0.55); font-family: var(--f-m); font-size: 10px; }
+
+@media (max-width: 700px) {
+  .evcard__read { grid-template-columns: 1fr 1fr; }
+  .evcard__chart, .corpcard__chart { height: 200px; }
 }

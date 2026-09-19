@@ -449,6 +449,23 @@ here rather than discovered live.
   involved. Nobody has produced that number yet. Until someone does, the paragraph above is
   an argument, not evidence.
 
+- **EMOS's ladder position is unstable - never carry it across runs.** This entry
+  first claimed EMOS "flips negative at district scale", generalised from a single
+  run. A second run at the same scale contradicted it, so the claim is now narrower:
+
+  | scored on | EMOS BSS | EMOS ROC-AUC | Sanket |
+  |---|---|---|---|
+  | Nov-Dec 2017, within-year, 337,950 events (`run_20260911T163128Z`) | **-0.0264** | 0.5973 | BSS 0.3713, AUC 0.8466 |
+  | all of 2019, cross-year, 2,400,930 events (`run_20260912T005532Z`) | **+0.0653** | 0.6431 | BSS 0.3288, AUC 0.8327 |
+
+  Negative in one, positive in the other, at the same district scale. The two tests
+  differ in *both* the split type and the year, so neither can be credited as the
+  cause - claiming either would repeat the very mistake this entry is correcting.
+  What is safe to say: EMOS moves between splits; the cheapest baseline (ensemble
+  spread alone) beat it on Brier in the first (BSS 0.0130); and Sanket's classifier
+  clears every baseline in both by a wide margin. Re-score the whole ladder per run.
+  Measured 2026-09-11 and 2026-09-12.
+
 - **A cycle too incomplete to publish is refused, not partially ingested.** A short
   rainfall *sum* is roughly half the real accumulation, and rainfall drives most busts, so
   publishing a thin cycle would be worse than publishing nothing.
@@ -472,6 +489,19 @@ here rather than discovered live.
   60 values short (four districts × 3 leads × 5 members), starting 2017-11-16 and
   recurring after; in 2018 the year is 6,240 values short per lead. The ingest propagates
   the gap rather than filling it. Which districts, and why, is not yet established.
+- **The parser test's collected count is not portable across machines.**
+  `tests/test_parsers.py` runs one test per real file `conftest.iter_sample_files()`
+  finds, which scans two roots: `backend/data/samples/` (repo, real fetch output) and,
+  if it exists, `~/Desktop/data` - a personal, non-repo folder specific to whichever
+  account is running the suite. On this Mac that adds 51 files no other machine, and no
+  CI runner, will ever have. Moving work to a second laptop (2026-09-11) also excluded
+  `backend/data/samples/parts-2018/` from the copy - 365 real per-day fetch parts,
+  deliberately left out of the transfer as redundant with the single assembled
+  `gefs_reforecast_india_2018.parquet` they already produced, but still counted by this
+  test's directory scan on the source machine. Net effect: the Mac collected 826 tests at
+  commit f36795a; the second laptop collected 384 at the same commit, and both are
+  correct for what each machine actually holds. Neither figure is "the" real count - use
+  pass/fail/skip ratios and diagnose any gap in the total before assuming a real problem.
 - **Observed soil moisture dips fractionally below zero in the two island districts.**
   Nicobar Islands and Lakshadweep, and only those, carry negative values in the CDS
   district observations: 400 of 243,090 district-days in 2017 and 364 in 2018. The most

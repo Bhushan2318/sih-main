@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Topology } from "topojson-specification";
 import type { RiskBand } from "../api/types";
 import { AlertsPage } from "../components/alerts/AlertsPage";
@@ -19,6 +19,7 @@ import { AboutPage } from "../components/about/AboutPage";
 import { ReplayView } from "../components/replay/ReplayView";
 import { useAllRegions, useEnsembleDivergence, useModelStatus } from "../hooks/useDashboardData";
 import { useLiveSocket } from "../hooks/useLiveSocket";
+import { stateNamesFrom } from "../lib/stateNames";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 
 type View = "live" | "alerts" | "model" | "replay" | "about";
@@ -50,6 +51,8 @@ export function DashboardPage() {
   useEffect(() => {
     loadTopology().then(setTopology).catch(setTopoError);
   }, []);
+
+  const stateNames = useMemo(() => stateNamesFrom(topology), [topology]);
 
   const allRegions = regionsQuery.data;
   const regions =
@@ -154,13 +157,13 @@ export function DashboardPage() {
           <section className={heroFills ? "screen1" : undefined}>
             <HeroDivergence data={ensembleQuery.data} />
             <KpiStrip all={allRegions} day={regions} />
-            <BaselineLadderCard data={statusQuery.data} />
             {heroFills ? <OpeningCues onReplay={() => setView("replay")} /> : null}
             {regions?.regions.length ? (
               <RiskTicker
                 regions={regions.regions}
                 leadDay={regions.lead_time_days}
                 onSelect={selectAndReveal}
+                stateNames={stateNames}
               />
             ) : null}
           </section>
@@ -221,9 +224,16 @@ export function DashboardPage() {
             />
           </main>
 
-          {regions?.regions.length ? (
+          {/* The ladder sits directly under the map: you look at today's risk, then
+            * immediately at the evidence that the risk is worth believing. Guarded on
+            * either child having something to draw, so this never renders as bare
+            * padding when the store has no scored regions and no baselines. */}
+          {regions?.regions.length || statusQuery.data?.baselines?.models?.length ? (
             <section className="app__below">
-              <BustSummaryChart regions={regions.regions} onSelect={setSelectedRegion} />
+              <BaselineLadderCard data={statusQuery.data} />
+              {regions?.regions.length ? (
+                <BustSummaryChart regions={regions.regions} onSelect={setSelectedRegion} />
+              ) : null}
             </section>
           ) : null}
         </>
