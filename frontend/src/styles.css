@@ -337,9 +337,11 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 .ticker__track {
   display: flex; width: max-content; will-change: transform;
   backface-visibility: hidden; transform: translate3d(0, 0, 0);
+  /* Fallback only. RiskTicker measures the track and sets animationDuration inline so
+     the ticker holds a constant *speed*; a constant duration here meant the speed rose
+     with the region count, and at 666 districts it was ~4,040 px/s. */
   animation: sk-slide 60s linear infinite;
 }
-.ticker:hover .ticker__track {  }
 @keyframes sk-slide {
   from { transform: translate3d(0, 0, 0); }
   to   { transform: translate3d(-50%, 0, 0); }
@@ -421,9 +423,19 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 .app__body--ops .map-wrap {
   flex: 1 1 0; min-height: 0;
   align-self: start; aspect-ratio: 620 / 680; max-width: 100%;
+  /* A column, so the map can take what the controls above it leave. */
+  display: flex; flex-direction: column;
 }
 
-.app__body--ops .map { height: 100%; }
+.app__body--ops .map-controls, .app__body--ops .map-notice { flex: none; }
+
+/* NOT height: 100%. The card's height is set by the flex row above; the search box and
+   controls sit inside that same height, so a 100%-tall map made the card's contents
+   taller than the card by exactly the controls' height (~87px measured) and the bottom
+   of the map - peninsular India and the Andamans, which sit lowest - painted outside the
+   card. Filling the leftover space instead keeps the whole map inside the frame; the
+   viewBox letterboxes within it. */
+.app__body--ops .map { flex: 1 1 0; min-height: 0; height: auto; }
 
 .app__body--ops > .panel {
   height: 100%; margin-bottom: 0; overflow-y: auto; overscroll-behavior: contain;
@@ -605,6 +617,16 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 .region--medium { fill: var(--watch); }
 .region--high { fill: var(--bust); }
 .region--nodata { fill: var(--nodata); cursor: default; }
+/* Claimed but not administered (Gilgit-Baltistan, Aksai Chin, Shaksgam, Siachen): a
+   silhouette only, never a scored district, so it must never read as clickable or as
+   a colour on the low/watch/bust scale. */
+/* No stroke: this layer's edge runs along the Line of Control, through the middle of the
+   fused Kashmir shape, so `.region`'s card-coloured stroke drew a white gash across it.
+   The districts painted on top keep their own borders. */
+/* Hoverable (it explains itself in the tooltip) but never clickable, and no hover
+   lift - there is nothing underneath it to open. */
+.region--claimed { stroke: none; cursor: default; }
+.region--claimed:hover { opacity: 1; stroke: none; }
 .region--selected { stroke: var(--ink); stroke-width: 1.4; }
 .region:hover { stroke: var(--ink-2); stroke-width: 0.9; }
 
