@@ -1,5 +1,7 @@
 import { useModelStatus } from "../../hooks/useDashboardData";
+import { formatMetric } from "../../lib/format";
 import { ErrorState, LoadingState } from "../common/States";
+import { BaselineLadderTable } from "../model/BaselineLadderTable";
 
 export function AboutPage({ onReplay }: { onReplay: () => void }) {
   const { data, isLoading, error } = useModelStatus();
@@ -12,8 +14,6 @@ export function AboutPage({ onReplay }: { onReplay: () => void }) {
   const td = data.training_data ?? {};
   const thr = data.thresholds?.bust_threshold ?? {};
   const bl = data.baselines ?? {};
-  const n3 = (v: unknown, dp = 3) =>
-    typeof v === "number" && Number.isFinite(v) ? v.toFixed(dp) : "—";
 
   return (
     <main className="page page--wide">
@@ -63,7 +63,7 @@ export function AboutPage({ onReplay }: { onReplay: () => void }) {
             </p>
             <ul className="taglist">
               {Object.entries(thr).map(([v, t]) => (
-                <li key={v} className="tag">{v} ≥ {n3(t, 2)}</li>
+                <li key={v} className="tag">{v} ≥ {formatMetric(t, 2)}</li>
               ))}
             </ul>
           </section>
@@ -71,9 +71,9 @@ export function AboutPage({ onReplay }: { onReplay: () => void }) {
           <section className="card">
             <header className="card__head"><h3>How well it works</h3></header>
             <dl className="metrics metrics--compact metrics--hero">
-              <div><dt>ROC-AUC</dt><dd>{n3(clf.roc_auc)}</dd></div>
-              <div><dt>F1</dt><dd>{n3(clf.f1)}</dd></div>
-              <div><dt>Brier</dt><dd>{n3(clf.brier)}</dd></div>
+              <div><dt>ROC-AUC</dt><dd>{formatMetric(clf.roc_auc, 3)}</dd></div>
+              <div><dt>F1</dt><dd>{formatMetric(clf.f1, 3)}</dd></div>
+              <div><dt>Brier</dt><dd>{formatMetric(clf.brier, 3)}</dd></div>
               <div>
                 <dt>Held-out forecasts</dt>
                 <dd>{typeof clf.n === "number" ? clf.n.toLocaleString() : "—"}</dd>
@@ -106,32 +106,15 @@ export function AboutPage({ onReplay }: { onReplay: () => void }) {
                   guessing the long-run bust rate every time. <b>0.000 means it does no better
                   than that guess</b>; higher is better.
                 </p>
-                <div className="tablewrap">
-                  <table className="dtable">
-                    <thead>
-                      <tr>
-                        <th>model</th><th>Brier ↓</th><th>skill vs climatology ↑</th><th>ROC-AUC ↑</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {bl.models.map((m) => (
-                        <tr key={m.name} className={m.is_model ? "is-active" : undefined}>
-                          <td>{m.is_model ? <b>{m.name}</b> : m.name}</td>
-                          <td className="mono">{n3(m.brier, 4)}</td>
-                          <td className="mono">{n3(m.bss, 4)}</td>
-                          <td className="mono">{n3(m.roc_auc, 4)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                <BaselineLadderTable baselines={data.baselines} />
                 <p className="muted small">↓ lower is better · ↑ higher is better</p>
                 {typeof bl.lead_bust_correlation?.test === "number" ? (
                   <p className="muted small">
                     Guessing from the lead day alone scores at or below zero, because busts do
                     not simply become more likely further out. The measured link between lead
-                    day and bust is only {n3(bl.lead_bust_correlation.train, 3)} on training
-                    data and {n3(bl.lead_bust_correlation.test, 3)} on held-out data.
+                    day and bust is only {formatMetric(bl.lead_bust_correlation.train, 3)} on
+                    training data and {formatMetric(bl.lead_bust_correlation.test, 3)} on
+                    held-out data.
                   </p>
                 ) : null}
               </>
@@ -225,6 +208,35 @@ export function AboutPage({ onReplay }: { onReplay: () => void }) {
             otherwise silently halve the quantity that drives most busts. Total hosting
             cost: nothing.
           </p>
+        </section>
+
+        <section className="card">
+          <header className="card__head"><h3>Data &amp; attribution</h3></header>
+          <ul className="notes">
+            <li>
+              <b>Forecasts</b> — NOAA GEFSv12, the reforecast archive (2000–2019, one 00 UTC
+              cycle a day, 5 ensemble members) for training, the live operational feed for
+              today. Public domain, via NOAA&apos;s Open Data bucket on AWS S3.
+            </li>
+            <li>
+              <b>Observations</b> — ERA5 reanalysis, read via the Open-Meteo Historical
+              Weather API. Copernicus Climate Change Service (C3S), licensed CC-BY 4.0.
+            </li>
+            <li>
+              <b>District boundaries</b> — GADM 4.1, India admin-2 (gadm.org). Two corrections
+              are applied before use: Ladakh is reassigned out of Jammu &amp; Kashmir, since
+              GADM predates the 2019 reorganisation; and disputed-territory features are kept
+              and dissolved into their parent district rather than filtered out, so Jammu
+              &amp; Kashmir, Ladakh and Arunachal Pradesh still appear on the map. Used here
+              for a non-commercial hackathon prototype — formal licence review for any use
+              beyond that is not yet done.
+            </li>
+            <li>
+              <b>The project.</b> Built for Smart India Hackathon 2026, Problem Statement
+              26079, set by NCMRWF (National Centre for Medium Range Weather Forecasting),
+              Ministry of Earth Sciences.
+            </li>
+          </ul>
         </section>
         </div>
       </div>

@@ -21,3 +21,8 @@ xarray>=2024.1
 # never imported by the serving app, which must stay inside 512 MB.
 cdsapi>=0.7.7
 netCDF4>=1.6,<2.0
+
+# IMD gauge-based gridded rainfall, merged into precip_mm on top of a CDS file
+# (scripts/fetch_imd_district_rainfall.py). Plain HTTP POST to imdpune.gov.in - no
+# account or key needed, unlike CDS above.
+imdlib>=0.1.21

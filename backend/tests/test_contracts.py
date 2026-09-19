@@ -31,13 +31,30 @@ def test_paired_row_columns_are_frozen():
     """The exact column set, in order, as produced by build_training_frame and measured
     against the real 2017 store on 2026-09-10 (one cycle, 10,695 rows).
 
+    C1 (2026-09-16) added the four jump_* columns; order re-printed from a real frame
+    built over the serving store's 2026-09-10 cycle. C4 (2026-09-17) added the five
+    district-descriptor columns, printed from a real build_training_frame call: they land
+    right after season, where attach_district_descriptors actually inserts them. C2
+    (2026-09-17) added the four laf_* (time-lagged ensemble) columns, also printed from a
+    real call: they land right after jump_rel_climatology, before month. C4 (2026-09-18)
+    completed with elevation_mean, landing right after border_distance_km. C3
+    (2026-09-18) added mjo_rmm1/mjo_rmm2/mjo_amplitude, landing right after
+    elevation_mean.
+
     If this fails you either added a feature - update the contract in the same commit and
     say so in the message - or something upstream changed shape without meaning to.
     """
     assert contracts.PAIRED_ROW_COLUMNS == (
         "region_id", "variable", "valid_date", "forecast_value", "value_type",
         "init_date", "lead_time_days", "ensemble_member_id", "observed_value",
-        "verification_status", "abs_error", "month", "season", "ensemble_spread",
+        "verification_status", "abs_error", "jump_abs_change", "jump_std",
+        "jump_sign_flips", "jump_rel_climatology",
+        "laf_pool_mean", "laf_pool_std", "laf_pool_size", "laf_spread_ratio",
+        "month", "season",
+        "state_id", "centroid_lat", "centroid_lon", "area_km2", "border_distance_km",
+        "elevation_mean",
+        "mjo_rmm1", "mjo_rmm2", "mjo_amplitude",
+        "ensemble_spread",
         "ensemble_member_count", "pressure_rate_of_change", "moisture_rate_of_change",
         "forecast_error_lag", "fc_atmospheric_moisture_kgm2", "fc_humidity_pct",
         "fc_pressure_hpa", "fc_rainfall_mm", "fc_soil_moisture_pct", "fc_temperature_c",

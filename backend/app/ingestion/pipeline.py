@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.db import crud
 from app.db.base import get_session, init_db, resolve_path
-from app.ingestion.canonical_schema import CanonicalVariable, ValueType
+from app.ingestion.canonical_schema import ValueType
 from app.ingestion.parsers import ParsedTable, parse_upload
 from app.ingestion import schema_mapper as sm
 from app.storage import parquet_store

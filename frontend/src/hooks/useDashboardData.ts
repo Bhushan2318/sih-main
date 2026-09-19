@@ -3,18 +3,11 @@ import { fetchAlerts } from "../api/alerts";
 import { fetchEnsembleDivergence } from "../api/ensemble";
 import { fetchIngestRuns, fetchIngestStatus } from "../api/ingest";
 import { fetchModelStatus } from "../api/modelStatus";
-import { fetchAllRegions, fetchRegionDetail, fetchRegions } from "../api/regions";
+import { fetchAllRegions, fetchRegionDetail } from "../api/regions";
 import { fetchReplay, fetchReplayCycles } from "../api/replay";
 import type { RiskBand } from "../api/types";
 
 const SAFETY_REFETCH_MS = 60_000;
-
-export const useRegions = (leadTimeDays: number) =>
-  useQuery({
-    queryKey: ["regions", leadTimeDays],
-    queryFn: () => fetchRegions(leadTimeDays),
-    refetchInterval: SAFETY_REFETCH_MS,
-  });
 
 export const useAllRegions = () =>
   useQuery({

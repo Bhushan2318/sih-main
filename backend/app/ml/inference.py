@@ -10,6 +10,7 @@ import xgboost as xgb
 
 from app.features import engineering as fe
 from app.features import pivot as pv
+from app.features.history import forecast_history
 from app.ml import registry
 from app.ml.thresholds import Thresholds
 from app.storage import parquet_store
@@ -24,6 +25,9 @@ class ModelState:
     classifier_columns: list
     thresholds: Thresholds
     historical_bust_freq: dict
+    # Training-split mean |forecast jump| per (region, variable); empty for a run trained
+    # before C1, whose models never saw jump_rel_climatology.
+    jump_climatology: dict = field(default_factory=dict)
     shap_summary: pd.DataFrame = field(default_factory=pd.DataFrame)
     manifest: dict = field(default_factory=dict)
     metrics: dict = field(default_factory=dict)
@@ -80,6 +84,7 @@ def load_model_state(run_id: Optional[str] = None) -> Optional[ModelState]:
         classifier_columns=clf_cols,
         thresholds=thr,
         historical_bust_freq=registry.load_historical_bust_freq(rid),
+        jump_climatology=registry.load_jump_climatology(rid),
         shap_summary=shap_summary,
         manifest=_read("manifest.json"),
         metrics=_read("metrics.json"),
@@ -164,12 +169,19 @@ def score_cycle(
     )
 
     subset = pd.concat([fc_rows, observed], ignore_index=True)
+    del fc_rows, observed
+    # Earlier cycles for the jumpiness features, read one at a time and reduced to ensemble
+    # means as they are read. Cycle dates come from Parquet footers, never a column scan.
+    history = forecast_history(target_init, parquet_store.distinct_forecast_init_dates())
 
     frame = fe.build_training_frame(
         subset,
         historical_bust_freq=state.historical_bust_freq or None,
         require_observed=False,
+        forecast_history=history,
+        jump_climatology=state.jump_climatology or None,
     )
+    del subset, history
     if frame.empty:
         return None
 
@@ -178,7 +190,7 @@ def score_cycle(
         mask = frame["variable"] == var
         if not mask.any():
             continue
-        X = _prep(frame.loc[mask], cols, fe_categorical=True)
+        X = _prep(frame.loc[mask], cols)
         pred.loc[mask] = model.predict(X)
     frame["pred_err"] = pred
 
@@ -190,7 +202,7 @@ def score_cycle(
         scored, scored["pred_err"], state.thresholds.p90_error,
         bust_threshold=None, historical_bust_freq=state.historical_bust_freq or None,
     )
-    X_evt = _prep(events, state.classifier_columns, fe_categorical=False)
+    X_evt = _prep(events, state.classifier_columns)
     events["bust_probability"] = state.classifier.predict_proba(X_evt)[:, 1]
     events["risk_band"] = [state.thresholds.band_for(p) for p in events["bust_probability"]]
 
@@ -212,8 +224,10 @@ def score_cycle(
     return result
 
 
-def _prep(df: pd.DataFrame, cols: list, fe_categorical: bool) -> pd.DataFrame:
-    categorical = {"region_id", "season"}
+def _prep(df: pd.DataFrame, cols: list) -> pd.DataFrame:
+    # C4: state_id replaces region_id as the district-identity feature (see
+    # app.ml.regressors.CATEGORICAL_FEATURES / app.ml.classifier.CATEGORICAL).
+    categorical = {"state_id", "season"}
     X = pd.DataFrame(index=df.index)
     for c in cols:
         if c in df.columns:

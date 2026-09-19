@@ -28,8 +28,6 @@ death at 80% resumes rather than restarting.
 from __future__ import annotations
 
 import argparse
-import os
-import resource
 import sys
 import time
 from pathlib import Path
@@ -45,9 +43,42 @@ SAMPLES = BACKEND_DIR / "data" / "samples"
 
 def peak_rss_mb() -> float:
     """macOS reports ru_maxrss in BYTES; Linux in kilobytes. Getting this wrong produces
-    a number 1000x out, which is how a 2.08 GB peak got printed as '2079.97 GB' once."""
+    a number 1000x out, which is how a 2.08 GB peak got printed as '2079.97 GB' once.
+
+    Windows has no `resource` module and no ru_maxrss equivalent - psutil's `peak_wset`
+    (peak working set, bytes) is the closest match: the high-water mark, not current
+    usage, which is what every other branch here reports and what the per-cycle ceiling
+    in docs/known-issues.md was measured against.
+    """
+    # Both imports live here, not at module level. `resource` is POSIX-only, so a
+    # top-level import made the script unimportable on Windows. The platform-guarded
+    # top-level version that replaced it still broke the core install on Windows -
+    # psutil is a training extra (requirements-train.txt) - and put `resource` on the
+    # module on Mac and Linux, which is what tests/test_ingest_districts_chunked.py
+    # checks against. Importing on first call keeps the module importable everywhere.
+    if sys.platform == "win32":
+        import psutil
+        return psutil.Process().memory_info().peak_wset / 1e6
+    import resource
     raw = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     return raw / 1e6 if sys.platform == "darwin" else raw / 1024
+
+
+def resolve_source(year: int, source: str | None = None) -> Path:
+    """Where to read forecast rows from for this year's ingest.
+
+    Defaults to today's behaviour (`SAMPLES/gefs_reforecast_india_{year}.parquet`). An
+    override exists because a district-scale year can collide with a filename the test
+    suite's fixtures already own - 2019 is the first case: `tests/conftest.py` hardcodes
+    `gefs_reforecast_india_2019.parquet` as the small 36-city legacy sample every test
+    fixture depends on, so the real district-scale 2019 archive year has to live under a
+    different name. A bare filename resolves under `SAMPLES`; a path with directories
+    (relative or absolute) is used as given.
+    """
+    if source:
+        p = Path(source)
+        return p if p.is_absolute() or p.parent != Path(".") else SAMPLES / p
+    return SAMPLES / f"gefs_reforecast_india_{year}.parquet"
 
 
 def cycles_in_store() -> set:
@@ -74,6 +105,12 @@ def main() -> int:
     ap.add_argument("--chunk-cycles", type=int, default=1,
                     help="cycles per ingest call. 1 is safest; raise only after measuring")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--source", default=None,
+                    help="override the source parquet (default: "
+                         "gefs_reforecast_india_<year>.parquet under data/samples). "
+                         "A bare filename resolves there too; a path with directories "
+                         "is used as given. Needed when a year's filename collides with "
+                         "an existing sample, e.g. 2019's legacy 36-city test fixture.")
     args = ap.parse_args()
 
     months = None
@@ -87,7 +124,7 @@ def main() -> int:
             elif c:
                 months.add(int(c))
 
-    src = SAMPLES / f"gefs_reforecast_india_{args.year}.parquet"
+    src = resolve_source(args.year, args.source)
     if not src.exists():
         print(f"MISSING {src}", file=sys.stderr)
         return 1

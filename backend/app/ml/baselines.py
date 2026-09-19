@@ -4,7 +4,9 @@ from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
+from sklearn.isotonic import IsotonicRegression
 from sklearn.linear_model import LogisticRegression
+from sklearn.neighbors import KNeighborsClassifier
 
 LABEL = "y_bust"
 _EPS = 1e-6
@@ -252,8 +254,145 @@ class EMOSBaseline(_Base):
         return _clip(1.0 - p_no ** self.dependence_)
 
 
+@dataclass
+class IDRBaseline(_Base):
+    """Isotonic Distributional Regression (IDR).
+
+    Henzi, Ziegel & Gneiting (2021, JRSS-B), doi:10.1111/rssb.12450: a non-parametric
+    estimate of the conditional distribution of the outcome given a covariate, subject
+    only to the constraint that it is stochastically monotone in the covariate - no
+    parametric family assumed, unlike EMOS's half-normal. The paper's own Section 2.3
+    states that "non-parametric isotonic binary regression" emerges as a special case
+    of IDR when the outcome is binary - which ``y_bust`` already is, so fitting IDR here
+    is exactly isotonic regression of ``y_bust`` on the covariate, via the same
+    pool-adjacent-violators machinery ``app/ml/verification.py``'s CORP reliability
+    curve (D3) already uses, through ``sklearn.isotonic.IsotonicRegression``.
+
+    Covariate: ``spread_mean`` (falling back to ``spread_max``), the same primary
+    covariate EMOS uses - so the comparison is "does a monotone non-parametric fit beat
+    a parametric half-normal fit, on the same information?", not a different question
+    dressed up as a stronger baseline.
+    """
+
+    name: str = "IDR"
+    _iso: IsotonicRegression | None = None
+    _covariate: str | None = None
+
+    def _design(self, ev: pd.DataFrame) -> pd.DataFrame:  # not a logistic model
+        return pd.DataFrame(index=ev.index)
+
+    def fit(self, train_events: pd.DataFrame) -> "IDRBaseline":
+        y = np.asarray(train_events.get(LABEL, []), int)
+        self.base_rate = float(y.mean()) if len(y) else float("nan")
+        self._model, self.features = None, []
+        self._covariate = next(
+            (c for c in ("spread_mean", "spread_max") if c in train_events.columns), None)
+        if self._covariate is None or len(np.unique(y)) < 2:
+            self._iso = None
+            return self
+
+        x = pd.to_numeric(train_events[self._covariate], errors="coerce")
+        ok = x.notna().to_numpy()
+        if ok.sum() < 50:
+            self._iso = None
+            return self
+
+        self._iso = IsotonicRegression(out_of_bounds="clip").fit(
+            x.to_numpy(float)[ok], y[ok])
+        self.features = [self._covariate]
+        return self
+
+    def predict_proba(self, events: pd.DataFrame) -> np.ndarray:
+        if self._iso is None or self._covariate not in events.columns:
+            return _clip(np.full(len(events), self.base_rate))
+        x = pd.to_numeric(events[self._covariate], errors="coerce")
+        fill = float(np.nanmedian(x)) if x.notna().any() else 0.0
+        return _clip(self._iso.predict(x.fillna(fill).to_numpy(float)))
+
+
+@dataclass
+class AnalogBaseline(_Base):
+    """Method of analogs: for each case, the empirical bust rate among its k most
+    similar training cases, no fitted model at all.
+
+    Hamill & Whitaker (2006, Monthly Weather Review), doi:10.1175/MWR3237.1,
+    "Probabilistic Quantitative Precipitation Forecasts Based on Reforecast Analogs" -
+    the technique this project's own reforecast archive was built for, and the paper
+    that established analog forecasting using a *reforecast* archive specifically
+    (rather than a short operational record), which is exactly this project's
+    situation. Their k-nearest-neighbour search over forecast-state covariates is
+    implemented here directly as ``sklearn.neighbors.KNeighborsClassifier``, whose
+    ``predict_proba`` with uniform weighting *is* "the empirical event rate among the k
+    nearest neighbours" - no separate vote-counting needed.
+
+    Same covariates as ``LeadSpreadSeasonBaseline`` (lead day, spread, season), so the
+    comparison is "does a neighbour lookup beat a parametric logistic fit on the same
+    features?" - standardised (z-scored on training data) before the neighbour search,
+    since Euclidean distance on raw features would be dominated by whichever one has
+    the largest scale (lead_time_days spans 1-10; spread's range depends on the
+    variable).
+
+    ``n_neighbors=50`` is a fixed, documented choice in the spirit of Hamill &
+    Whitaker's own reforecast-analog practice (dozens of analogs drawn from a large
+    historical archive), not tuned against held-out data - the same "fixed by
+    definition, not fitted" convention EMOS already uses for its error threshold.
+    """
+
+    name: str = "analog"
+    n_neighbors: int = 50
+    _seasons: list = field(default_factory=list)
+    _feature_mean: np.ndarray | None = None
+    _feature_std: np.ndarray | None = None
+    _knn: KNeighborsClassifier | None = None
+
+    def _design(self, ev: pd.DataFrame) -> pd.DataFrame:
+        cols = {"lead_time_days": ev["lead_time_days"]}
+        for c in ("spread_mean", "spread_max"):
+            if c in ev.columns:
+                cols[c] = ev[c]
+        X = pd.DataFrame(cols, index=ev.index)
+        if "season" in ev.columns:
+            s = ev["season"].astype(str)
+            if not self._seasons:
+                self._seasons = sorted(s.dropna().unique())
+            for season in self._seasons:
+                X[f"season_{season}"] = (s == season).astype(float)
+        return X
+
+    def fit(self, train_events: pd.DataFrame) -> "AnalogBaseline":
+        y = np.asarray(train_events[LABEL], int)
+        self.base_rate = float(y.mean()) if len(y) else float("nan")
+        X = self._prepare(train_events, fitting=True)
+        self.features = list(X.columns)
+        if len(np.unique(y)) < 2 or X.empty or X.shape[1] == 0:
+            self._knn = None
+            return self
+
+        Xn = X.to_numpy(float)
+        self._feature_mean = Xn.mean(axis=0)
+        std = Xn.std(axis=0)
+        self._feature_std = np.where(std > 0, std, 1.0)
+        Xs = (Xn - self._feature_mean) / self._feature_std
+
+        k = max(1, min(self.n_neighbors, len(y)))
+        self._knn = KNeighborsClassifier(n_neighbors=k, weights="uniform").fit(Xs, y)
+        return self
+
+    def predict_proba(self, events: pd.DataFrame) -> np.ndarray:
+        if self._knn is None:
+            return _clip(np.full(len(events), self.base_rate))
+        X = self._prepare(events, fitting=False)
+        Xs = (X.to_numpy(float) - self._feature_mean) / self._feature_std
+        proba = self._knn.predict_proba(Xs)
+        # predict_proba's columns follow self._knn.classes_, which is only guaranteed
+        # to be [0, 1] (and column 1 the bust probability) when fit saw both classes -
+        # already required above, but asserted rather than assumed silently.
+        assert list(self._knn.classes_) == [0, 1], self._knn.classes_
+        return _clip(proba[:, 1])
+
+
 ALL_BASELINES = (ClimatologyBaseline, LeadDayBaseline, SpreadBaseline,
-                 LeadSpreadSeasonBaseline, EMOSBaseline)
+                 LeadSpreadSeasonBaseline, EMOSBaseline, IDRBaseline, AnalogBaseline)
 
 
 def brier(y_true, proba) -> float:

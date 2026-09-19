@@ -9,8 +9,10 @@ boundary. Rebuilding any of those here would be a second implementation that can
 from the pipeline silently - and a drifted baseline flatters the model. So the training
 run publishes what it scored (`--emit-eval`) and this reads it.
 
-Reports, per model: Brier, Brier skill score against climatology, ROC-AUC, and BSS broken
-down by lead day - because the honest question is not whether the model beats climatology
+Reports, per model: Brier, Brier skill score against climatology, ROC-AUC with a
+by-cycle block bootstrap 95% CI, the binormal Z-AUC alongside the trapezoidal ROC-AUC
+(app/ml/verification.py - D1/D2 of the verification package), and BSS broken down by
+lead day - because the honest question is not whether the model beats climatology
 overall, but whether it still adds anything once you know the lead time.
 
 Writes a markdown table into docs/results.md under `## Baselines`, stamped with the run_id
@@ -35,6 +37,7 @@ sys.path.insert(0, str(BACKEND_DIR))
 
 from app.ml import baselines as bl               # noqa: E402
 from app.ml import classifier as clf_mod         # noqa: E402
+from app.ml import verification as ver           # noqa: E402
 
 EVAL_DIR = BACKEND_DIR / "data" / "analysis" / "eval_events"
 RESULTS_MD = BACKEND_DIR.parent / "docs" / "results.md"
@@ -61,11 +64,48 @@ def _git_sha() -> str:
         return "unknown"
 
 
-def _metrics(y, proba, ref) -> dict:
+def _metrics(y, proba, ref, cycles, y_calib, p_calib) -> dict:
     """Reuses the classifier's own _evaluate so every number here is computed by exactly
-    the same code that produced the model's reported metrics."""
+    the same code that produced the model's reported metrics.
+
+    D1/D2 additions, per docs/team-brief-2026-09-15-updated.md Section 6: a block
+    bootstrap CI around ROC-AUC, resampled by forecast cycle (never by row - rows in
+    the same cycle share the same synoptic situation), and the binormal Z-AUC estimate
+    alongside the trapezoidal one already in `_evaluate`.
+
+    D3 addition: the CORP reliability curve and its exact Brier decomposition
+    (MCB/DSC/UNC), alongside - not replacing - the naive fixed-bin `calibration` field
+    `_evaluate` already produces.
+
+    D4 addition: SEDI (at the same 0.5 threshold `_evaluate` already uses for
+    precision/recall/F1 - see verification.sedi's own docstring for why its usual
+    rare-event justification only partly applies to the ~43% aggregate y_bust label
+    scored here) and the relative economic value curve, swept over cost-loss ratios.
+
+    D6 addition: split conformal prediction, calibrated on `y_calib`/`p_calib` (the
+    `val` split - see verification.conformal_threshold's own docstring for why, and its
+    one honest caveat) at alpha=0.1 (target 90% coverage), then applied to this rung's
+    own test-split probabilities. Coverage and mean prediction-set size below are
+    MEASURED on the real held-out test rows, not the theoretical guarantee alone -
+    CLAUDE.md's own "measure, don't estimate" applies here as much as anywhere."""
     m = clf_mod._evaluate(y, proba)
     m["bss"] = bl.brier_skill_score(y, proba, ref)
+    m["z_auc"] = ver.binormal_auc(y, proba)
+    m["roc_auc_ci"] = ver.block_bootstrap_ci(y, proba, cycles, metric_fn=ver.trapezoidal_auc)
+    m["corp_reliability"] = ver.corp_reliability_curve(y, proba)
+    m["brier_decomposition"] = ver.brier_decomposition(y, proba)
+    m["sedi"] = ver.sedi(y, proba)
+    m["economic_value"] = ver.relative_economic_value(y, proba)
+
+    alpha = 0.1
+    q_hat = ver.conformal_threshold(y_calib, p_calib, alpha=alpha)
+    sets = ver.conformal_prediction_set(proba, q_hat)
+    covered = [s["bust"] if yy else s["no_bust"] for s, yy in zip(sets, y)]
+    set_sizes = [int(s["no_bust"]) + int(s["bust"]) for s in sets]
+    m["conformal_alpha"] = alpha
+    m["conformal_q_hat"] = q_hat
+    m["conformal_coverage"] = float(np.mean(covered)) if covered else float("nan")
+    m["conformal_mean_set_size"] = float(np.mean(set_sizes)) if set_sizes else float("nan")
     return m
 
 
@@ -84,6 +124,12 @@ def _fmt(v, nd=4) -> str:
     return "—" if v is None or not np.isfinite(v) else f"{v:.{nd}f}"
 
 
+def _fmt_ci(ci: dict, nd=4) -> str:
+    if ci is None or not (np.isfinite(ci["lo"]) and np.isfinite(ci["hi"])):
+        return "—"
+    return f"[{ci['lo']:.{nd}f}, {ci['hi']:.{nd}f}]"
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--run-id", help="eval events to score (default: the most recent)")
@@ -100,6 +146,7 @@ def main() -> int:
     ev = pd.read_parquet(path)
 
     train = ev[ev["split"] == "train"]
+    val = ev[ev["split"] == "val"]
     test = ev[ev["split"] == "test"]
     if train.empty or test.empty:
         raise SystemExit(
@@ -107,9 +154,17 @@ def main() -> int:
             "A store with too few cycles produces no held-out split.")
     if bl.LABEL not in ev.columns:
         raise SystemExit(f"no {bl.LABEL} column - these events were built without labels")
+    if val.empty:
+        print("WARNING: no val split - conformal prediction (D6) cannot be calibrated; "
+              "those fields will be reported as fully uncertain (q_hat=nan).")
 
     y_test = np.asarray(test[bl.LABEL], int)
+    y_val = np.asarray(val[bl.LABEL], int) if not val.empty else np.array([], dtype=int)
     leads = np.asarray(test["lead_time_days"], int)
+    if "init_date" not in test.columns:
+        raise SystemExit(
+            "no init_date column - block_bootstrap_ci needs a cycle id per row")
+    cycles = np.asarray(test["init_date"])
 
     fitted = bl.fit_all(train)
     ref = fitted["climatology"].predict_proba(test)      # the BSS reference forecast
@@ -117,12 +172,17 @@ def main() -> int:
     rows, per_lead = [], {}
     for name, model in fitted.items():
         p = model.predict_proba(test)
-        rows.append((name, _metrics(y_test, p, ref)))
+        p_val = model.predict_proba(val) if not val.empty else np.array([])
+        rows.append((name, _metrics(y_test, p, ref, cycles, y_val, p_val)))
         per_lead[name] = _per_lead(y_test, p, ref, leads)
 
     if "model_proba" in test.columns and test["model_proba"].notna().any():
         p = np.asarray(test["model_proba"], float)
-        rows.append((MODEL_ROW, _metrics(y_test, p, ref)))
+        model_val_ok = (not val.empty and "model_proba" in val.columns
+                        and val["model_proba"].notna().any())
+        p_val_model = np.asarray(val["model_proba"], float) if model_val_ok else np.array([])
+        y_val_model = y_val if model_val_ok else np.array([], dtype=int)
+        rows.append((MODEL_ROW, _metrics(y_test, p, ref, cycles, y_val_model, p_val_model)))
         per_lead[MODEL_ROW] = _per_lead(y_test, p, ref, leads)
     else:
         print("WARNING: no model_proba column - the classifier row is missing.")
@@ -158,14 +218,53 @@ def main() -> int:
         f"weak, sign-flipping relationship is why a lead-day-only model can score below "
         f"chance here — and it is also direct evidence that the classifier's skill is "
         f"not simply a rediscovery of lead time.\n\n"
+        f"The ROC-AUC confidence interval is a block bootstrap over 1000 resamples of "
+        f"whole forecast cycles (never rows - rows in one cycle share the same synoptic "
+        f"situation, so a row-level bootstrap understates uncertainty; see "
+        f"`app/ml/verification.py`). Z-AUC is the binormal estimator of Shanker, Sarkar "
+        f"& Mamgain (NCMRWF, QJRMS 2024, doi:10.1002/qj.4674), reported alongside the "
+        f"trapezoidal ROC-AUC rather than in place of it.\n\n"
+        f"MCB/DSC are the CORP-consistent Brier decomposition of Dimitriadis, Gneiting "
+        f"& Jordan (2021, PNAS, doi:10.1073/pnas.2016191118): MCB (miscalibration, "
+        f"lower is better) is the Brier score lost to the forecast not already being "
+        f"isotonic-calibrated, DSC (discrimination, higher is better) is how much that "
+        f"calibrated forecast beats climatology. Brier = MCB - DSC + UNC exactly, where "
+        f"UNC is the bust rate's own variance - not shown per row since it does not "
+        f"depend on the forecast. The full CORP reliability curve (one row per PAV "
+        f"block) is in the run artifact, not this table.\n\n"
+        f"SEDI (Ferro & Stephenson, 2011, Weather and Forecasting, "
+        f"doi:10.1175/WAF-D-10-05030.1) is built for rare events - 0 is no skill, 1 is "
+        f"perfect. Each variable's own bust threshold is rare by construction (its "
+        f"90th percentile), but the ~43% aggregate bust rate scored here is not (1 - "
+        f"0.9**8 before dependence) - reported anyway since it costs nothing to compute "
+        f"correctly at any base rate, without the strongest case for it. The relative "
+        f"economic value curve (Richardson, "
+        f"2000, doi:10.1002/qj.49712656313; Shanker, Sarkar & Mamgain, 2024, "
+        f"doi:10.1002/qj.4674) is swept over cost-loss ratios in the run artifact, not "
+        f"this table - a single number cannot represent a curve.\n\n"
+        f"Conformal coverage/set size (Vovk, Gammerman & Shafer, 2005; Angelopoulos & "
+        f"Bates, 2023, Foundations and Trends in ML 16(4):494-591, arXiv:2107.07511) "
+        f"are calibrated on the `val` split at alpha=0.1 (target 90% coverage) and "
+        f"MEASURED on these test rows, not the theoretical guarantee alone - coverage "
+        f"below 90% here would mean the guarantee is not holding on real data, not a "
+        f"formula to trust blindly. Set size is the mean number of labels ({{no-bust}}, "
+        f"{{bust}}, both, or neither) surviving calibration per row - 1.0 is maximally "
+        f"informative (every row confidently one label or the other), 2.0 is "
+        f"maximally uncertain (every row admits both).\n\n"
     )
 
-    tbl = ["| model | Brier ↓ | BSS vs climatology ↑ | ROC-AUC ↑ | F1 ↑ |",
-           "|---|---|---|---|---|"]
+    tbl = ["| model | Brier ↓ | BSS vs climatology ↑ | ROC-AUC ↑ | 95% CI (by cycle) | "
+           "Z-AUC ↑ | F1 ↑ | MCB ↓ | DSC ↑ | SEDI ↑ | Coverage (90% target) | Set size ↓ |",
+           "|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for name, m in rows:
         label = f"**{name}**" if name == MODEL_ROW else name
+        bd = m["brier_decomposition"]
         tbl.append(f"| {label} | {_fmt(m['brier'])} | {_fmt(m['bss'])} | "
-                   f"{_fmt(m['roc_auc'])} | {_fmt(m['f1'])} |")
+                   f"{_fmt(m['roc_auc'])} | {_fmt_ci(m['roc_auc_ci'])} | "
+                   f"{_fmt(m['z_auc'])} | {_fmt(m['f1'])} | "
+                   f"{_fmt(bd['miscalibration'])} | {_fmt(bd['discrimination'])} | "
+                   f"{_fmt(m['sedi'])} | {_fmt(m['conformal_coverage'], 3)} | "
+                   f"{_fmt(m['conformal_mean_set_size'], 3)} |")
 
     all_leads = sorted({l for d in per_lead.values() for l in d})
     lead_tbl = []
@@ -201,12 +300,22 @@ def main() -> int:
                 "lead_bust_correlation": {"train": corr["train"], "test": corr["test"]},
                 "models": [
                     {"name": name, "brier": m["brier"], "bss": m["bss"],
-                     "roc_auc": m["roc_auc"], "f1": m["f1"],
+                     "roc_auc": m["roc_auc"], "roc_auc_ci": m["roc_auc_ci"],
+                     "z_auc": m["z_auc"], "f1": m["f1"],
+                     "brier_decomposition": m["brier_decomposition"],
+                     "corp_reliability": m["corp_reliability"],
+                     "sedi": m["sedi"], "economic_value": m["economic_value"],
+                     "conformal": {
+                         "alpha": m["conformal_alpha"], "q_hat": m["conformal_q_hat"],
+                         "coverage": m["conformal_coverage"],
+                         "mean_set_size": m["conformal_mean_set_size"],
+                     },
                      "is_model": name == MODEL_ROW}
                     for name, m in rows
                 ],
             }
-            (run_dir / "baselines.json").write_text(json.dumps(payload, indent=2))
+            (run_dir / "baselines.json").write_text(json.dumps(payload, indent=2),
+                                                    encoding="utf-8")
             print(f"wrote {run_dir / 'baselines.json'}")
         else:
             print(f"run directory {run_dir} not found; skipped the run artifact",
@@ -216,12 +325,15 @@ def main() -> int:
         return 0
 
     RESULTS_MD.parent.mkdir(parents=True, exist_ok=True)
-    existing = RESULTS_MD.read_text() if RESULTS_MD.exists() else "# Sanket — measured results\n\n"
+    # Explicit utf-8: the table uses unicode arrows and Path.write_text/read_text default
+    # to the platform's preferred encoding, which is cp1252 - not utf-8 - on Windows.
+    existing = (RESULTS_MD.read_text(encoding="utf-8") if RESULTS_MD.exists()
+               else "# Sanket — measured results\n\n")
     if HEADING in existing:
         head, _, tail = existing.partition(HEADING)
         nxt = tail.find("\n## ")
         existing = head + (tail[nxt + 1:] if nxt != -1 else "")
-    RESULTS_MD.write_text(existing.rstrip() + "\n\n" + section)
+    RESULTS_MD.write_text(existing.rstrip() + "\n\n" + section, encoding="utf-8")
     print(f"wrote {RESULTS_MD}")
     return 0
 
