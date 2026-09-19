@@ -20,6 +20,24 @@ from pathlib import Path
 
 import pytest
 
+# Windows only, load-bearing: import torch before pandas, anywhere in the process, or a
+# *later* torch.onnx.export() fails with "DLL load failed while importing
+# onnx_cpp2py_export: A dynamic link library (DLL) initialization routine failed" - a
+# generic Windows message that gives no hint it's an import-order issue. Reproduced with
+# a 2-import, no-pytest script: `import pandas; import torch; torch.onnx.export(...)`
+# fails every time; swapping the first two lines makes it pass every time. Not
+# Smart-App-Control, not a protobuf pin, not pytest - torch and pandas/numpy each bundle
+# their own OpenMP/MKL runtime, and whichever loads first wins the process; onnx's
+# compiled extension only surfaces the conflict later, at its own DllMain. Below,
+# `_ensure_sample_csvs()` imports pandas before any test module gets a chance to import
+# torch first, so this has to happen here, before that call, not in app/ml/cnn.py.
+# Harmless where torch is absent (the training extra) or on a platform where load order
+# never mattered. Measured 2026-09-11 on the RTX 4060 Windows box.
+try:
+    import torch  # noqa: F401
+except ImportError:
+    pass
+
 _TMP = Path(tempfile.mkdtemp(prefix="forecastguard-test-"))
 os.environ.setdefault("DATA_DIR", str(_TMP))
 os.environ["DB_PATH"] = str(_TMP / "metadata.db")
