@@ -179,7 +179,7 @@ display geometry without reading that first.
   receptive field), no downsampling, so the feature map stays at grid resolution
   and the *same* district weight table pools it — both families provably see
   identical geography (torch vs numpy agree to 7e-06). One mask channel per input
-  channel. 39,361 parameters, capped by a test.
+  channel. 43,969 parameters, under a 200,000 cap asserted by a test.
 - **The ladder decides.** Both are scored on identical held-out rows.
 - **PyTorch must never enter the serving dependency set.** Serving is
   onnxruntime only.
