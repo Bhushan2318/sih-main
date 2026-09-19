@@ -373,6 +373,38 @@ here rather than discovered live.
   boundary *lines* against SoI's own data, and no such comparison is recorded anywhere.
   Full writeup, sources, and a Datameet alternative comparison: `docs/boundary-geometry-licensing.md`.
 
+- **The live operational feed does not go through the district weight table.** Training
+  and reforecast ingestion aggregate every 0.25° cell a district polygon overlaps, via
+  `india_districts.DistrictGrid.aggregate` (`fetch_gefs_reforecast_sample.py`,
+  `fetch_era5_cds_district_observations.py`). The live path does not: `app/live/gefs.py`
+  reads `scripts/india_cities.json` - **36 city points, one per state/UT** - and samples
+  `ds[sn].sel(latitude=..., longitude=..., method="nearest")`. Neither `app/live/gefs.py`
+  nor `app/live/orchestrator.py` references the weight table at all. Those rows are then
+  geo-resolved onto district `region_id`s, so a live row and a training row can carry the
+  same `IN-WB-KOLKATA` while having been produced by two different spatial methods -
+  area mean over the polygon in one case, value of the single nearest grid centre in the
+  other.
+
+  This is the method CLAUDE.md's Geography section specifically rejects, and Kolkata is
+  one of the ten districts it names as containing *no grid centre at all* - so for that
+  district the live value comes from a cell whose centre lies outside it. Kolkata and
+  Hyderabad are both in `india_cities.json`.
+
+  Scale of the disagreement is already measured, in CLAUDE.md's own validation of the
+  district method against the 35 city points it replaced: correlation 0.9896, median
+  absolute difference 0.31 °C. Small next to the temperature bust threshold of 4.45 °C,
+  so this is a consistency problem rather than a visibly wrong number - but it is a
+  train/serve geography mismatch, and CLAUDE.md's "there is exactly one weight table"
+  and "both sides of the bust label are area means over the same polygon" describe the
+  archive path only, not what the deployed site ingests each cycle.
+
+  Consequence a visitor sees: the live deployment scores **36 regions**, not 666. The
+  About page discloses "city points, not full regional coverage of India", which is
+  accurate for the live feed and stale for the archive work. Not fixed here: moving the
+  live path onto the weight table means pulling gridded fields rather than points per
+  cycle, which is a real change to the live fetch's cost and failure modes, and not
+  something to do untested. Found 2026-09-20.
+
 ## Data
 
 - **`docs/results.md` is generated, not committed.** Baselines are written into the model
@@ -488,10 +520,90 @@ here rather than discovered live.
   fetch script). Measured identically in 2017 and 2018. Models see no wind features for
   days 6-10 and no soil-moisture features for days 4-10; this is the source, not a gap in
   the fetch.
-- **Soil moisture has intermittent holes inside its three days.** In 2017 some cycles are
-  60 values short (four districts × 3 leads × 5 members), starting 2017-11-16 and
-  recurring after; in 2018 the year is 6,240 values short per lead. The ingest propagates
-  the gap rather than filling it. Which districts, and why, is not yet established.
+- **Soil moisture's holes are four sea-covered districts, and the bigger problem is the
+  cycles where they are *not* holes.** The counts recorded earlier were right - 2017 is 60
+  values short per cycle (four districts × 3 leads × 5 members) from 2017-11-16, 2018 is
+  6,240 short per lead. Resolved 2026-09-20: the four are the same in both years, and they
+  are **Nicobar Islands, Lakshadweep, Diu and Mumbai City** - islands and tiny coastal
+  districts whose overlapping 0.25° cells are sea. `soilw_bgrnd` is a land-surface field,
+  so there is nothing there to read. The missingness is correct.
+
+  What is not correct is the other half. Where those districts are *not* NaN they carry
+  **~98% volumetric soil moisture** (2017 before 2017-11-16: mean 97.89, min 91.1, max
+  100.0, n=19,140), against inland Nagpur's **20.61** over the same window. That is the
+  ocean being read as saturated ground rather than masked, and it enters the store as a
+  real measurement with a real `source_grib`.
+
+  Which behaviour you get depends on the year, not on the data - measured across every
+  sample file on disk, at lead ≤ 3:
+
+  | years | behaviour |
+  |---|---|
+  | 2010, 2011, 2014, 2015 | masked (NaN), no saturated values |
+  | 2012, 2013, 2016, 2019 | no NaN at all; saturated values passed through |
+  | 2017 | 19,560 saturated, 2,340 masked (masking starts 2017-11-16) |
+  | 2018 | 18,720 masked, 3,180 saturated |
+
+  A year-dependent split like that follows fetch vintage, not meteorology.
+
+  **In the canonical store this produces a guaranteed, fabricated bust label.** The two
+  products disagree diametrically over water, and the pipeline pairs them anyway
+  (measured 2026-09-20 over the whole store):
+
+  | | n | mean | median |
+  |---|---|---|---|
+  | forecast, the four | 22,740 | 97.88 | **99.78** |
+  | observed, the four | 1,475 | 1.72 | **0.00** |
+  | observed, other 662 districts | 242,155 | 27.78 | 25.99 |
+
+  GEFS reports sea as saturated ground; ERA5 reports it as empty. Pairing those gives:
+
+  | | paired rows | median abs error | over the 35.68 threshold |
+  |---|---|---|---|
+  | the four | 3,915 | **100.00** | **100.0%** |
+  | all other districts | 724,479 | 8.90 | 0.9% |
+
+  So those four districts are labelled a soil-moisture bust on **every single paired row**,
+  against a 0.9% rate everywhere else, and they hold 22,740 of the store's ~24,841
+  readings above 90%. Any model trained on this can learn "these districts always bust"
+  as a district-identity shortcut - worth noting that `region_id` ranks in the classifier's
+  top five SHAP features.
+
+  **It is not four districts, it is a gradient, and the cause is the weight table having
+  no land mask.** Ranking all 666 by median forecast soil moisture puts them in almost
+  exactly the order of how much sea each contains:
+
+  | district | median | | district | median |
+  |---|---|---|---|---|
+  | Nicobar Islands | 100.00 | | Mumbai Suburban | 55.54 |
+  | Lakshadweep | 100.00 | | Chennai | 54.13 |
+  | Mumbai City | 99.37 | | N & M Andaman | 52.43 |
+  | Diu | 91.50 | | Porbandar | 44.96 |
+  | Daman | 87.31 | | Kachchh | 42.24 |
+  | Mahe | 83.56 | | Gir Somnath | 41.74 |
+  | South Andaman | 77.55 | | **all 666 districts** | **14.79** |
+
+  Every one of those is coastal or island. The one exception in the top 15 is Lahul &
+  Spiti at 40.85 - high Himalaya, so presumably snow or ice rather than sea, a different
+  land-surface artifact of the same kind.
+
+  The district value is the area-weighted mean of every 0.25° cell the polygon overlaps.
+  That is the right rule for a field defined everywhere, and the wrong one for a
+  land-only field, because the sea cells are not missing - they carry a saturated ~100
+  sentinel. So each coastal district is pulled toward 100 in proportion to its sea
+  fraction, continuously, and the seven worst are simply the ones that are mostly water.
+  Three further districts beyond the four above - **Daman, Mahe, South Andaman** - carry
+  an 87.5% soil-moisture bust rate over 3,366 paired rows on the same mechanism.
+
+  That reframes the fix: not a per-district exclusion list, but a land mask applied to
+  the weight table for land-only variables, decided once. CLAUDE.md's "exactly one weight
+  table" still holds - the table needs a per-variable mask, not a second table.
+
+  Rule 1 says every value must trace to a real GRIB2 message. These do, and that is the
+  point: the message is real and means "sea", and the pipeline records it as ground. Not
+  fixed here - fixing it means deciding the land-mask rule once and re-ingesting the
+  affected years, not patching the reader, and it should be one decision rather than four
+  districts' worth of special cases.
 - **The parser test's collected count is not portable across machines.**
   `tests/test_parsers.py` runs one test per real file `conftest.iter_sample_files()`
   finds, which scans two roots: `backend/data/samples/` (repo, real fetch output) and,
