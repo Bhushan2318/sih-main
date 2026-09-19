@@ -533,9 +533,10 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 
 .kpis--flush { padding: 0; margin-bottom: 16px; }
 
-.ladder { margin: 12px 1.3rem 0; }
+/* No gutter of its own: the ladder now sits inside .app__below, which already supplies
+ * the page's horizontal padding. Its old `margin: 12px 1.3rem 0` was for the first
+ * screen, where it was a direct child of .screen1 and had to indent itself. */
 .ladder .dtable { font-size: 12.5px; }
-@media (max-width: 900px) { .ladder { margin-inline: 1rem; } }
 
 .card--table { padding-bottom: 0.6rem; }
 
