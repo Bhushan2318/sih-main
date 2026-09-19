@@ -7,6 +7,50 @@ must not be changed without checking that review; this **is** that review's firs
 **Not legal advice.** Two of the findings below turn on Indian law and on terms that are
 not published in full. They need a person to confirm before anything is republished.
 
+## Update, 2026-09-19 — the depiction gap, partially closed
+
+The project owner reported the map "not correct" after external feedback, and asked for
+action rather than further research. What was actually verified and shipped:
+
+The measured cause: `india_districts.topojson` (via GADM, `build_district_geo.py`)
+already draws every *district* to the full extent of India's claim - keeping
+disputed-prefixed features rather than filtering to `IND.*` was already doing that - but
+GADM has no district polygon at all, disputed or not, for territory no Indian
+administration governs. Decoded the file's own coordinates: J&K/Ladakh's northern edge
+stops at **35.50 deg N**, short of India's actual claim (~37.05 deg N, the Siachen/
+Karakoram Pass area). That gap - not a rendering bug - is what read as "the top of
+Kashmir is cut off."
+
+`data.gov.in`, the licence-clean replacement Finding 4 recommends, is still not
+independently obtainable - confirmed blocked to automated fetching again (403) and no
+verified alternative source was found that both permits redistribution and actually
+encodes the full claim. That part of Finding 4 remains open exactly as written below.
+
+What shipped instead, narrower than a full district-data swap: `backend/scripts/
+build_claimed_territory_geo.py` pulls Natural Earth's public-domain 10m disputed-areas
+layer and keeps every feature where that layer's own `ADM0_A3_IN` field reads `IND` -
+India's claim as tracked by a neutral third-party reference, not this project's
+assertion. That's Aksai Chin, the Shaksgam Valley, Gilgit-Baltistan/Azad Kashmir and
+Siachen Glacier. Output: `frontend/src/assets/geo/claimed_territory.geojson`, rendered by
+`IndiaChoroplethMap` as a non-interactive silhouette layer, under the district
+choropleth, at the national view only. It first shipped hatched; the project owner chose
+to fill it with J&K's own band colour so the outline reads as one country. **That colour
+is inherited, not scored** - there is no forecast or observation data for these areas and
+none was invented; the layer is unclickable and carries no tooltip or value.
+
+Shipping the claimed part alone put a Natural Earth edge next to a GADM edge along the
+Line of Control. The two are digitised at different scales, so they did not meet: 21
+sliver holes (measured) rendered as white gashes across Kashmir. The build therefore
+unions the claimed polygons with the J&K/Ladakh districts *as decoded from the rendered
+TopoJSON*, and drops interior rings - in one fused Kashmir outline every hole is a
+mismatch artifact, not an enclave. The layer also draws with `stroke: none`, because
+`.region`'s card-coloured stroke otherwise painted that same seam back on. The districts
+on top keep their own borders and colours; this only supplies the silhouette beneath. `district_grid_weights.parquet` and every model input are untouched, per
+Recommendation 1 below.
+
+Still open, unchanged from the original findings: the licensing problem (Finding 1), and
+Findings 3-4's replacement-source question for the *district* layer itself.
+
 ## What the project ships today
 
 One script, `backend/scripts/build_district_geo.py`, derives everything from **GADM 4.1
