@@ -4,6 +4,8 @@ import { useModelStatus } from "../../hooks/useDashboardData";
 import { useLiveStore } from "../../store/liveStore";
 import { ErrorState, LoadingState } from "../common/States";
 import { UploadPanel } from "../upload/UploadPanel";
+import { CorpReliabilityCard } from "./CorpReliabilityCard";
+import { EconomicValueCard } from "./EconomicValueCard";
 import { PipelineLog } from "./PipelineLog";
 
 const UPLOAD_ENABLED = import.meta.env.VITE_ENABLE_UPLOAD !== "false";
@@ -233,6 +235,13 @@ export function ModelPage() {
               </p>
             </section>
           ) : null}
+
+          {/* Workstream D's evidence, which had no screen until now: what the forecast is
+            * worth to act on (F3) and whether its probabilities mean what they say (F4). */}
+          <div className="page--split">
+            <EconomicValueCard data={data} />
+            <CorpReliabilityCard data={data} />
+          </div>
 
           {UPLOAD_ENABLED ? <UploadPanel /> : null}
         </>

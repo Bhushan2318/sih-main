@@ -187,6 +187,26 @@ export interface ModelStatusResponse {
     models?: {
       name: string; brier: number | null; bss: number | null;
       roc_auc: number | null; f1: number | null; is_model?: boolean;
+      // Workstream D. Every field below is optional on purpose: baselines.json is
+      // written per run, and runs trained before D landed carry only the five fields
+      // above. The UI must degrade to "not measured for this run" rather than break.
+      roc_auc_ci?: {
+        point: number; lo: number; hi: number;
+        n_resamples: number; n_cycles: number; ci: number;
+      } | null;
+      z_auc?: number | null;
+      sedi?: number | null;
+      brier_decomposition?: {
+        reliability?: number | null; resolution?: number | null; uncertainty?: number | null;
+      } | null;
+      /** One row per PAV block, ascending. Same shape as `CalibrationBin`. */
+      corp_reliability?: { predicted_mean: number; observed_rate: number; n: number }[] | null;
+      /** Value vs cost-loss ratio, 99 points over alpha in [0.01, 0.99]. */
+      economic_value?: { cost_loss_ratio: number; value: number }[] | null;
+      conformal?: {
+        alpha?: number | null; q_hat?: number | null;
+        coverage?: number | null; mean_set_size?: number | null;
+      } | null;
     }[];
   };
   modelled_variables: string[];
