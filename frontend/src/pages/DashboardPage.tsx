@@ -157,7 +157,6 @@ export function DashboardPage() {
           <section className={heroFills ? "screen1" : undefined}>
             <HeroDivergence data={ensembleQuery.data} />
             <KpiStrip all={allRegions} day={regions} />
-            <BaselineLadderCard data={statusQuery.data} />
             {heroFills ? <OpeningCues onReplay={() => setView("replay")} /> : null}
             {regions?.regions.length ? (
               <RiskTicker
@@ -225,9 +224,16 @@ export function DashboardPage() {
             />
           </main>
 
-          {regions?.regions.length ? (
+          {/* The ladder sits directly under the map: you look at today's risk, then
+            * immediately at the evidence that the risk is worth believing. Guarded on
+            * either child having something to draw, so this never renders as bare
+            * padding when the store has no scored regions and no baselines. */}
+          {regions?.regions.length || statusQuery.data?.baselines?.models?.length ? (
             <section className="app__below">
-              <BustSummaryChart regions={regions.regions} onSelect={setSelectedRegion} />
+              <BaselineLadderCard data={statusQuery.data} />
+              {regions?.regions.length ? (
+                <BustSummaryChart regions={regions.regions} onSelect={setSelectedRegion} />
+              ) : null}
             </section>
           ) : null}
         </>
