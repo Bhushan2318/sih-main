@@ -569,6 +569,36 @@ here rather than discovered live.
   as a district-identity shortcut - worth noting that `region_id` ranks in the classifier's
   top five SHAP features.
 
+  **It is not four districts, it is a gradient, and the cause is the weight table having
+  no land mask.** Ranking all 666 by median forecast soil moisture puts them in almost
+  exactly the order of how much sea each contains:
+
+  | district | median | | district | median |
+  |---|---|---|---|---|
+  | Nicobar Islands | 100.00 | | Mumbai Suburban | 55.54 |
+  | Lakshadweep | 100.00 | | Chennai | 54.13 |
+  | Mumbai City | 99.37 | | N & M Andaman | 52.43 |
+  | Diu | 91.50 | | Porbandar | 44.96 |
+  | Daman | 87.31 | | Kachchh | 42.24 |
+  | Mahe | 83.56 | | Gir Somnath | 41.74 |
+  | South Andaman | 77.55 | | **all 666 districts** | **14.79** |
+
+  Every one of those is coastal or island. The one exception in the top 15 is Lahul &
+  Spiti at 40.85 - high Himalaya, so presumably snow or ice rather than sea, a different
+  land-surface artifact of the same kind.
+
+  The district value is the area-weighted mean of every 0.25° cell the polygon overlaps.
+  That is the right rule for a field defined everywhere, and the wrong one for a
+  land-only field, because the sea cells are not missing - they carry a saturated ~100
+  sentinel. So each coastal district is pulled toward 100 in proportion to its sea
+  fraction, continuously, and the seven worst are simply the ones that are mostly water.
+  Three further districts beyond the four above - **Daman, Mahe, South Andaman** - carry
+  an 87.5% soil-moisture bust rate over 3,366 paired rows on the same mechanism.
+
+  That reframes the fix: not a per-district exclusion list, but a land mask applied to
+  the weight table for land-only variables, decided once. CLAUDE.md's "exactly one weight
+  table" still holds - the table needs a per-variable mask, not a second table.
+
   Rule 1 says every value must trace to a real GRIB2 message. These do, and that is the
   point: the message is real and means "sea", and the pipeline records it as ground. Not
   fixed here - fixing it means deciding the land-mask rule once and re-ingesting the
