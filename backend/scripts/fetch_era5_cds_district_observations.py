@@ -251,6 +251,64 @@ def _read_archive(path: Path) -> pd.DataFrame:
     return merged
 
 
+def _boundary_from_next_month(cache: Path, year: int, month: int):
+    """The boundary hour (00:00 on the 1st of the next month) is already the first hour of
+    the next month's own request, so when that download is on disk there is no reason to
+    queue a separate one. Real cost 2026-09-20: every CDS request waits in Copernicus's
+    queue on its own (~1 h each on a busy night), and the boundary request doubled the
+    number of waits per month. Returns None when the next month is not cached."""
+    ny, nm = (year + 1, 1) if month == 12 else (year, month + 1)
+    nxt = cache / f"era5_{ny}{nm:02d}_0.zip"
+    if not (nxt.exists() and zipfile.is_zipfile(nxt)):
+        return None
+    df = _read_archive(nxt)
+    first = df["time"].min()
+    if pd.Timestamp(first) != pd.Timestamp(year=ny, month=nm, day=1):
+        return None
+    return df[df["time"] == first]
+
+
+def prefetch_months(year: int, months: list[int], cache: Path, parallel: int) -> None:
+    """Download the main request of several months at once; fetch_month then finds them
+    cached. Latency here is Copernicus's queue, so waits overlap. Each thread has its own
+    client. A month whose download fails is left for the sequential pass to retry."""
+    from concurrent.futures import ThreadPoolExecutor
+    import cdsapi
+
+    def one(month: int) -> None:
+        path = cache / f"era5_{year}{month:02d}_0.zip"
+        if path.exists() and not zipfile.is_zipfile(path):
+            path.unlink()
+        if path.exists():
+            return
+        cache.mkdir(parents=True, exist_ok=True)
+        # Measured 2026-09-20: Copernicus caps queued requests per account for this
+        # dataset ("Number queued requests for this dataset is temporarily limited") and
+        # rejects the rest within seconds. A rejection is not a failure - but retrying it
+        # quickly is abuse: a 45s retry across several threads put ~50 rejected jobs on
+        # their queue in 10 minutes before this was caught. CLAUDE.md rule 7 - the archive
+        # is a public good. Back off exponentially, and never faster than 5 minutes.
+        delay = 300.0
+        deadline = time.time() + 12 * 3600
+        while True:
+            try:
+                cdsapi.Client().retrieve(DATASET, _requests_for(year, month)[0], str(path))
+                print(f"  prefetched {year}-{month:02d}", flush=True)
+                return
+            except Exception as exc:  # noqa: BLE001
+                if "temporarily limited" in str(exc) and time.time() < deadline:
+                    print(f"  {year}-{month:02d} queue full, retrying in {delay/60:.0f} min",
+                          flush=True)
+                    time.sleep(delay)
+                    delay = min(delay * 1.5, 1800.0)
+                    continue
+                print(f"  prefetch {year}-{month:02d} failed: {exc!r}", flush=True)
+                return
+
+    with ThreadPoolExecutor(max_workers=parallel) as pool:
+        list(pool.map(one, months))
+
+
 def fetch_month(client, year: int, month: int, cache: Path) -> pd.DataFrame:
     """Hourly readings for every weight-table cell in one month, boundary hour included."""
     cells = grid_cells()
@@ -266,6 +324,12 @@ def fetch_month(client, year: int, month: int, cache: Path) -> pd.DataFrame:
         # is deleted and re-fetched rather than trusted.
         if path.exists() and not zipfile.is_zipfile(path):
             path.unlink()
+        if not path.exists() and i == 1:
+            df = _boundary_from_next_month(cache, year, month)
+            if df is not None:
+                parts.append(df[[k in wanted for k in
+                                 zip(np.round(df.lat, 4), np.round(df.lon, 4))]])
+                continue
         if not path.exists():
             cache.mkdir(parents=True, exist_ok=True)
             client.retrieve(DATASET, req, str(path))
@@ -279,7 +343,7 @@ def fetch_month(client, year: int, month: int, cache: Path) -> pd.DataFrame:
 
 
 def build(years: list[int], months: list[int] | None = None,
-          keep_downloads: bool = False) -> None:
+          keep_downloads: bool = False, parallel: int = 1) -> None:
     import cdsapi
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -295,6 +359,10 @@ def build(years: list[int], months: list[int] | None = None,
     for year in years:
         t0 = time.time()
         monthly = []
+        if parallel > 1:
+            todo = [m for m in (months or list(range(1, 13)))
+                    if not (cache / f"districts_{year}{m:02d}.parquet").exists()]
+            prefetch_months(year, todo, cache, parallel)
         for month in (months or list(range(1, 13))):
             ckpt = cache / f"districts_{year}{month:02d}.parquet"
             if ckpt.exists():
@@ -307,6 +375,13 @@ def build(years: list[int], months: list[int] | None = None,
             # Drop the boundary day that belongs to the next month.
             in_month = pd.to_datetime(daily["date"]).dt.month == month
             daily = daily[in_month]
+            import calendar
+            expected_days = calendar.monthrange(year, month)[1]
+            if daily.date.nunique() != expected_days:
+                raise RuntimeError(
+                    f"{year}-{month:02d}: {daily.date.nunique()} days built, expected "
+                    f"{expected_days} - the boundary hour is missing; refusing to "
+                    f"checkpoint a short month")
             districts = to_districts(daily, cells)
 
             ckpt.parent.mkdir(parents=True, exist_ok=True)
@@ -346,6 +421,9 @@ def main() -> None:
     ap.add_argument("--keep-downloads", action="store_true",
                     help="keep the raw CDS zips instead of deleting each month once it "
                          "has been aggregated")
+    ap.add_argument("--parallel", type=int, default=1,
+                    help="download this many months' CDS requests at once (their waits "
+                         "overlap); default 1 = one at a time")
     args = ap.parse_args()
 
     years: set[int] = set()
@@ -364,7 +442,8 @@ def main() -> None:
             months.update(range(int(a), int(b) + 1))
         elif chunk:
             months.add(int(chunk))
-    build(sorted(years), sorted(months), keep_downloads=args.keep_downloads)
+    build(sorted(years), sorted(months), keep_downloads=args.keep_downloads,
+          parallel=args.parallel)
 
 
 if __name__ == "__main__":

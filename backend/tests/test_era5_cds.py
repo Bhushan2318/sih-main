@@ -253,3 +253,18 @@ def test_normalise_leaves_a_multi_hour_dataset_alone():
             "latitude": [21.0, 20.75], "longitude": [78.0, 78.25]},
     )
     assert cds._normalise(ds).sizes["valid_time"] == 3
+
+
+def test_boundary_comes_from_the_next_months_own_download(tmp_path, monkeypatch):
+    import zipfile as zf
+    nxt = tmp_path / "era5_2011_07_0.zip".replace("2011_07", "201107")
+    with zf.ZipFile(nxt, "w") as z:
+        z.writestr("x.txt", "placeholder")
+    # plumbing only (CLAUDE.md rule 1): a labelled stand-in for the decoded archive.
+    frame = pd.DataFrame({
+        "time": pd.to_datetime(["2011-07-01 00:00", "2011-07-01 01:00", "2011-07-01 00:00"]),
+        "lat": [10.0, 10.0, 10.25], "lon": [70.0, 70.0, 70.0], "v": [1, 2, 3]})
+    monkeypatch.setattr(cds, "_read_archive", lambda path: frame)
+    out = cds._boundary_from_next_month(tmp_path, 2011, 6)
+    assert list(out["v"]) == [1, 3]
+    assert cds._boundary_from_next_month(tmp_path, 2011, 7) is None
