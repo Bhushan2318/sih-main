@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useRegionDetail } from "../../hooks/useDashboardData";
 import { variableLabel } from "../../lib/displayNames";
 import { EmptyState, ErrorState, LoadingState, RiskBadge } from "../common/States";
+import { CopyLinkButton } from "../common/CopyLinkButton";
 import { retryingHint } from "../../lib/retryHint";
 import { BustProbabilityCurve } from "./BustProbabilityCurve";
 import { ShapFactorsList } from "./ShapFactorsList";
@@ -53,7 +54,12 @@ export function RegionDetailPanel({
             {data.init_date ? ` · cycle ${data.init_date}` : ""}
           </p>
         </div>
-        <button type="button" className="btn btn--ghost" onClick={onClose} aria-label="Close detail panel">×</button>
+        <div className="panel__actions">
+          {/* The URL carries this district and the lead day, so the panel is the one
+            * place a shareable link is genuinely worth offering. */}
+          <CopyLinkButton />
+          <button type="button" className="btn btn--ghost" onClick={onClose} aria-label="Close detail panel">×</button>
+        </div>
       </header>
 
       {data.message ? <p className="muted">{data.message}</p> : null}
