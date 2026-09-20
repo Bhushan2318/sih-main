@@ -11,6 +11,7 @@ import { ModelPage } from "../components/model/ModelPage";
 import { RiskTicker } from "../components/dashboard/RiskTicker";
 import { RegionDetailPanel } from "../components/detail/RegionDetailPanel";
 import { EmptyState, ErrorState, LoadingState } from "../components/common/States";
+import { retryingHint } from "../lib/retryHint";
 import { IndiaChoroplethMap, loadTopology } from "../components/map/IndiaChoroplethMap";
 import { LeadDayRail } from "../components/map/LeadDayRail";
 import { LeadDaySelector } from "../components/map/LeadDaySelector";
@@ -187,7 +188,7 @@ export function DashboardPage() {
                 {regions ? <MapLegend definitions={regions.risk_band_definitions} /> : null}
               </div>
 
-              {regionsQuery.isLoading ? <LoadingState label="Scoring the current cycle…" /> : null}
+              {regionsQuery.isLoading ? <LoadingState label="Scoring the current cycle…" hint={retryingHint(regionsQuery.failureCount)} /> : null}
               {regionsQuery.error ? <ErrorState error={regionsQuery.error} /> : null}
               {topoError ? <ErrorState error={topoError} /> : null}
 
