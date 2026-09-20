@@ -147,6 +147,17 @@ export interface AlertsResponse {
   message: string | null;
 }
 
+export interface MissCase {
+  region_id: string;
+  region_name?: string | null;
+  valid_date: string | null;
+  lead_time_days: number | null;
+  bust_probability: number;
+  variable: string | null;
+  actual_error: number | null;
+  threshold: number | null;
+}
+
 export interface ModelStatusResponse {
   model_trained: boolean;
   current_run_id: string | null;
@@ -208,6 +219,14 @@ export interface ModelStatusResponse {
         coverage?: number | null; mean_set_size?: number | null;
       } | null;
     }[];
+  };
+  /** Worst held-out calls, from misses.json beside the model. Absent for older runs. */
+  misses?: {
+    split?: string;
+    run_id?: string;
+    generated_at?: string;
+    missed_busts?: MissCase[];
+    false_alarms?: MissCase[];
   };
   modelled_variables: string[];
   skipped_variables: Record<string, string>;
