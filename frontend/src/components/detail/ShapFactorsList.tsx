@@ -1,4 +1,5 @@
 import type { TopFactor } from "../../api/types";
+import { featureLabel } from "../../lib/displayNames";
 
 export function ShapFactorsList({ factors, method }: { factors: TopFactor[]; method: string | null }) {
   if (!factors.length) return <p className="muted">No explanation available for this region yet.</p>;
@@ -9,7 +10,9 @@ export function ShapFactorsList({ factors, method }: { factors: TopFactor[]; met
       <ul className="factors">
         {factors.map((f) => (
           <li key={f.feature}>
-            <span className="factors__name">{f.feature}</span>
+            {/* The raw column name stays as the title: it is what the model calls this,
+              * and anyone checking the feature list needs to be able to find it. */}
+            <span className="factors__name" title={f.feature}>{featureLabel(f.feature)}</span>
             <span className="factors__bar" aria-hidden="true">
               <i style={{ width: `${(f.importance / max) * 100}%` }} />
             </span>

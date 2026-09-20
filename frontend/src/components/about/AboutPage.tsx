@@ -1,4 +1,5 @@
 import { useModelStatus } from "../../hooks/useDashboardData";
+import { variableLabel, variableUnit } from "../../lib/displayNames";
 import { formatMetric } from "../../lib/format";
 import { ErrorState, LoadingState } from "../common/States";
 import { BaselineLadderTable } from "../model/BaselineLadderTable";
@@ -62,9 +63,14 @@ export function AboutPage({ onReplay }: { onReplay: () => void }) {
               data only. Each variable therefore has its own threshold, in its own units:
             </p>
             <ul className="taglist">
-              {Object.entries(thr).map(([v, t]) => (
-                <li key={v} className="tag">{v} ≥ {formatMetric(t, 2)}</li>
-              ))}
+              {Object.entries(thr).map(([v, t]) => {
+                const unit = variableUnit(v);
+                return (
+                  <li key={v} className="tag" title={v}>
+                    {variableLabel(v)} ≥ {formatMetric(t, 2)}{unit ? ` ${unit}` : ""}
+                  </li>
+                );
+              })}
             </ul>
           </section>
 

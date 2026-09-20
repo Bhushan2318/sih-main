@@ -1,6 +1,7 @@
 import type { ModelStatusResponse } from "../../api/types";
 import { stamp } from "../../format";
 import { useModelStatus } from "../../hooks/useDashboardData";
+import { variableLabel } from "../../lib/displayNames";
 import { useLiveStore } from "../../store/liveStore";
 import { ErrorState, LoadingState } from "../common/States";
 import { UploadPanel } from "../upload/UploadPanel";
@@ -138,12 +139,14 @@ export function ModelPage() {
                 </p>
               </div>
               <ul className="taglist">
-                {data.modelled_variables.map((v) => <li key={v} className="tag">{v}</li>)}
+                {data.modelled_variables.map((v) => (
+                  <li key={v} className="tag" title={v}>{variableLabel(v)}</li>
+                ))}
               </ul>
               {Object.keys(data.skipped_variables).length ? (
                 <p className="muted small">
                   Not modelled (too few matched forecast–observation pairs):{" "}
-                  {Object.entries(data.skipped_variables).map(([v, why]) => `${v} (${why})`).join("; ")}
+                  {Object.entries(data.skipped_variables).map(([v, why]) => `${variableLabel(v)} (${why})`).join("; ")}
                 </p>
               ) : (
                 <p className="muted small">Every ingested variable is modelled.</p>
@@ -169,7 +172,7 @@ export function ModelPage() {
                   <tbody>
                     {Object.entries(data.thresholds?.bust_threshold ?? {}).map(([v, t]) => (
                       <tr key={v}>
-                        <td className="mono">{v}</td>
+                        <td className="mono" title={v}>{variableLabel(v)}</td>
                         <td className="dtable__num mono dtable__strong">{t.toFixed(2)}</td>
                         <td className="dtable__num mono muted">
                           {num(data.thresholds?.p90_error?.[v], 2)}
@@ -212,7 +215,7 @@ export function ModelPage() {
                       const skill = skillScore(m.mae, m.baseline_mae);
                       return (
                         <tr key={v}>
-                          <td className="mono dtable__strong">{v}</td>
+                          <td className="mono dtable__strong" title={v}>{variableLabel(v)}</td>
                           <td className="dtable__num mono">{num(m.mae, 3)}</td>
                           <td className="dtable__num mono muted">{num(m.baseline_mae, 3)}</td>
                           <td className="dtable__num mono">
