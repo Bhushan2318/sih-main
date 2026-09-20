@@ -21,9 +21,11 @@ import { ReplayView } from "../components/replay/ReplayView";
 import { useAllRegions, useEnsembleDivergence, useModelStatus } from "../hooks/useDashboardData";
 import { useLiveSocket } from "../hooks/useLiveSocket";
 import { stateNamesFrom } from "../lib/stateNames";
+import { parseAppState, toSearch, type View } from "../lib/urlState";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 
-type View = "live" | "alerts" | "model" | "replay" | "about";
+// View lives in lib/urlState: it is the set of values the ?view= parameter accepts, so
+// the tab list and the URL parser must not be able to disagree about it.
 
 const TABS: { id: View; label: string; tail?: string }[] = [
   { id: "live", label: "Operations" },
@@ -37,10 +39,14 @@ const TABS: { id: View; label: string; tail?: string }[] = [
 export function DashboardPage() {
   useLiveSocket();
 
-  const [view, setView] = useState<View>("live");
-  const [leadDay, setLeadDay] = useState(1);
-  const [selectedRegion, setSelectedRegion] = useState<string | null>(null);
-  const [alertFilter, setAlertFilter] = useState<RiskBand | undefined>(undefined);
+  // Read once, on mount: after this the URL follows the state rather than driving it,
+  // except when the back button fires popstate below.
+  const opened = useMemo(() => parseAppState(window.location.search), []);
+
+  const [view, setView] = useState<View>(opened.view);
+  const [leadDay, setLeadDay] = useState(opened.leadDay);
+  const [selectedRegion, setSelectedRegion] = useState<string | null>(opened.region);
+  const [alertFilter, setAlertFilter] = useState<RiskBand | undefined>(opened.band);
   const [topology, setTopology] = useState<Topology | null>(null);
   const [topoError, setTopoError] = useState<unknown>(null);
 
@@ -67,6 +73,39 @@ export function DashboardPage() {
     if (!available.includes(leadDay)) setLeadDay(available[0]);
     autoLeadPicked.current = true;
   }, [available, leadDay]);
+
+  /**
+   * Keep the address bar in step with the screen.
+   *
+   * Changing tab or opening a district is a navigation and gets a history entry, so the
+   * back button does the obvious thing - out of a district, back to the previous tab.
+   * Changing the lead day or the alert filter is a refinement of the view you are already
+   * on, and pushing those would bury the real steps under a stack of near-identical
+   * entries: ten lead-day clicks would need ten presses of back to escape.
+   */
+  const lastNav = useRef({ view, region: selectedRegion });
+  useEffect(() => {
+    const search = toSearch({ view, leadDay, region: selectedRegion, band: alertFilter });
+    if (search === window.location.search) return;
+    const navigated = view !== lastNav.current.view || selectedRegion !== lastNav.current.region;
+    lastNav.current = { view, region: selectedRegion };
+    const url = `${window.location.pathname}${search}`;
+    window.history[navigated ? "pushState" : "replaceState"](null, "", url);
+  }, [view, leadDay, selectedRegion, alertFilter]);
+
+  // Back and forward put the URL back; the screen has to follow it.
+  useEffect(() => {
+    const onPop = () => {
+      const s = parseAppState(window.location.search);
+      lastNav.current = { view: s.view, region: s.region };
+      setView(s.view);
+      setLeadDay(s.leadDay);
+      setSelectedRegion(s.region);
+      setAlertFilter(s.band);
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
 
   const highCount = regions?.regions.filter((r) => r.risk_band === "high").length ?? 0;
 
