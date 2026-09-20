@@ -364,6 +364,32 @@ here rather than discovered live.
 
 ## Geography
 
+- **Simplification silently deletes island districts, and the check that was meant to
+  catch it cannot.** The map's TopoJSON is built with `-simplify percentage=12%
+  keep-shapes`, and `keep-shapes` guarantees one ring per *feature*, not per part. Every
+  district made of several pieces therefore kept its largest and lost the rest: **700 rings
+  across 64 districts** (North & Middle Andaman 119 → 5, Kachchh 106 → 11). The pipeline's
+  own check — that all 666 districts survive — passes regardless, because the feature is
+  still present with pieces missing from inside it.
+
+  Lakshadweep is nothing but small islands, so it lost 23 of 24 and the union territory
+  was **absent from the map of India** in a way no automated check noticed. What remained
+  measured 0.64 × 1.23 units in a 620 × 680 viewBox — under one CSS pixel on a desktop,
+  a third of one on a phone — and its click target was the same size.
+
+  Fixed on both sides, and both halves were needed: `restore_island_rings.py` puts the
+  550 missing rings back after mapshaper (383 KB → 415 KB, every pre-existing vertex
+  within 45 m), and `IndiaChoroplethMap` draws a marker for any region whose projected
+  area falls under 30 square units. Geometry alone was not enough — restored at true
+  scale the islands are still sub-pixel, which is *why* the marker exists rather than
+  being a shortcut around the geometry.
+
+  Still open: **10 of Lakshadweep's 24 islands are degenerate at the shipped
+  quantisation** (0.0006°, against islets of 0.003°), so they carry position but not
+  shape. Nothing on the map depends on their shape today; if a drill-down ever needs it,
+  that file needs finer quantisation, not gentler simplification — measured, 70%
+  simplification still keeps only 3 of the 24 islands at 860 KB.
+
 - **Display and aggregation boundary geometry are the same GADM 4.1 file now**, not two
   separate ones — CLAUDE.md's note about them being reviewed separately predates the
   districts migration. India's 2021 Geospatial Data Guidelines (DST, 15 Feb 2021, clause
