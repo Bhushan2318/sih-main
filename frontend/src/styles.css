@@ -159,7 +159,13 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 }
 .scrollcue:hover { color: var(--ink); }
 
-.cuerow { display: flex; align-items: center; justify-content: center; gap: 20px; flex-wrap: wrap; }
+/* Column, not a row: with the scroll cue beside it the button's centre sat 82px left of
+ * the page's, and the row had no vertical padding at all - 43px tall around a 43px
+ * button - so it touched the KPI strip above and the ticker below. */
+.cuerow {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 12px; padding: 26px 1.3rem 20px;
+}
 /* The one thing on the opening screen worth clicking: replaying a real bust is the whole
  * argument, and it used to sit here as 9.5px uppercase mono in the same ink as the body
  * text, reading as a caption rather than an invitation. Bigger, in the accent colour, and
@@ -168,16 +174,16 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 .cuerow__primary {
   display: inline-flex; align-items: center; gap: 9px;
   padding: 13px 26px; border: 0; border-radius: 999px;
-  background: var(--accent); color: #fff; cursor: pointer;
+  background: var(--bust); color: #fff; cursor: pointer;
   font-family: var(--f-b); font-size: 14px; font-weight: 700;
   letter-spacing: 0.01em; text-transform: none;
-  box-shadow: 0 12px 26px -10px rgba(43, 78, 255, 0.55);
+  box-shadow: 0 12px 26px -10px rgba(245, 37, 74, 0.5);
   transition: transform 0.18s cubic-bezier(0.2, 0.7, 0.25, 1), box-shadow 0.18s, background 0.18s;
 }
 .cuerow__primary:hover {
-  background: var(--blue-2);
+  background: #e01840;
   transform: translateY(-2px);
-  box-shadow: 0 18px 34px -10px rgba(43, 78, 255, 0.6);
+  box-shadow: 0 18px 34px -10px rgba(245, 37, 74, 0.55);
 }
 .cuerow__primary:active { transform: translateY(0); }
 @media (prefers-reduced-motion: reduce) {
@@ -188,7 +194,7 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 @media (max-width: 400px) {
   .cuerow__primary { font-size: 13px; padding: 12px 18px; }
 }
-.cuerow__primary:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.cuerow__primary:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
 .scrollcue svg { animation: sk-bob 2.6s ease-in-out infinite; }
 @keyframes sk-bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(4px); } }
 
