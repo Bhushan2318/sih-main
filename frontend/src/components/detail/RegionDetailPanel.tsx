@@ -68,7 +68,7 @@ export function RegionDetailPanel({
             </div>
           </div>
           {worst.dominant_variable ? (
-            <p className="muted small">Mostly driven by: {worst.dominant_variable.replace(/_/g, " ")}</p>
+            <p className="muted small">Mostly driven by: {variableLabel(worst.dominant_variable).toLowerCase()}</p>
           ) : null}
         </section>
       ) : null}
