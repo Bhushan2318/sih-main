@@ -11,6 +11,16 @@
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
 
+    <!-- Installable to a phone's home screen, which is how this would actually be used
+         in the field. There is no service worker and so no offline mode: caching the
+         shell is the part that can strand a visitor on a stale build, and that is not a
+         thing to ship unattended days before a deadline. See docs/known-issues.md. -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="theme-color" content="#0b1220" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Sanket" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+
     <!-- Link previews: the page had a description but no image, so a shared link
          rendered as text only in WhatsApp, Slack and X. -->
     <meta property="og:title" content="Sanket · Forecast Bust Detection" />

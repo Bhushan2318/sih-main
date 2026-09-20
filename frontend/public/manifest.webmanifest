@@ -1,0 +1,27 @@
+{
+  "name": "Sanket — Forecast Bust Detection",
+  "short_name": "Sanket",
+  "description": "Predicts when a weather forecast is about to be badly wrong, per district, Day 1-10, and says why.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#eceff5",
+  "theme_color": "#0b1220",
+  "categories": ["weather", "utilities", "productivity"],
+  "lang": "en-IN",
+  "icons": [
+    {
+      "src": "/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/favicon-32.png",
+      "sizes": "32x32",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}
