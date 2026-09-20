@@ -167,8 +167,12 @@ export function AboutPage({ onReplay }: { onReplay: () => void }) {
                 deployment.
               </li>
               <li>
-                City points, not full regional coverage of India. Region-level readings are
-                indicative.
+                <b>Two geographies, not one.</b> The historical archive the model is trained
+                on covers all <b>666 districts</b>, each the area-weighted mean of every
+                0.25° cell its polygon overlaps. The live feed does not: it samples the
+                nearest grid point at <b>36 station locations</b>, one per state and union
+                territory. Both are labelled with district IDs, so a live cycle scores 36
+                regions where the archive behind the model covers 666.
               </li>
               <li>
                 GEFS runs 31 parallel forecasts; this uses 5 of them. How much those disagree
