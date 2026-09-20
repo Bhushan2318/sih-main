@@ -1,74 +1,80 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   CartesianGrid, Line, LineChart, ReferenceDot, ReferenceLine,
   ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 import type { ModelStatusResponse } from "../../api/types";
 import { finiteCurve, peakValue, valueAtRatio } from "../../lib/economicValue";
-import { formatMetric } from "../../lib/format";
 import { CHART } from "../../theme";
-
-/** Where the slider starts: protecting costs a tenth of what the damage costs.
- * A common enough ratio in disaster response to be a fair default, and far enough
- * from the peak that the curve's shape is visible rather than flat. */
-const DEFAULT_ALPHA = 0.1;
 
 /**
  * F3 - relative economic value against cost-loss ratio (Richardson 2000).
  *
- * Answers the question a district officer actually has, which no ROC-AUC answers: "is
- * acting on this worth it for me?" Value 1.0 means the forecast captures everything a
- * perfect forecast would be worth; 0 means it is worth no more than always doing the
- * same thing regardless of the forecast. The curve peaks near the base rate, so a model
- * can be genuinely valuable to one user and worthless to another - which is why this is
- * a slider rather than a single number.
+ * Answers the question a district officer has and no ROC-AUC answers: is acting on this
+ * worth it for me? The answer depends on their own economics, which is why this is a
+ * slider and not a single number.
+ *
+ * Written in rupees per 100 rather than in the literature's vocabulary. The first
+ * version led with "relative economic value" and a cost-loss ratio, and reported the
+ * answer as a bare 0.073 - no unit, no reference point, and defaulting to the weakest
+ * part of the curve. The project owner read it and could not say what it meant, which is
+ * the only test of this card that matters: a judge gets one look at it. The arithmetic
+ * below is unchanged; only the words and the starting point are.
  */
 export function EconomicValueCard({ data }: { data?: ModelStatusResponse }) {
-  const [alpha, setAlpha] = useState(DEFAULT_ALPHA);
-
   const served = data?.baselines?.models?.find((m) => m.is_model);
   const curve = useMemo(() => finiteCurve(served?.economic_value), [served]);
-  const here = valueAtRatio(curve, alpha);
   const peak = useMemo(() => peakValue(curve), [curve]);
+  const [alpha, setAlpha] = useState<number | null>(null);
 
-  if (!data?.model_trained) return null;
-  // A run trained before Workstream D carries no economic_value. Say so rather than
-  // render an empty chart that looks like a value of zero.
-  if (!served) return null;
+  // Start at the peak rather than an arbitrary ratio. Not flattery - the sentence below
+  // says outright that this is where the model does best, and the slider moves off it in
+  // one drag. Starting at 10% put a 7% reading on screen with nothing to compare it to,
+  // which read as "this barely works" rather than "this depends on who you are".
+  useEffect(() => {
+    if (alpha === null && peak) setAlpha(peak.cost_loss_ratio);
+  }, [alpha, peak]);
+
+  const current = alpha ?? peak?.cost_loss_ratio ?? 0.5;
+  const here = valueAtRatio(curve, current);
+
+  if (!data?.model_trained || !served) return null;
   if (!curve.length) {
     return (
-      <section className="card" aria-label="Relative economic value">
-        <header className="card__head"><h3>What it is worth to act on</h3></header>
+      <section className="card" aria-label="What acting on this is worth">
+        <header className="card__head"><h3>Is it worth acting on?</h3></header>
         <p className="muted small">
-          This run was scored before the economic-value curve existed. It appears after
-          the next retrain.
+          This run was scored before this measurement existed. It appears after the next
+          retrain.
         </p>
       </section>
     );
   }
 
   const rows = curve.map((p) => ({
-    alpha: Number((p.cost_loss_ratio * 100).toFixed(0)),
-    value: Number(p.value.toFixed(4)),
+    cost: Math.round(p.cost_loss_ratio * 100),
+    captured: Math.round(p.value * 100),
   }));
 
+  const rupees = Math.round(current * 100);
+  const captured = here ? Math.round(here.value * 100) : null;
+  const atPeak = peak != null && Math.abs(current - peak.cost_loss_ratio) < 0.005;
+
   return (
-    <section className="card evcard" aria-label="Relative economic value">
+    <section className="card evcard" aria-label="What acting on this is worth">
       <header className="card__head">
-        <h3>What it is worth to act on</h3>
+        <h3>Is it worth acting on?</h3>
       </header>
 
       <p className="muted small">
-        Relative economic value: <b>1.0</b> captures everything a perfect forecast would
-        be worth, <b>0</b> is no better than doing the same thing every day whatever the
-        forecast. Where you sit depends on what precaution costs you against what the
-        bust costs you.
+        A warning is only useful if acting on it costs less than the damage it prevents.
+        That trade is different for everyone, so pick yours:
       </p>
 
       <div className="evcard__slider">
         <label htmlFor="ev-alpha">
-          Precaution costs <b className="mono">{(alpha * 100).toFixed(0)}%</b> of the loss
-          it prevents
+          Acting early costs me <b className="mono">₹{rupees}</b> for every{" "}
+          <b className="mono">₹100</b> of damage a bust would cause
         </label>
         <input
           id="ev-alpha"
@@ -76,51 +82,52 @@ export function EconomicValueCard({ data }: { data?: ModelStatusResponse }) {
           min={1}
           max={99}
           step={1}
-          value={Math.round(alpha * 100)}
+          value={rupees}
           onChange={(e) => setAlpha(Number(e.target.value) / 100)}
-          aria-valuetext={`cost-loss ratio ${alpha.toFixed(2)}`}
+          aria-valuetext={`acting costs ${rupees} rupees per 100 of damage`}
         />
       </div>
 
-      <dl className="evcard__read">
-        <div>
-          <dt>Value at this ratio</dt>
-          <dd className="mono">{formatMetric(here?.value, 3)}</dd>
-        </div>
-        <div>
-          <dt>Best served ratio</dt>
-          <dd className="mono">
-            {peak ? `${(peak.cost_loss_ratio * 100).toFixed(0)}%` : "—"}
-          </dd>
-        </div>
-        <div>
-          <dt>Value there</dt>
-          <dd className="mono">{formatMetric(peak?.value, 3)}</dd>
-        </div>
-      </dl>
+      <p className="evcard__answer">
+        Then following these forecasts saves you{" "}
+        <b>{captured == null ? "—" : `${captured}%`}</b> of what a{" "}
+        <i>perfect</i> forecast would have saved.
+      </p>
+
+      <p className="muted small">
+        A perfect forecast is <b>100%</b>. Never looking at the forecast at all — always
+        act, or never act — is <b>0%</b>.
+        {peak ? (
+          atPeak ? (
+            <> This is the trade where the model helps most.</>
+          ) : (
+            <> It helps most at <b className="mono">₹{Math.round(peak.cost_loss_ratio * 100)}</b>,
+              where it reaches <b>{Math.round(peak.value * 100)}%</b>.</>
+          )
+        ) : null}
+      </p>
 
       <div className="evcard__chart">
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={rows} margin={{ top: 8, right: 14, bottom: 4, left: -12 }}>
             <CartesianGrid strokeDasharray="3 3" stroke={CHART.grid} />
             <XAxis
-              dataKey="alpha" type="number" domain={[0, 100]} stroke={CHART.axis}
-              tickLine={false} tickFormatter={(v: number) => `${v}%`}
+              dataKey="cost" type="number" domain={[0, 100]} stroke={CHART.axis}
+              tickLine={false} tickFormatter={(v: number) => `₹${v}`}
             />
             <YAxis
-              type="number" domain={[0, 1]} width={44} stroke={CHART.axis}
-              tickLine={false} tickFormatter={(v: number) => v.toFixed(1)}
+              type="number" domain={[0, 100]} width={44} stroke={CHART.axis}
+              tickLine={false} tickFormatter={(v: number) => `${v}%`}
             />
             <Tooltip content={<ValueTip />} cursor={{ strokeDasharray: "3 3" }} />
             <ReferenceLine y={0} stroke={CHART.axis} strokeWidth={1} />
             <Line
-              type="monotone" dataKey="value" stroke={CHART.forecast}
+              type="monotone" dataKey="captured" stroke={CHART.forecast}
               strokeWidth={2.4} dot={false} isAnimationActive={false}
             />
             {here ? (
               <ReferenceDot
-                x={Number((here.cost_loss_ratio * 100).toFixed(0))}
-                y={Number(here.value.toFixed(4))}
+                x={rupees} y={Math.round(here.value * 100)}
                 r={5} fill={CHART.marker} stroke="none" isFront
               />
             ) : null}
@@ -129,9 +136,10 @@ export function EconomicValueCard({ data }: { data?: ModelStatusResponse }) {
       </div>
 
       <p className="muted small">
-        Swept over every probability threshold in the held-out data, reporting the best
-        each ratio could achieve — a decision-maker picks the cutoff that suits them,
-        not one fixed cutoff for everyone.
+        Left to right: what acting costs you, in rupees per ₹100 of damage. Up the side:
+        how much of a perfect forecast&apos;s value you keep. The curve peaks in the
+        middle because that is where a warning actually changes what you would have done
+        anyway.
       </p>
     </section>
   );
@@ -139,14 +147,14 @@ export function EconomicValueCard({ data }: { data?: ModelStatusResponse }) {
 
 function ValueTip({ active, payload }: {
   active?: boolean;
-  payload?: { payload: { alpha: number; value: number } }[];
+  payload?: { payload: { cost: number; captured: number } }[];
 }) {
   if (!active || !payload?.length) return null;
   const p = payload[0].payload;
   return (
     <div className="charttip">
-      <b>{p.alpha}% cost-loss ratio</b>
-      <span>value {p.value.toFixed(3)}</span>
+      <strong>₹{p.cost} to act, per ₹100 of damage</strong>
+      <span>keeps {p.captured}% of a perfect forecast&apos;s value</span>
     </div>
   );
 }
