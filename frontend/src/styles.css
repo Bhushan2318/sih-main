@@ -1199,3 +1199,11 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
   .viewtab { padding: 12px 10px; }
   .brand { min-height: 44px; }
 }
+
+/* Alerts: the row budget. The table shows PAGE rows and these expand it. */
+.tablemore {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px;
+  padding: 12px 0.25rem 4px; border-top: 1px solid var(--rule-2);
+}
+.tablemore .muted { margin-left: auto; }
+@media (max-width: 700px) { .tablemore .muted { margin-left: 0; width: 100%; } }

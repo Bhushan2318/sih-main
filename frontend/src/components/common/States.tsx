@@ -30,6 +30,7 @@ export function LoadingState({ label = "Loading…", hint }: { label?: string; h
   );
 }
 
+
 export function ErrorState({ error }: { error: unknown }) {
   const message = error instanceof Error ? error.message : String(error);
   return (

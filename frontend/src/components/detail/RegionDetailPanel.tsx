@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useRegionDetail } from "../../hooks/useDashboardData";
 import { variableLabel } from "../../lib/displayNames";
 import { EmptyState, ErrorState, LoadingState, RiskBadge } from "../common/States";
+import { retryingHint } from "../../lib/retryHint";
 import { BustProbabilityCurve } from "./BustProbabilityCurve";
 import { ShapFactorsList } from "./ShapFactorsList";
 import { VariableTrajectoryChart } from "./VariableTrajectoryChart";
@@ -15,7 +16,7 @@ export function RegionDetailPanel({
   onClose: () => void;
   riskCuts?: { medium: number; high: number };
 }) {
-  const { data, isLoading, error } = useRegionDetail(regionId);
+  const { data, isLoading, error, failureCount } = useRegionDetail(regionId);
   const [activeVariable, setActiveVariable] = useState<string | null>(null);
 
   if (!regionId) {
@@ -25,7 +26,7 @@ export function RegionDetailPanel({
       </aside>
     );
   }
-  if (isLoading) return <aside className="panel"><LoadingState label="Loading region…" /></aside>;
+  if (isLoading) return <aside className="panel"><LoadingState label="Loading region…" hint={retryingHint(failureCount)} /></aside>;
   if (error) return <aside className="panel"><ErrorState error={error} /></aside>;
   if (!data) return null;
 

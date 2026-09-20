@@ -4,6 +4,7 @@ import { useModelStatus } from "../../hooks/useDashboardData";
 import { variableLabel } from "../../lib/displayNames";
 import { useLiveStore } from "../../store/liveStore";
 import { ErrorState, LoadingState } from "../common/States";
+import { retryingHint } from "../../lib/retryHint";
 import { UploadPanel } from "../upload/UploadPanel";
 import { CorpReliabilityCard } from "./CorpReliabilityCard";
 import { EconomicValueCard } from "./EconomicValueCard";
@@ -13,11 +14,11 @@ import { PipelineLog } from "./PipelineLog";
 const UPLOAD_ENABLED = import.meta.env.VITE_ENABLE_UPLOAD !== "false";
 
 export function ModelPage() {
-  const { data, isLoading, error } = useModelStatus();
+  const { data, isLoading, error, failureCount } = useModelStatus();
   const connection = useLiveStore((s) => s.connectionStatus);
   const training = useLiveStore((s) => s.trainingInProgress);
 
-  if (isLoading) return <main className="page page--wide"><LoadingState label="Loading model status…" /></main>;
+  if (isLoading) return <main className="page page--wide"><LoadingState label="Loading model status…" hint={retryingHint(failureCount)} /></main>;
   if (error) return <main className="page page--wide"><ErrorState error={error} /></main>;
   if (!data) return null;
 

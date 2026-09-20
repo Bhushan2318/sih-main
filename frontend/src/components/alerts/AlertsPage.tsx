@@ -1,22 +1,41 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Alert, RiskBand } from "../../api/types";
 import { stamp } from "../../format";
 import { useAlerts } from "../../hooks/useDashboardData";
 import { EmptyState, ErrorState, LoadingState, RiskBadge } from "../common/States";
+import { retryingHint } from "../../lib/retryHint";
 import { bandLabel } from "../../theme";
 import { variableLabel } from "../../lib/displayNames";
 
 const LIMIT = 200;
+
+/**
+ * How many rows to show before asking. The request still fetches all 200 and the summary
+ * above still counts all 200 - this is only how much of the table is on screen at once.
+ *
+ * 200 rows measured 8,348px tall on a desktop and 9,123px on a phone, which is eleven
+ * screens of near-identical rows below a summary that has already said what they add up
+ * to. Nobody scrolls that, and on a bad forecast day every one of them is a real alert,
+ * so it is not a problem the next retrain removes.
+ */
+const PAGE = 25;
 
 export function AlertsPage({ onSelect, filter, onFilter }: {
   onSelect: (regionId: string, lead: number) => void;
   filter: RiskBand | undefined;
   onFilter: (b: RiskBand | undefined) => void;
 }) {
-  const { data, isLoading, error } = useAlerts(LIMIT, filter);
+  const { data, isLoading, error, failureCount } = useAlerts(LIMIT, filter);
   const alerts = data?.alerts;
+  const [shown, setShown] = useState(PAGE);
+
+  // Back to the top of the list whenever the filter changes, so switching to "watch"
+  // does not silently keep an expansion made while looking at "bust".
+  useEffect(() => setShown(PAGE), [filter]);
 
   const stats = useMemo(() => summarise(alerts), [alerts]);
+  const visible = alerts?.slice(0, shown) ?? [];
+  const remaining = (alerts?.length ?? 0) - visible.length;
 
   return (
     <main className="page page--wide">
@@ -42,7 +61,7 @@ export function AlertsPage({ onSelect, filter, onFilter }: {
         </div>
       </header>
 
-      {isLoading ? <LoadingState label="Loading alerts…" /> : null}
+      {isLoading ? <LoadingState label="Loading alerts…" hint={retryingHint(failureCount)} /> : null}
       {error ? <ErrorState error={error} /> : null}
       {data && !data.model_trained ? <EmptyState title="No alerts yet" message={data.message} /> : null}
       {data?.model_trained && !alerts?.length ? (
@@ -84,7 +103,7 @@ export function AlertsPage({ onSelect, filter, onFilter }: {
                 </tr>
               </thead>
               <tbody>
-                {alerts.map((a) => (
+                {visible.map((a) => (
                   <tr
                     key={a.alert_id}
                     className="dtable__row"
@@ -111,6 +130,19 @@ export function AlertsPage({ onSelect, filter, onFilter }: {
               </tbody>
             </table>
           </div>
+          {remaining > 0 ? (
+            <div className="tablemore">
+              <button type="button" className="chip" onClick={() => setShown((n) => n + PAGE)}>
+                Show {Math.min(PAGE, remaining)} more
+              </button>
+              <button type="button" className="chip" onClick={() => setShown(alerts.length)}>
+                Show all {alerts.length}
+              </button>
+              <span className="muted small">
+                Showing <b>{visible.length}</b> of <b>{alerts.length}</b>, worst first
+              </span>
+            </div>
+          ) : null}
         </section>
       ) : null}
 
