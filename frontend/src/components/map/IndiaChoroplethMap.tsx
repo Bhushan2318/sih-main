@@ -386,7 +386,11 @@ export function IndiaChoroplethMap({
       <svg
         viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
         className="map"
-        role="img"
+        // Not role="img": every region inside is a real button, and an img makes its
+        // children presentational - which hid the entire map from assistive tech and had
+        // axe reporting nested interactive controls. A group keeps the label and leaves
+        // the regions reachable.
+        role="group"
         aria-label={activeState ? `${activeStateName} by district` : "India forecast bust risk by state"}
       >
         <g>
@@ -395,6 +399,9 @@ export function IndiaChoroplethMap({
               className={`region region--claimed region--${
                 bandFor(stateRollup.get("IN-JK")?.value ?? null, cuts) ?? "nodata"}`}
               d={pathFor(claimedTerritory.geometry)}
+              // A bare <path> has no implicit role, and aria-label is prohibited on one -
+              // so this label was being dropped. It is not interactive, hence img.
+              role="img"
               aria-label="Claimed territory, not scored: no district-level forecast data"
               // Hoverable but not clickable: there is nothing to drill into, and the
               // colour is inherited from Jammu and Kashmir rather than measured here.
