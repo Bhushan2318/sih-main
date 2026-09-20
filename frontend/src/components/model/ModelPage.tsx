@@ -206,9 +206,12 @@ export function ModelPage() {
                       <th className="dtable__num">MAE</th>
                       <th className="dtable__num">Baseline MAE</th>
                       <th className="dtable__num">Skill</th>
-                      <th className="dtable__num">RMSE</th>
-                      <th className="dtable__num">R²</th>
-                      <th className="dtable__num">forecasts</th>
+                      {/* Dropped on a phone. Skill is the column this table exists to
+                        * show, and at 390px it was the one pushed off the right edge
+                        * behind a scroll with no affordance. See .dtable__opt. */}
+                      <th className="dtable__num dtable__opt">RMSE</th>
+                      <th className="dtable__num dtable__opt">R²</th>
+                      <th className="dtable__num dtable__opt">forecasts</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -222,9 +225,9 @@ export function ModelPage() {
                           <td className="dtable__num mono">
                             {skill == null ? "—" : <SkillCell skill={skill} />}
                           </td>
-                          <td className="dtable__num mono muted">{num(m.rmse, 3)}</td>
-                          <td className="dtable__num mono muted">{num(m.r2, 3)}</td>
-                          <td className="dtable__num mono muted">{m.n?.toLocaleString() ?? "—"}</td>
+                          <td className="dtable__num dtable__opt mono muted">{num(m.rmse, 3)}</td>
+                          <td className="dtable__num dtable__opt mono muted">{num(m.r2, 3)}</td>
+                          <td className="dtable__num dtable__opt mono muted">{m.n?.toLocaleString() ?? "—"}</td>
                         </tr>
                       );
                     })}

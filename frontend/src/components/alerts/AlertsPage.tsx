@@ -4,6 +4,7 @@ import { stamp } from "../../format";
 import { useAlerts } from "../../hooks/useDashboardData";
 import { EmptyState, ErrorState, LoadingState, RiskBadge } from "../common/States";
 import { bandLabel } from "../../theme";
+import { variableLabel } from "../../lib/displayNames";
 
 const LIMIT = 200;
 
@@ -59,7 +60,7 @@ export function AlertsPage({ onSelect, filter, onFilter }: {
             note={<>across <b>{stats.regions}</b> distinct regions</>} />
           <Stat cap="blue" label="Peak bust risk" value={`${(stats.peak.bust_probability * 100).toFixed(0)}%`}
             note={<><b>{stats.peak.region_name ?? stats.peak.region_id}</b> · D{stats.peak.lead_time_days}</>} />
-          <Stat cap="blue" label="Most common cause" value={stats.topDriver?.[0] ?? "—"}
+          <Stat cap="blue" label="Most common cause" value={variableLabel(stats.topDriver?.[0]) || "—"}
             note={stats.topDriver
               ? <>the main cause in <b>{stats.topDriver[1]}</b> of {stats.total}</>
               : <>no dominant variable recorded</>} />
@@ -74,9 +75,11 @@ export function AlertsPage({ onSelect, filter, onFilter }: {
                 <tr>
                   <th>Region</th>
                   <th className="dtable__num">Lead</th>
-                  <th>Valid date</th>
+                  {/* Dropped on a phone: the date is lead + cycle, and the band is a
+                    * restatement of the risk column beside it. See .dtable__opt. */}
+                  <th className="dtable__opt">Valid date</th>
                   <th className="dtable__num">Bust risk</th>
-                  <th>Band</th>
+                  <th className="dtable__opt">Band</th>
                   <th>Main cause</th>
                 </tr>
               </thead>
@@ -97,12 +100,12 @@ export function AlertsPage({ onSelect, filter, onFilter }: {
                   >
                     <td className="dtable__strong">{a.region_name ?? a.region_id}</td>
                     <td className="dtable__num mono">D{a.lead_time_days}</td>
-                    <td className="mono muted">{a.valid_date ?? "—"}</td>
+                    <td className="dtable__opt mono muted">{a.valid_date ?? "—"}</td>
                     <td className="dtable__num mono dtable__strong">
                       {(a.bust_probability * 100).toFixed(0)}%
                     </td>
-                    <td><RiskBadge band={a.risk_band} /></td>
-                    <td className="mono muted">{a.dominant_variable ?? "—"}</td>
+                    <td className="dtable__opt"><RiskBadge band={a.risk_band} /></td>
+                    <td className="muted">{variableLabel(a.dominant_variable) || "—"}</td>
                   </tr>
                 ))}
               </tbody>
