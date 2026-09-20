@@ -160,19 +160,33 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 .scrollcue:hover { color: var(--ink); }
 
 .cuerow { display: flex; align-items: center; justify-content: center; gap: 20px; flex-wrap: wrap; }
+/* The one thing on the opening screen worth clicking: replaying a real bust is the whole
+ * argument, and it used to sit here as 9.5px uppercase mono in the same ink as the body
+ * text, reading as a caption rather than an invitation. Bigger, in the accent colour, and
+ * lifted off the page - the page is otherwise almost entirely white, ink and one red
+ * headline, so blue is the only thing here that asks to be pressed. */
 .cuerow__primary {
-  display: inline-flex; align-items: center; gap: 7px;
-  padding: 7px 15px; border: 1px solid var(--ink); border-radius: 999px;
-  background: var(--ink); color: #fff; cursor: pointer;
-  font-family: var(--f-m); font-size: 9.5px; font-weight: 600;
-  letter-spacing: 0.16em; text-transform: uppercase;
-  transition: opacity 0.18s;
+  display: inline-flex; align-items: center; gap: 9px;
+  padding: 13px 26px; border: 0; border-radius: 999px;
+  background: var(--accent); color: #fff; cursor: pointer;
+  font-family: var(--f-b); font-size: 14px; font-weight: 700;
+  letter-spacing: 0.01em; text-transform: none;
+  box-shadow: 0 12px 26px -10px rgba(43, 78, 255, 0.55);
+  transition: transform 0.18s cubic-bezier(0.2, 0.7, 0.25, 1), box-shadow 0.18s, background 0.18s;
 }
-.cuerow__primary:hover { opacity: 0.86; }
+.cuerow__primary:hover {
+  background: var(--blue-2);
+  transform: translateY(-2px);
+  box-shadow: 0 18px 34px -10px rgba(43, 78, 255, 0.6);
+}
+.cuerow__primary:active { transform: translateY(0); }
+@media (prefers-reduced-motion: reduce) {
+  .cuerow__primary, .cuerow__primary:hover { transform: none; }
+}
 
 .cuerow__primary { max-width: 100%; white-space: normal; text-align: center; }
 @media (max-width: 400px) {
-  .cuerow__primary { letter-spacing: 0.1em; padding: 7px 11px; }
+  .cuerow__primary { font-size: 13px; padding: 12px 18px; }
 }
 .cuerow__primary:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 .scrollcue svg { animation: sk-bob 2.6s ease-in-out infinite; }
@@ -1066,17 +1080,15 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 }
 .evcard__slider input[type="range"] { width: 100%; accent-color: var(--accent); }
 
-.evcard__read {
-  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px; margin: 10px 0 2px;
+/* The answer, as one sentence rather than three labelled statistics. The stats version
+ * (`0.073` under "VALUE AT THIS RATIO") was unreadable without the paper behind it. */
+.evcard__answer {
+  margin: 12px 0 2px; font-size: 15px; line-height: 1.5; color: var(--ink);
 }
-.evcard__read dt {
-  font-family: var(--f-m); font-size: 9.5px; letter-spacing: 0.13em;
-  text-transform: uppercase; color: var(--ink-3); margin-bottom: 2px;
-}
-.evcard__read dd {
-  margin: 0; font-family: var(--f-d); font-size: 20px;
-  font-variation-settings: "wdth" 100, "wght" 700;
+.evcard__answer b {
+  font-family: var(--f-d); font-size: 26px;
+  font-variation-settings: "wdth" 100, "wght" 800;
+  color: var(--accent); vertical-align: -1px; padding: 0 1px;
 }
 
 /* Light-card equivalent of .hero__tip, which is built for the dark hero panel. */
@@ -1091,6 +1103,7 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 .charttip__meta { color: rgba(255, 255, 255, 0.55); font-family: var(--f-m); font-size: 10px; }
 
 @media (max-width: 700px) {
-  .evcard__read { grid-template-columns: 1fr 1fr; }
+  .evcard__answer { font-size: 14px; }
+  .evcard__answer b { font-size: 22px; }
   .evcard__chart, .corpcard__chart { height: 200px; }
 }
