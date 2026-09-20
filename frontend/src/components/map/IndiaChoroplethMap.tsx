@@ -17,6 +17,71 @@ const WIDTH = 620;
 const HEIGHT = 680;
 const MAX_SUGGESTIONS = 8;
 
+/**
+ * Below this much projected area, a region is drawn as a marker as well as at its true
+ * size. Lakshadweep is the case that forces it: 24 islands, none over 5 sq km, which at
+ * national scale is 0.03-0.6 units across each - measured at 0.64 x 1.23 for the whole UT
+ * before its missing islands were restored, so under one CSS pixel on a desktop and a
+ * third of one on a phone. A union territory silently absent from a map of India is not a
+ * rounding error, and its click target was just as small. Chandigarh (2.97 x 2.95) has
+ * the same problem for the same reason.
+ *
+ * Measured projected areas at the national fit, in square viewBox units:
+ *
+ *   Lakshadweep 1.10   Chandigarh 5.40   Puducherry 18.33   Dadra and Nagar Haveli
+ *   and Daman and Diu 21.33   Delhi 66.21   Goa 134.56
+ *
+ * 30 takes the four that are genuinely unreadable and leaves Delhi, the next one up,
+ * alone at more than twice the threshold. Puducherry and Dadra and Nagar Haveli are
+ * there on merit rather than by accident: both are split into scattered enclaves, so
+ * their ink is divided into pieces about Chandigarh's size.
+ */
+const MARKER_MIN_AREA = 30;
+const MARKER_R = 5;
+
+/**
+ * A circle as path data, so a marker can be appended to the region's own `d` rather than
+ * rendered as a separate element. The region keeps one path, and the marker inherits its
+ * risk colour, hover, selection, click, keyboard handler and aria-label for free instead
+ * of having them duplicated onto a sibling that could drift out of step.
+ */
+function circleSubpath(cx: number, cy: number, r: number): string {
+  return `M${cx - r},${cy}a${r},${r} 0 1,0 ${r * 2},0a${r},${r} 0 1,0 ${-r * 2},0Z`;
+}
+
+/**
+ * Where to put a marker for a region made of scattered pieces: on its largest piece, not
+ * at the centroid of all of them.
+ *
+ * The centroid of the whole is the obvious choice and it is wrong here. Puducherry is
+ * four enclaves strung along both coasts, and averaging them put its marker at
+ * 11.73N 78.84E - about 100 km inland, in the middle of Tamil Nadu, labelled Puducherry.
+ * A marker that names a region while sitting in a different state is worse than no marker.
+ *
+ * Taking the largest piece guarantees the marker is on ground that really belongs to the
+ * region. It also lands somewhere meaningful on its own: Lakshadweep resolves to
+ * 10.56N 72.64E, which is Kavaratti, its capital, and Puducherry to Karaikal.
+ */
+function markerAnchor(
+  path: ReturnType<typeof geoPath>,
+  g: Geometry,
+): [number, number] {
+  if (g.type === "MultiPolygon" && g.coordinates.length > 1) {
+    let best: Geometry | null = null;
+    let bestArea = -1;
+    for (const coordinates of g.coordinates) {
+      const part: Geometry = { type: "Polygon", coordinates };
+      const area = path.area(part as never);
+      if (area > bestArea) {
+        bestArea = area;
+        best = part;
+      }
+    }
+    if (best) return path.centroid(best as never) as [number, number];
+  }
+  return path.centroid(g as never) as [number, number];
+}
+
 interface DistrictProps {
   region_id: string;
   region_name: string;
@@ -185,7 +250,47 @@ export function IndiaChoroplethMap({
     const fc = { type: "FeatureCollection", features: fitTo } as FeatureCollection;
     const projection = geoMercator().fitSize([WIDTH, HEIGHT], fc);
     const path = geoPath(projection);
-    return (g: Geometry) => path(g) ?? "";
+    return (g: Geometry) => {
+      const d = path(g) ?? "";
+      if (!d) return "";
+
+      // Area, not bounding box. Lakshadweep's 24 islands span 33 x 72 units while the ink
+      // adds up to about one, so a bbox test calls it large and leaves it invisible -
+      // which is the bug this exists to fix. Both tests are per-fit rather than a property
+      // of the region, so the same place is marked or not depending on the zoom.
+      if (path.area(g as never) < MARKER_MIN_AREA) {
+        const [cx, cy] = markerAnchor(path, g);
+        if (!Number.isFinite(cx) || !Number.isFinite(cy)) return d;
+        return `${d}${circleSubpath(cx, cy, MARKER_R)}`;
+      }
+
+      // Drilled into one state, where the frame belongs to this region alone: mark the
+      // individual pieces of a region that is nothing but pieces. Lakshadweep's own view
+      // is the reason - its islands measure 2.5 to 8 units across with 10 of the 24
+      // crushed to slivers by quantisation, so the panel came up all but empty.
+      //
+      // The guard is that its *largest* piece is still too small to see. Marking every
+      // small piece instead was tried and is much too aggressive: Gujarat drew 145 of
+      // them and its coastline disappeared under overlapping rings. A district with a
+      // mainland body reads perfectly well already, and its offshore islets are a detail
+      // rather than the thing itself.
+      if (activeState && g.type === "MultiPolygon") {
+        const parts = g.coordinates.map((coordinates) => {
+          const part: Geometry = { type: "Polygon", coordinates };
+          return { part, area: path.area(part as never) };
+        });
+        if (parts.some((p) => p.area >= MARKER_MIN_AREA)) return d;
+        let out = d;
+        for (const { part } of parts) {
+          const [cx, cy] = path.centroid(part as never);
+          if (Number.isFinite(cx) && Number.isFinite(cy)) {
+            out += circleSubpath(cx, cy, MARKER_R);
+          }
+        }
+        return out;
+      }
+      return d;
+    };
   }, [topology, activeState, shown, states, claimedTerritory]);
 
   const suggestions = useMemo(() => {
@@ -263,7 +368,10 @@ export function IndiaChoroplethMap({
               ))}
             </div>
           ) : (
-            <span className="map-level">{activeStateName} · {shown.length} districts</span>
+            <span className="map-level">
+              {/* Lakshadweep is one district, and this read "1 districts" until now. */}
+              {activeStateName} · {shown.length} district{shown.length === 1 ? "" : "s"}
+            </span>
           )}
         </div>
       </div>
