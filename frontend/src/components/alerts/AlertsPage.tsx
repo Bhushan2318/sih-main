@@ -6,6 +6,7 @@ import { EmptyState, ErrorState, LoadingState, RiskBadge } from "../common/State
 import { retryingHint } from "../../lib/retryHint";
 import { bandLabel } from "../../theme";
 import { variableLabel } from "../../lib/displayNames";
+import { alertsToCsv, csvFilename } from "../../lib/alertsCsv";
 
 const LIMIT = 200;
 
@@ -37,6 +38,22 @@ export function AlertsPage({ onSelect, filter, onFilter }: {
   const visible = alerts?.slice(0, shown) ?? [];
   const remaining = (alerts?.length ?? 0) - visible.length;
 
+  /**
+   * Exports every alert fetched, not just the rows currently expanded on screen - "Show
+   * 25 more" is about reading, and someone asking for the file wants the whole list.
+   */
+  const downloadCsv = () => {
+    if (!alerts?.length) return;
+    const blob = new Blob([alertsToCsv(alerts)], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = csvFilename(data?.generated_at);
+    a.click();
+    // Freed on the next tick: revoking synchronously can cancel the download in Safari.
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+  };
+
   return (
     <main className="page page--wide">
       <header className="pagehead">
@@ -48,6 +65,11 @@ export function AlertsPage({ onSelect, filter, onFilter }: {
           </p>
         </div>
         <div className="filters">
+          {alerts?.length ? (
+            <button type="button" className="chip" onClick={downloadCsv}>
+              Download CSV
+            </button>
+          ) : null}
           {(["high", "medium"] as RiskBand[]).map((b) => (
             <button
               key={b}
