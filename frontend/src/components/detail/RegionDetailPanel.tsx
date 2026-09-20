@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useRegionDetail } from "../../hooks/useDashboardData";
+import { variableLabel } from "../../lib/displayNames";
 import { EmptyState, ErrorState, LoadingState, RiskBadge } from "../common/States";
 import { BustProbabilityCurve } from "./BustProbabilityCurve";
 import { ShapFactorsList } from "./ShapFactorsList";
@@ -89,8 +90,9 @@ export function RegionDetailPanel({
                   aria-selected={current?.variable === v.variable}
                   className={current?.variable === v.variable ? "tab tab--active" : "tab"}
                   onClick={() => setActiveVariable(v.variable)}
+                  title={v.variable}
                 >
-                  {v.variable}
+                  {variableLabel(v.variable)}
                 </button>
               ))}
             </div>
