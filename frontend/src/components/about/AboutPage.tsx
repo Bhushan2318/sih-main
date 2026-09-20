@@ -2,12 +2,13 @@ import { useModelStatus } from "../../hooks/useDashboardData";
 import { variableLabel, variableUnit } from "../../lib/displayNames";
 import { formatMetric } from "../../lib/format";
 import { ErrorState, LoadingState } from "../common/States";
+import { retryingHint } from "../../lib/retryHint";
 import { BaselineLadderTable } from "../model/BaselineLadderTable";
 
 export function AboutPage({ onReplay }: { onReplay: () => void }) {
-  const { data, isLoading, error } = useModelStatus();
+  const { data, isLoading, error, failureCount } = useModelStatus();
 
-  if (isLoading) return <main className="page page--wide"><LoadingState label="Loading…" /></main>;
+  if (isLoading) return <main className="page page--wide"><LoadingState label="Loading…" hint={retryingHint(failureCount)} /></main>;
   if (error) return <main className="page page--wide"><ErrorState error={error} /></main>;
   if (!data) return null;
 
