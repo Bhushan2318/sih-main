@@ -12,6 +12,17 @@ here rather than discovered live.
 - **The opening screen is one viewport on desktop only.** On phones the KPI strip, the
   cue row and the ticker sit below the fold. The page scrolls and what is visible is
   composed; only the single-screen effect is lost.
+- **Installable, but not offline.** There is a web app manifest, so the site can be added
+  to a phone's home screen and opens standalone. There is deliberately **no service
+  worker**: caching the app shell is what strands a visitor on a stale build, and the
+  recovery for someone already holding a bad one is poor. That is not a thing to ship
+  unattended in the days before a deadline. Anyone who opens it without a connection gets
+  the browser's offline page, not a cached last forecast.
+- **The app icon is 180×180, not the 512×512 a manifest wants.** The largest square source
+  in the repo is `apple-touch-icon.png`; there is no vector original. Android will scale
+  it, and on a splash screen that will be visibly soft. Upscaling it to 512 and declaring
+  it as such would only move the blur somewhere less honest — this needs a real source
+  file, not a resample.
 - **Replay offers the 10 most recent cycles**, not every cycle in the store
   (`replay_service._MAX_CYCLES`). Each candidate costs one scoring pass on first call.
 - **Feature and variable names render raw, in snake_case.** The SHAP panel lists
