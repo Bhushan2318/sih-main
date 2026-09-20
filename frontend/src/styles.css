@@ -1107,3 +1107,20 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
   .evcard__answer b { font-size: 22px; }
   .evcard__chart, .corpcard__chart { height: 200px; }
 }
+
+/* ---- F6: where the model was wrong ------------------------------------------------ */
+.misses__switch { display: flex; gap: 6px; margin: 2px 0 10px; }
+.misses__tab {
+  border: 1px solid var(--rule); background: var(--card); color: var(--ink-2);
+  border-radius: 999px; padding: 5px 12px; cursor: pointer;
+  font-family: var(--f-b); font-size: 12px; font-weight: 600;
+}
+.misses__tab.is-on { background: var(--ink); border-color: var(--ink); color: #fff; }
+
+.misses__list { list-style: none; margin: 10px 0 8px; padding: 0; }
+.missrow { border-top: 1px solid var(--rule-2); padding: 9px 0; }
+.missrow:first-child { border-top: 0; }
+.missrow__head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.missrow__body { margin: 3px 0 0; font-size: 12.5px; color: var(--ink-2); line-height: 1.5; }
+.missrow__low { color: var(--bust); }
+.missrow__high { color: var(--watch); }

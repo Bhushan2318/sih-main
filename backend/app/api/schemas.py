@@ -170,6 +170,9 @@ class ModelStatusResponse(Schema):
     data_volume: dict = Field(default_factory=dict)
     training_data: dict = Field(default_factory=dict)
     baselines: dict = Field(default_factory=dict)
+    # The worst held-out calls, written beside the model. Empty for a run scored
+    # before this existed, so the UI must treat absence as "not measured yet".
+    misses: dict = Field(default_factory=dict)
     modelled_variables: list = Field(default_factory=list)
     skipped_variables: dict = Field(default_factory=dict)
     validation_metrics: dict = Field(default_factory=dict)
