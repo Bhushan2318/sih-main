@@ -16,8 +16,18 @@ export function EmptyState({ title, message, action }: {
   );
 }
 
-export function LoadingState({ label = "Loading…" }: { label?: string }) {
-  return <div className="state state--loading">{label}</div>;
+/**
+ * `hint` is for waits the user would otherwise read as a broken page. Replay scores a
+ * historical cycle on demand, so a cold request can run for seconds with nothing else on
+ * screen - on a phone that is an empty viewport under one line of grey text.
+ */
+export function LoadingState({ label = "Loading…", hint }: { label?: string; hint?: string }) {
+  return (
+    <div className="state state--loading">
+      {label}
+      {hint ? <p className="state__hint">{hint}</p> : null}
+    </div>
+  );
 }
 
 export function ErrorState({ error }: { error: unknown }) {
