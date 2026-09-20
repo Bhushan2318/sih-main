@@ -599,6 +599,29 @@ here rather than discovered live.
   the weight table for land-only variables, decided once. CLAUDE.md's "exactly one weight
   table" still holds - the table needs a per-variable mask, not a second table.
 
+  **Measured 2026-09-20: this does not inflate the headline skill - it depresses it.**
+  Recomputed on run_20260910T064804Z's own eval events, held-out test split (n=18,700):
+
+  | | n | ROC-AUC | Brier | bust rate |
+  |---|---|---|---|---|
+  | with sea districts | 18,700 | 0.8411 | 0.1656 | 0.5059 |
+  | **without them** | 17,050 | **0.8550** | 0.1582 | 0.5147 |
+  | sea districts only | 1,650 | 0.7209 | 0.2416 | 0.4145 |
+
+  Removing them *raises* test AUC by 0.0139. The model is worse on those districts, not
+  better, so it is not exploiting a district-identity shortcut and the published 0.8411 is
+  conservative rather than flattering. The val split disagrees in direction (sea-only AUC
+  0.9072 against 0.8399 for the rest), which on 1,650 rows and three districts is the
+  expected instability, not a contradiction.
+
+  **Important limit on that reassurance.** Only **3 of the 7** affected districts appear in
+  this eval at all, and it covers **34 districts** total - the label-coverage limit of the
+  run. Soil moisture is 80% NaN for those three here against 70% elsewhere, so this run
+  largely *escaped* the contamination: it drew on years where the sea cells were masked.
+  A run trained on 2012, 2013, 2016 or 2019 - the years that pass the saturated value
+  through - has no such protection and has not been measured. So this clears run
+  run_20260910T064804Z, not the mechanism.
+
   Rule 1 says every value must trace to a real GRIB2 message. These do, and that is the
   point: the message is real and means "sea", and the pipeline records it as ground. Not
   fixed here - fixing it means deciding the land-mask rule once and re-ingesting the
