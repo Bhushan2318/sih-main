@@ -175,6 +175,12 @@ export function DashboardPage() {
         <AboutPage onReplay={() => setView("replay")} />
       ) : view === "replay" ? (
         <main className="app__body app__body--replay">
+          {/* Every other view titles itself through .pagehead; this one opens straight
+            * into the cycle picker and had no h1 at all. It lives here rather than inside
+            * ReplayView because that returns early while a cycle is scoring, which is
+            * exactly when a screen reader most needs to know what the page is. Hidden
+            * rather than drawn: the missing thing is structure, not a visible heading. */}
+          <h1 className="visually-hidden">Replay a real forecast bust</h1>
           <ReplayView topology={topology} />
         </main>
       ) : view === "alerts" ? (
