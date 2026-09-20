@@ -82,12 +82,10 @@ def resolve_source(year: int, source: str | None = None) -> Path:
 
 
 def cycles_in_store() -> set:
+    # Footer-based: scanning init_date over every stored row needed ~9.7 GiB once the
+    # store passed a billion rows (2026-09-19, 2012/2014/2015 ingests all died on it).
     from app.storage import parquet_store
-    df = parquet_store.read_dataset(value_types=["forecast"], columns=["init_date"],
-                                    dedupe=False)
-    if df.empty:
-        return set()
-    return set(pd.to_datetime(df["init_date"]).dt.normalize().unique())
+    return {pd.Timestamp(d) for d in parquet_store.distinct_forecast_init_dates()}
 
 
 def districts_for_cycle(cycle) -> int:

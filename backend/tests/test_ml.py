@@ -597,3 +597,26 @@ def test_cycle_summary_excludes_wind_direction_from_the_peak_error(monkeypatch):
     assert summary.peak_region_variable is None
     assert summary.peak_region_abs_error is None
     assert summary.peak_region_unit is None
+
+
+def test_build_paired_in_chunks_lists_cycles_from_footers_not_a_full_column_scan(monkeypatch):
+    """Enumerating cycles by reading every forecast row's init_date cost a 1.3-billion-row,
+    ~9.7 GiB allocation once per call (measured 2026-09-21, 20-year store) - the same
+    failure already fixed in ingest_districts_chunked. The footer path answers it exactly."""
+    import datetime as _dt
+    from app.ml import train_pipeline as tp
+
+    scans: list = []
+
+    def fake_read_dataset(**kw):
+        scans.append(kw)
+        return pd.DataFrame()
+
+    monkeypatch.setattr(tp.parquet_store, "read_dataset", fake_read_dataset)
+    monkeypatch.setattr(tp.parquet_store, "distinct_forecast_init_dates",
+                        lambda: [_dt.date(2011, 1, 1), _dt.date(2011, 1, 2)])
+
+    tp._build_paired_in_chunks(init_date_min="2011-01-01", init_date_max="2011-12-31")
+
+    unfiltered = [s for s in scans if not s.get("init_dates")]
+    assert unfiltered == [], f"cycle listing still scans the whole store: {unfiltered}"
