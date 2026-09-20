@@ -7,6 +7,7 @@ import { ErrorState, LoadingState } from "../common/States";
 import { UploadPanel } from "../upload/UploadPanel";
 import { CorpReliabilityCard } from "./CorpReliabilityCard";
 import { EconomicValueCard } from "./EconomicValueCard";
+import { MissesCard } from "./MissesCard";
 import { PipelineLog } from "./PipelineLog";
 
 const UPLOAD_ENABLED = import.meta.env.VITE_ENABLE_UPLOAD !== "false";
@@ -243,7 +244,12 @@ export function ModelPage() {
             * worth to act on (F3) and whether its probabilities mean what they say (F4). */}
           <div className="page--split">
             <EconomicValueCard data={data} />
-            <CorpReliabilityCard data={data} />
+            <div>
+              <CorpReliabilityCard data={data} />
+              {/* Next to CORP on purpose: that card says the model is over-confident,
+                * these are the same admission with names and dates on it. */}
+              <MissesCard data={data} />
+            </div>
           </div>
 
           {UPLOAD_ENABLED ? <UploadPanel /> : null}
