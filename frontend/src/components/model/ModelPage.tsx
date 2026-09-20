@@ -242,15 +242,15 @@ export function ModelPage() {
 
           {/* Workstream D's evidence, which had no screen until now: what the forecast is
             * worth to act on (F3) and whether its probabilities mean what they say (F4). */}
+          {/* The two charts share a row because they are the same shape of thing. The
+            * misses go full width underneath rather than stacked in one column: stacking
+            * them made that column 338px taller than the other, which read as a hole in
+            * the page, and a list of cases uses the width better than a chart would. */}
           <div className="page--split">
             <EconomicValueCard data={data} />
-            <div>
-              <CorpReliabilityCard data={data} />
-              {/* Next to CORP on purpose: that card says the model is over-confident,
-                * these are the same admission with names and dates on it. */}
-              <MissesCard data={data} />
-            </div>
+            <CorpReliabilityCard data={data} />
           </div>
+          <MissesCard data={data} />
 
           {UPLOAD_ENABLED ? <UploadPanel /> : null}
         </>
