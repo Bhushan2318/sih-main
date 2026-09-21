@@ -83,6 +83,7 @@ def cache_year(year: int, cache_dir: Path) -> Path:
     # pooled_split, after re-caching seventeen other years for nothing.
     if path.exists():
         if _readable_parquet(path):
+            _report_finite_repair(path)
             return path
         path.unlink()
     lo, hi = pd.Timestamp(f"{year}-01-01"), pd.Timestamp(f"{year}-12-31")
@@ -96,7 +97,77 @@ def cache_year(year: int, cache_dir: Path) -> Path:
     paired.to_parquet(tmp, index=False)
     del paired
     tmp.replace(path)
+    _report_finite_repair(path)
     return path
+
+
+def _report_finite_repair(path: Path) -> None:
+    n = _ensure_finite_cache(path)
+    if n:
+        print(f"[pooled] {path.name}: {n} inf laf_spread_ratio values rewritten as missing",
+              file=sys.stderr, flush=True)
+
+
+# Columns whose inf has one known meaning, and what it becomes. laf_spread_ratio: pool
+# spread over an own spread of exactly zero (members agreeing), which the feature code
+# now yields as NaN - see compute_time_lagged_ensemble. Inf anywhere else is not
+# understood, so it is refused rather than rewritten.
+_INF_MEANS_MISSING = ("laf_spread_ratio",)
+_FINITE_MARKER = b"sanket_finite_checked"
+
+
+def _ensure_finite_cache(path: Path) -> int:
+    """Rewrite a cached year so that `_INF_MEANS_MISSING` columns carry NaN where they
+    carried +-inf, and refuse (ValueError, file untouched) inf in any other float column.
+    Returns how many values were rewritten. Streams one row group at a time and replaces
+    the file atomically; a checked file is marked in its footer, so every later call is a
+    footer read.
+
+    Why in place rather than a rebuild: the feature code was fixed to produce NaN where it
+    produced inf (x/0, x > 0 - the only source of inf), so the repaired file is exactly
+    what a rebuild would write, for minutes instead of ~50 per year. Real failure
+    2026-09-21: 1.2-1.4 M inf per cached year (rainfall, soil moisture, humidity), and
+    XGBoost refused humidity_pct outright."""
+    import pyarrow as pa
+    import pyarrow.compute as pc
+    import pyarrow.parquet as pq
+
+    src = pq.ParquetFile(path)
+    meta = dict(src.schema_arrow.metadata or {})
+    if _FINITE_MARKER in meta:
+        return 0
+    floats = [f.name for f in src.schema_arrow if pa.types.is_floating(f.type)]
+    unknown = sorted({c for i in range(src.metadata.num_row_groups)
+                      for c in floats if c not in _INF_MEANS_MISSING
+                      and (pc.sum(pc.is_inf(src.read_row_group(i, columns=[c])[c])).as_py() or 0)})
+    if unknown:
+        raise ValueError(f"{path.name}: inf in {unknown}, which have no known meaning for "
+                         f"inf - refusing to rewrite; fix the feature code that produced it")
+
+    schema = src.schema_arrow.with_metadata({**meta, _FINITE_MARKER: b"1"})
+    tmp = path.with_name(path.name + ".finite.tmp")
+    n_fixed = 0
+    try:
+        with pq.ParquetWriter(tmp, schema, compression="snappy") as writer:
+            for i in range(src.metadata.num_row_groups):
+                tb = src.read_row_group(i)
+                for c in _INF_MEANS_MISSING:
+                    if c not in tb.column_names:
+                        continue
+                    col = tb[c]
+                    bad = pc.is_inf(col)
+                    n_fixed += pc.sum(bad).as_py() or 0
+                    fixed = pc.if_else(bad, pa.scalar(None, col.type), col)
+                    tb = tb.set_column(tb.column_names.index(c), c, fixed)
+                writer.write_table(tb.replace_schema_metadata(schema.metadata))
+        del src
+        if pq.ParquetFile(tmp).metadata.num_rows != pq.ParquetFile(path).metadata.num_rows:
+            raise RuntimeError(f"{path.name}: row count changed while repairing inf")
+        tmp.replace(path)
+    finally:
+        if tmp.exists():
+            tmp.unlink()
+    return n_fixed
 
 
 def _readable_parquet(path: Path) -> bool:
