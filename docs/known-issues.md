@@ -793,3 +793,13 @@ here rather than discovered live.
   by `_ensure_finite_cache`: `inf` could only come from x/0 with x > 0, so the repaired
   file is exactly what a rebuild would write. `inf` in any other float column is
   refused, not rewritten.
+- **Staged mode (`--fit-mode staged`) fits on every training cycle.** The training
+  cycles are split into disjoint chunks of at most `MAX_FIT_CYCLES` (`fit_chunks`, a
+  fixed-seed shuffle, so each chunk spans every year, season and OOF fold). The chunks
+  are boosted one after another into the same booster, with `n_estimators` divided
+  between them, so peak memory is the same as sample mode. The result is still one
+  model per variable, so SHAP and serving are unchanged. The trade-off: trees from
+  earlier chunks are fit without ever seeing later chunks, and later trees only correct
+  what earlier trees left over on their own chunk, so this is not equivalent to one fit
+  on every cycle at once. Whether it beats sample mode is decided on the same held-out
+  2017 rows, not assumed.
