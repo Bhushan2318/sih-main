@@ -401,6 +401,10 @@ def compute_time_lagged_ensemble(fc: pd.DataFrame, trajectories: pd.DataFrame,
         own_std = np.where(n0 >= 2, np.sqrt(var0), np.nan)
         ratio = np.where(n_prior == 0, 1.0, pool_std / own_std)
         ratio = np.where(n0 < 2, np.nan, ratio)
+        # Members that agree exactly (own_std = 0) against a pool that does not: the
+        # ratio is undefined, not infinite. Real 2026-09-21: humidity_pct at saturation,
+        # 630-2,205 inf rows in every year 2000-2016, which XGBoost refuses to train on.
+        ratio = np.where((own_std == 0) & (n_prior > 0), np.nan, ratio)
 
     out["laf_pool_mean"] = pool_mean
     out["laf_pool_std"] = pool_std

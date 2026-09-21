@@ -723,3 +723,61 @@ def test_full_retrain_pooled_fits_regressors_on_the_capped_sample(
     assert report.status == "success", report.error
     assert report.split_cycles["fit"] == cap < report.split_cycles["train"]
     assert seen and set(seen) == {cap}
+
+
+# --- cached years carry no inf ---------------------------------------------------------
+# Real failure 2026-09-21: laf_spread_ratio divided by an ensemble spread of exactly zero
+# (members agreeing - dry-day rainfall, saturated humidity), leaving 1.2-1.4 M inf values
+# per cached year, and XGBoost refused humidity_pct outright. The feature code now yields
+# NaN there; the caches built before the fix are repaired in place to exactly that output
+# (x/0 with x > 0 was the only way to get inf, and it is now NaN), rather than rebuilt.
+
+def _cache_with_inf(path, bad_col="laf_spread_ratio"):
+    """Shapes-only synthetic frame, labelled as such."""
+    df = _thin_synthetic_year(n=300, variables=("rainfall_mm", "humidity_pct"))
+    df["laf_spread_ratio"] = np.linspace(0.5, 1.5, len(df)).astype("float32")
+    df["jump_rel_climatology"] = np.float32(1.0)
+    df.loc[df.index[::7], bad_col] = np.inf
+    df.loc[df.index[::11], bad_col] = -np.inf
+    df.to_parquet(path, index=False, row_group_size=64)
+    return df
+
+
+def test_ensure_finite_cache_turns_ratio_inf_into_missing_and_keeps_everything_else(tmp_path):
+    p = tmp_path / "paired_2000.parquet"
+    before = _cache_with_inf(p)
+    n_fixed = pt._ensure_finite_cache(p)
+    after = pd.read_parquet(p)
+    assert n_fixed == int(np.isinf(before["laf_spread_ratio"]).sum())
+    assert not np.isinf(after["laf_spread_ratio"]).any()
+    was_inf = np.isinf(before["laf_spread_ratio"]).to_numpy()
+    assert after["laf_spread_ratio"][was_inf].isna().all()
+    np.testing.assert_array_equal(after["laf_spread_ratio"][~was_inf].to_numpy(),
+                                  before["laf_spread_ratio"][~was_inf].to_numpy())
+    pd.testing.assert_frame_equal(after.drop(columns="laf_spread_ratio"),
+                                  before.drop(columns="laf_spread_ratio"))
+
+
+def test_ensure_finite_cache_is_a_footer_read_once_a_file_is_checked(tmp_path):
+    p = tmp_path / "paired_2000.parquet"
+    _cache_with_inf(p)
+    pt._ensure_finite_cache(p)
+    mtime = p.stat().st_mtime_ns
+    assert pt._ensure_finite_cache(p) == 0
+    assert p.stat().st_mtime_ns == mtime
+
+
+def test_ensure_finite_cache_refuses_inf_in_a_column_it_has_no_rule_for(tmp_path):
+    p = tmp_path / "paired_2000.parquet"
+    _cache_with_inf(p, bad_col="jump_rel_climatology")
+    before = p.read_bytes()
+    with pytest.raises(ValueError, match="jump_rel_climatology"):
+        pt._ensure_finite_cache(p)
+    assert p.read_bytes() == before
+
+
+def test_cache_year_repairs_inf_in_a_cache_it_reuses(tmp_path):
+    p = tmp_path / "paired_2000.parquet"
+    _cache_with_inf(p)
+    assert pt.cache_year(2000, tmp_path) == p
+    assert not np.isinf(pd.read_parquet(p)["laf_spread_ratio"]).any()
