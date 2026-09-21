@@ -358,3 +358,96 @@ def test_cuda_probe_ignores_pooled_force_cpu_when_unset(monkeypatch):
     monkeypatch.delenv("POOLED_FORCE_CPU", raising=False)
     torch = pytest.importorskip("torch")
     assert pt._cuda_available() == bool(torch.cuda.is_available())
+
+
+def test_cache_year_rebuilds_a_truncated_cache_file(tmp_path, monkeypatch):
+    """A cache file is only valid if its footer reads. Real crash 2026-09-21: killing the
+    trainer mid-write left paired_2000.parquet at 1.59 GB of an expected 3.65 GB, and
+    every later run trusted it because it existed - the whole pooled run died nine hours
+    later in pooled_split, after re-caching seventeen other years."""
+    from app.ml import pooled_training as pt
+
+    truncated = tmp_path / "paired_2000.parquet"
+    truncated.write_bytes(b"PAR1" + b"\x00" * 64)  # header, no footer
+
+    built = {}
+
+    def fake_build(init_date_min=None, init_date_max=None):
+        built["called"] = True
+        return pd.DataFrame({"init_date": [pd.Timestamp("2000-01-01")], "x": [1.0]}), 1
+
+    monkeypatch.setattr(pt, "_build_paired_in_chunks", fake_build)
+    out = pt.cache_year(2000, tmp_path)
+
+    assert built.get("called"), "a truncated cache file was trusted instead of rebuilt"
+    assert pd.read_parquet(out)["x"].tolist() == [1.0]
+
+
+def test_cache_year_writes_atomically(tmp_path, monkeypatch):
+    """A killed write must leave no file at all, never a partial one at the real path."""
+    from app.ml import pooled_training as pt
+
+    def exploding_build(init_date_min=None, init_date_max=None):
+        raise KeyboardInterrupt("killed mid-build")
+
+    monkeypatch.setattr(pt, "_build_paired_in_chunks", exploding_build)
+    with pytest.raises(KeyboardInterrupt):
+        pt.cache_year(2001, tmp_path)
+    assert not (tmp_path / "paired_2001.parquet").exists()
+
+
+def _reference_pooled_stats(frames, train_cycles):
+    """The pre-2026-09-21 implementation, kept only as an oracle for the streaming one."""
+    from app.features import engineering as fe
+    from app.ml.thresholds import compute_member_p90
+    thin_frames = []
+    for df in frames:
+        df = df[df["init_date"].isin(train_cycles)]
+        if df.empty:
+            continue
+        thin = df[["region_id", "season", "variable", "abs_error"]].copy()
+        thin["region_id"] = thin["region_id"].astype(str)
+        thin["season"] = thin["season"].astype(str)
+        thin_frames.append(thin)
+    thin = pd.concat(thin_frames, ignore_index=True)
+    return fe.compute_historical_bust_frequency(thin), compute_member_p90(
+        thin[["variable", "abs_error"]])
+
+
+def test_pooled_stats_matches_the_frame_building_implementation(tmp_path):
+    """Streaming must not change a single number. At 17 years the old path concatenated
+    ~0.8 billion rows, cast region_id to a <U29 array (8.07 GiB, the real crash on
+    2026-09-21) and then walked it with itertuples."""
+    from app.ml import pooled_training as pt
+
+    rng = np.random.default_rng(11)
+    cycles = pd.to_datetime(["2000-01-01", "2000-01-02", "2001-01-01"])
+    frames, paths = [], {}
+    for i, year in enumerate((2000, 2001)):
+        n = 400
+        df = pd.DataFrame({
+            "init_date": rng.choice(cycles, n),
+            "region_id": pd.Categorical(rng.choice([f"IND.{k}" for k in range(5)], n)),
+            "season": pd.Categorical(rng.choice(["DJF", "JJAS"], n)),
+            "variable": pd.Categorical(rng.choice(["temperature_c", "rainfall_mm"], n)),
+            "abs_error": np.where(rng.random(n) < 0.1, np.nan, rng.gamma(2, 2, n)),
+            "forecast_value": rng.normal(size=n),
+            "observed_value": rng.normal(size=n),
+            "lead_time_days": rng.integers(1, 11, n),
+            "valid_date": rng.choice(cycles, n),
+        })
+        p = tmp_path / f"paired_{year}.parquet"
+        df.to_parquet(p, index=False)
+        frames.append(df)
+        paths[year] = p
+
+    train_cycles = set(cycles[:2])
+    want_hbf, want_p90 = _reference_pooled_stats(frames, train_cycles)
+    got_hbf, got_p90, _ = pt.pooled_stats(paths, [2000, 2001], train_cycles)
+
+    assert set(got_hbf) == set(want_hbf)
+    for k in want_hbf:
+        assert got_hbf[k] == pytest.approx(want_hbf[k], rel=1e-9, abs=1e-12)
+    assert set(got_p90) == set(want_p90)
+    for k in want_p90:
+        assert got_p90[k] == pytest.approx(want_p90[k], rel=1e-6)
