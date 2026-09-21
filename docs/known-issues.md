@@ -375,6 +375,27 @@ here rather than discovered live.
 
 ## Geography
 
+- **Surface pressure error is dominated by elevation, not by forecast difficulty.**
+  Median absolute pressure error per district on the held-out split of
+  `run_20260910T064804Z`, worst first: Leh **5.32 hPa**, Srinagar 2.56, East Sikkim 1.90,
+  Shimla 1.83, Papum Pare 1.77 — against an all-district median of **0.555**. The best are
+  Jaipur 0.45, Lakshadweep 0.48, Hyderabad 0.49. That ordering is elevation, not weather:
+  Leh sits at ~3,500 m and runs about **10× the typical district**.
+
+  So a "pressure bust" at a high-altitude district is mostly a statement about the station,
+  and the per-variable p90 threshold — computed **pooled across districts** — is too tight
+  there and too loose in the plains. The labels are still self-consistent, and this does
+  not invalidate the headline scores, but it does mean pressure contributes label noise
+  that is spatially structured rather than random.
+
+  Found while picking a case study for the deck: the rule-based pick returned Leh with a
+  19.26 hPa pressure error at 7× its threshold, which would have been presented as a
+  caught bust to a room of forecasters. `scripts/ppt_figures.py` now excludes
+  (district, variable) pairs whose own median error exceeds twice the all-district median.
+  **Not fixed in the model**: the real fix is either a per-district threshold or reducing
+  pressure to a common level before differencing, and both change the label definition, so
+  neither is a thing to do days before a deadline.
+
 - **Simplification silently deletes island districts, and the check that was meant to
   catch it cannot.** The map's TopoJSON is built with `-simplify percentage=12%
   keep-shapes`, and `keep-shapes` guarantees one ring per *feature*, not per part. Every
