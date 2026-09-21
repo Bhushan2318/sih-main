@@ -207,6 +207,26 @@ def fit_cycles(train_cycles: set, cap: "int | None" = None) -> set:
     return {ordered[i] for i in keep}
 
 
+def fit_chunks(train_cycles: set, cap: "int | None" = None) -> list:
+    """Every training cycle, split into disjoint chunks of at most `cap` - the staged fit
+    boosts them one after another into one booster, so the whole pool is used while no
+    single QuantileDMatrix holds more than `cap` cycles. A fixed-seed shuffle, not
+    contiguous runs of days, so every chunk spans every year, season and OOF fold."""
+    cap = MAX_FIT_CYCLES if cap is None else cap
+    if len(train_cycles) <= cap:
+        return [set(train_cycles)]
+    ordered = sorted(train_cycles)
+    k = -(-len(ordered) // cap)
+    perm = np.random.default_rng(42).permutation(len(ordered))
+    return [{ordered[i] for i in part} for part in np.array_split(perm, k)]
+
+
+def _split_rounds(total: int, k: int) -> list:
+    """`total` boosting rounds over `k` chunks, as evenly as possible."""
+    base, extra = divmod(total, k)
+    return [base + (1 if i < extra else 0) for i in range(k)]
+
+
 def pooled_split(cached_paths: dict, test_year: int):
     """Train/val/test cycles across a pool of cached years, holding `test_year` out
     entirely - the multi-year generalisation of `_split_by_year`. Reads only the
@@ -457,6 +477,7 @@ class _YearDataIter(xgb.DataIter):
             [c for c in feature_cols if c != "historical_bust_frequency_region_season"]
             + ["region_id", "season", "variable", "init_date", "abs_error"]))
         self._i = 0
+        self.batches = 0  # batches handed to XGBoost; 0 means this chunk had no rows
         # No cache_prefix: QuantileDMatrix builds its quantile sketch batch by batch and
         # never writes batches to disk itself - passing one is a QuantileDMatrix-specific
         # ValueError, unlike the plain external-memory DMatrix this class is modelled on.
@@ -485,6 +506,7 @@ class _YearDataIter(xgb.DataIter):
         df = attach_hbf_column(df, self._hbf)
         X = reg_mod._prep_X(df, self._feature_cols)
         input_data(data=X, label=df["abs_error"].to_numpy())
+        self.batches += 1
         return 1
 
     def reset(self) -> None:
@@ -518,26 +540,71 @@ def _xgb_train_params(device: str) -> dict:
     return params
 
 
+def _fit_booster(cached_paths: dict, train_years: list, variable: str, cycle_chunks: list,
+                 cols: list, hbf: dict, cache_dir: Path, device: str,
+                 n_estimators: "int | None" = None):
+    """One booster boosted over `cycle_chunks` in turn: each chunk gets its own
+    QuantileDMatrix, freed before the next is built, and its share of `n_estimators`
+    rounds continues the same booster. One chunk is the ordinary single fit. Returns
+    `(booster or None, rows seen)`; None when there are too few rows to fit at all."""
+    n_estimators = n_estimators or reg_mod.XGB_PARAMS["n_estimators"]
+    chunks = [c for c in cycle_chunks if c]
+    params = _xgb_train_params(device)
+    booster, n_rows = None, 0
+    rounds_left = n_estimators
+    for i, cycles in enumerate(chunks):
+        it = _YearDataIter(cached_paths, train_years, variable, cycles, cols, hbf, cache_dir)
+        try:
+            dtrain = xgb.QuantileDMatrix(it, enable_categorical=True)
+        except xgb.core.XGBoostError:
+            # A chunk whose cycles hold no rows for this variable: XGBoost raises on an
+            # iterator that never produced a batch rather than returning an empty matrix.
+            # Skip it; its rounds go to the chunks that remain.
+            if it.batches:
+                raise
+            del it
+            continue
+        rows = int(dtrain.num_row())
+        if rows < reg_mod.MIN_ROWS and len(chunks) == 1:
+            del it, dtrain
+            gc.collect()
+            return None, rows
+        n_rows += rows
+        # Remaining rounds over remaining chunks, so a skipped chunk costs no rounds.
+        rounds = _split_rounds(rounds_left, len(chunks) - i)[0]
+        rounds_left -= rounds
+        booster = xgb.train(params, dtrain, num_boost_round=rounds, xgb_model=booster)
+        # Freed before the next chunk's matrix is built: two resident at once is exactly
+        # the memory this staging exists to avoid.
+        del it, dtrain
+        gc.collect()
+    if booster is None or n_rows < reg_mod.MIN_ROWS:
+        return None, n_rows
+    return booster, n_rows
+
+
+def _as_chunks(train_cycles) -> list:
+    """`train_cycles` as a list of chunks: a set is one chunk (the ordinary single fit);
+    a list is already the staged fit's chunks (`fit_chunks`)."""
+    return list(train_cycles) if isinstance(train_cycles, list) else [set(train_cycles)]
+
+
 def train_variable_regressor_pooled(cached_paths: dict, train_years: list, variable: str,
-                                    train_cycles: set, val_df: "pd.DataFrame",
+                                    train_cycles, val_df: "pd.DataFrame",
                                     hbf: dict, cache_dir: Path,
                                     device: str = "cpu") -> "reg_mod.RegressorArtifact | None":
     """The pooled-training equivalent of `regressors.train_variable_regressor`: same
     params, same features, fit via an external-memory `QuantileDMatrix` instead of a
     single in-memory `.fit()` so `train_years` is never all resident at once."""
     cols = _feature_columns_for(cached_paths, train_years)
-    it = _YearDataIter(cached_paths, train_years, variable, train_cycles, cols, hbf, cache_dir)
-    dtrain = xgb.QuantileDMatrix(it, enable_categorical=True)
-    if dtrain.num_row() < reg_mod.MIN_ROWS:
+    booster, n_train = _fit_booster(cached_paths, train_years, variable,
+                                    _as_chunks(train_cycles), cols, hbf, cache_dir, device)
+    if booster is None:
         return None
-
-    params = _xgb_train_params(device)
-    booster = xgb.train(params, dtrain, num_boost_round=reg_mod.XGB_PARAMS["n_estimators"])
     model = _booster_to_sklearn(booster, xgb.XGBRegressor)
 
     va = val_df[val_df["variable"] == variable]
-    n_train = int(dtrain.num_row())
-    del it, dtrain, booster  # see oof_fold_models for why: real fragmentation crashes
+    del booster  # see oof_fold_models for why: real fragmentation crashes
     gc.collect()
     # No train-split metric here, unlike the single-frame path: recomputing it would mean
     # a second full external-memory pass over every pooled year just to score rows the
@@ -563,26 +630,23 @@ def assign_folds(train_cycles: set, n_splits: int = 3) -> dict:
 
 
 def oof_fold_models(cached_paths: dict, train_years: list, variable: str,
-                    train_cycles: set, hbf: dict, fold_of: dict, cache_dir: Path,
+                    train_cycles, hbf: dict, fold_of: dict, cache_dir: Path,
                     device: str = "cpu"):
     """fold id -> (fitted, sklearn-wrapped booster, feature columns), each excluding its
     own fold's cycles. Used only to compute out-of-fold predictions for the training
     events the classifier trains on - never saved as an artifact."""
-    if len(train_cycles) < 2:
+    chunks = _as_chunks(train_cycles)
+    if sum(len(c) for c in chunks) < 2:
         return {}
     n_splits = len(set(fold_of.values()))
     cols = _feature_columns_for(cached_paths, train_years)
     models = {}
     for fold in range(n_splits):
-        fold_cycles = {c for c in train_cycles if fold_of[c] != fold}
-        it = _YearDataIter(cached_paths, train_years, variable, fold_cycles, cols, hbf, cache_dir)
-        dtrain = xgb.QuantileDMatrix(it, enable_categorical=True)
-        if dtrain.num_row() < reg_mod.MIN_ROWS:
-            del it, dtrain
-            gc.collect()
+        fold_chunks = [{c for c in chunk if fold_of[c] != fold} for chunk in chunks]
+        booster, _ = _fit_booster(cached_paths, train_years, variable, fold_chunks, cols,
+                                  hbf, cache_dir, device)
+        if booster is None:
             continue
-        params = _xgb_train_params(device)
-        booster = xgb.train(params, dtrain, num_boost_round=reg_mod.XGB_PARAMS["n_estimators"])
         models[fold] = (_booster_to_sklearn(booster, xgb.XGBRegressor), cols)
         # Explicit cleanup, not left to Python's own GC timing: real repeated crashes
         # 2026-09-14, a small (~900 MB) pyarrow malloc failing after ~1.5-2 hours of a
@@ -590,7 +654,8 @@ def oof_fold_models(cached_paths: dict, train_years: list, variable: str,
         # leak, from many short-lived DataIter/QuantileDMatrix/Booster objects (each
         # wrapping native pyarrow/XGBoost C++ allocations Python's cyclic GC does not
         # prioritise) accumulating across dozens of fits without being freed promptly.
-        del it, dtrain, booster
+        # _fit_booster frees each chunk's matrix itself.
+        del booster
         gc.collect()
     return models
 
@@ -765,7 +830,7 @@ def _run_variable_subprocess(cached: dict, train_years: list, variable: str,
 
 
 def _variable_checkpoint_path(cache_dir: Path, variable: str, train_years: list,
-                              train_cycles: set, val_cycles: set) -> Path:
+                              train_cycles, val_cycles: set) -> Path:
     """Where one variable's finished worker result is kept between runs.
 
     At seventeen years a variable takes about an hour, and the results used to live only
@@ -777,7 +842,12 @@ def _variable_checkpoint_path(cache_dir: Path, variable: str, train_years: list,
     import hashlib
     h = hashlib.sha256()
     h.update(repr(sorted(train_years)).encode())
-    h.update(repr(sorted(str(c) for c in train_cycles)).encode())
+    if isinstance(train_cycles, list):  # staged fit: the chunking itself is part of the key
+        h.update(b"staged")
+        for chunk in train_cycles:
+            h.update(repr(sorted(str(c) for c in chunk)).encode())
+    else:
+        h.update(repr(sorted(str(c) for c in train_cycles)).encode())
     h.update(repr(sorted(str(c) for c in val_cycles)).encode())
     h.update(repr(sorted(reg_mod.XGB_PARAMS.items())).encode())
     return Path(cache_dir) / "_variable_checkpoints" / f"{variable}_{h.hexdigest()[:16]}.pkl"
@@ -854,8 +924,11 @@ def _cuda_available() -> bool:
     return bool(torch.cuda.is_available())
 
 
+FIT_MODES = ("sample", "staged")
+
+
 def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
-                        run_id: str | None = None) -> "TrainReport":
+                        run_id: str | None = None, fit_mode: str = "sample") -> "TrainReport":
     """The pooled-training equivalent of `train_pipeline.full_retrain`: any number of
     years, never more than one held fully in memory at once. Always `make_current=False`
     - this is a comparison tool, not a promotion path, and this code has not earned the
@@ -929,9 +1002,21 @@ def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
     variables = sorted(pd.read_parquet(cached[train_years[0]], columns=["variable"])
                        ["variable"].unique())
     fold_of = assign_folds(train_c)
-    fit_c = fit_cycles(train_c)
-    report.split_cycles["fit"] = len(fit_c)
-    print(f"[pooled] regressors fit on {len(fit_c)} of {len(train_c)} training cycles",
+    # "sample": each regressor fits on MAX_FIT_CYCLES of the training cycles.
+    # "staged": on every training cycle, boosted chunk by chunk (fit_chunks), each chunk
+    # no bigger than the sample - same peak memory, the whole pool seen.
+    if fit_mode not in FIT_MODES:
+        raise ValueError(f"fit_mode must be one of {FIT_MODES}, got {fit_mode!r}")
+    if fit_mode == "staged":
+        fit_c = fit_chunks(train_c)
+        n_fit = sum(len(c) for c in fit_c)
+        report.split_cycles["fit_chunks"] = len(fit_c)
+    else:
+        fit_c = fit_cycles(train_c)
+        n_fit = len(fit_c)
+    report.split_cycles["fit"] = n_fit
+    print(f"[pooled] regressors fit ({fit_mode}) on {n_fit} of {len(train_c)} training cycles"
+          + (f" in {len(fit_c)} chunks" if fit_mode == "staged" else ""),
           file=sys.stderr, flush=True)
 
     # Split the variables across GPU and CPU devices, both running against the same `va`

@@ -41,6 +41,9 @@ def main() -> int:
     ap.add_argument("--test-year", type=int, required=True)
     ap.add_argument("--cache-dir", type=Path, default=BACKEND_DIR / "data" / "_pooled_cache")
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--fit-mode", choices=["sample", "staged"], default="sample",
+                    help="sample: regressors fit on MAX_FIT_CYCLES cycles; staged: on every "
+                         "training cycle, boosted chunk by chunk")
     args = ap.parse_args()
 
     from app.config import settings
@@ -52,7 +55,8 @@ def main() -> int:
     from app.ml.pooled_training import full_retrain_pooled
 
     train_years = _parse_years(args.train_years)
-    report = full_retrain_pooled(train_years, args.test_year, args.cache_dir)
+    report = full_retrain_pooled(train_years, args.test_year, args.cache_dir,
+                                 fit_mode=args.fit_mode)
 
     if args.json:
         print(json.dumps({
