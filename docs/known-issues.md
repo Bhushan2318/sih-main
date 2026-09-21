@@ -783,3 +783,13 @@ here rather than discovered live.
   keyed on the pool, the exact fit and validation cycles, and the XGBoost parameters.
   After a crash in any later stage, a rerun reuses the finished variables instead of
   retraining them.
+- **`laf_spread_ratio` was `inf` wherever this cycle's members agreed exactly while
+  earlier cycles did not.** Pool spread divided by an own spread of exactly zero. This is
+  common for dry-day rainfall, where every member says 0 mm (1.2-1.4 M rows per year),
+  and it also hit saturated humidity and soil moisture. XGBoost refuses `inf`, so
+  `humidity_pct` failed to train on 2026-09-21. The ratio is undefined there and is now
+  NaN, which XGBoost treats as missing. Every model trained before this fix saw `inf` in
+  this column for those rows. Cached years built before the fix are repaired in place
+  by `_ensure_finite_cache`: `inf` could only come from x/0 with x > 0, so the repaired
+  file is exactly what a rebuild would write. `inf` in any other float column is
+  refused, not rewritten.
