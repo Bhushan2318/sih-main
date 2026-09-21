@@ -781,3 +781,111 @@ def test_cache_year_repairs_inf_in_a_cache_it_reuses(tmp_path):
     _cache_with_inf(p)
     assert pt.cache_year(2000, tmp_path) == p
     assert not np.isinf(pd.read_parquet(p)["laf_spread_ratio"]).any()
+# --- staged fit: every training day, in chunks that each fit in memory --------------
+# MAX_FIT_CYCLES bounds what one QuantileDMatrix holds. The staged mode covers the whole
+# pool anyway: disjoint chunks of at most the cap, boosted one after another into the
+# same booster (xgb.train's xgb_model=), n_estimators split across them. One model per
+# variable, so the registry, inference and SHAP need nothing new.
+
+def test_fit_chunks_partition_the_pool_into_capped_disjoint_chunks():
+    cycles = _daily_cycles(range(2000, 2017))
+    chunks = pt.fit_chunks(cycles, cap=2000)
+    assert len(chunks) == 4  # 6,210 days / 2,000, rounded up
+    assert all(len(c) <= 2000 for c in chunks)
+    assert set().union(*chunks) == cycles
+    assert sum(len(c) for c in chunks) == len(cycles)
+    assert chunks == pt.fit_chunks(cycles, cap=2000)
+    fold_of = pt.assign_folds(cycles)
+    for c in chunks:
+        assert {d.year for d in c} == set(range(2000, 2017))
+        assert {fold_of[d] for d in c} == {0, 1, 2}
+
+
+def test_fit_chunks_keeps_a_small_pool_as_one_chunk():
+    cycles = _daily_cycles([2000])
+    assert pt.fit_chunks(cycles, cap=2000) == [cycles]
+
+
+def test_split_rounds_sums_to_the_total():
+    assert pt._split_rounds(300, 4) == [75, 75, 75, 75]
+    assert pt._split_rounds(300, 7) == [43, 43, 43, 43, 43, 43, 42]
+    assert sum(pt._split_rounds(300, 7)) == 300
+
+
+def test_staged_fit_boosts_every_chunk_into_one_booster(tmp_path):
+    """Shapes-only synthetic frames: two chunks must yield one booster carrying the full
+    n_estimators, trained on every row of both chunks."""
+    df = _thin_synthetic_year(n=600, variables=("rainfall_mm",))
+    df["abs_error"] = np.abs(np.random.default_rng(3).normal(size=len(df)))
+    df["lead_day"] = np.random.default_rng(4).integers(1, 11, size=len(df))
+    p = tmp_path / "paired_2017.parquet"
+    df.to_parquet(p, index=False)
+    hbf = {(r, s): 0.1 for r in df["region_id"].unique() for s in df["season"].unique()}
+    cycles = sorted(set(df["init_date"]))
+    chunks = [set(cycles[: len(cycles) // 2]), set(cycles[len(cycles) // 2:])]
+    booster, n_rows = pt._fit_booster({2017: p}, [2017], "rainfall_mm", chunks,
+                                      ["lead_day"], hbf, tmp_path, "cpu", n_estimators=10)
+    assert n_rows == len(df)
+    assert booster.num_boosted_rounds() == 10
+
+
+def test_full_retrain_pooled_staged_fits_every_training_cycle_in_chunks(
+        tmp_path, _ingested_slice, monkeypatch):
+    """Real paired slice, relabelled years. With the cap forced below the pool, the staged
+    mode must hand the worker chunks covering every training cycle, and still succeed."""
+    from app.ml.train_pipeline import _build_paired_in_chunks
+
+    base, _ = _build_paired_in_chunks()
+    cache_dir = tmp_path / "pooled_cache"
+    cache_dir.mkdir()
+    for year, offset in {2000: 0, 2001: 1, 2002: 2}.items():
+        shifted = base.copy()
+        for col in ("init_date", "valid_date"):
+            shifted[col] = pd.to_datetime(shifted[col]) + pd.DateOffset(years=offset)
+        shifted.to_parquet(cache_dir / f"paired_{year}.parquet", index=False)
+
+    n_train = len(pt.pooled_split({y: cache_dir / f"paired_{y}.parquet" for y in (2000, 2001, 2002)},
+                                  2002)[0])
+    monkeypatch.setattr(pt, "MAX_FIT_CYCLES", max(1, n_train // 2))
+    monkeypatch.setattr(pt, "_cuda_available", lambda: False)
+    seen = []
+    real = pt._run_variable_subprocess
+    monkeypatch.setattr(pt, "_run_variable_subprocess",
+                        lambda *a, **k: seen.append(a[3]) or real(*a, **k))
+    report = pt.full_retrain_pooled(train_years=[2000, 2001], test_year=2002,
+                                    cache_dir=cache_dir, fit_mode="staged")
+    assert report.status == "success", report.error
+    assert report.split_cycles["fit"] == report.split_cycles["train"] == n_train
+    assert report.split_cycles["fit_chunks"] >= 2
+    assert seen and all(isinstance(c, list) and len(set().union(*c)) == n_train for c in seen)
+
+
+def test_staged_and_sample_checkpoints_never_collide(tmp_path):
+    cycles = _daily_cycles([2000])
+    val = {pd.Timestamp("2001-01-01")}
+    one = pt._variable_checkpoint_path(tmp_path, "rainfall_mm", [2000], cycles, val)
+    staged = pt._variable_checkpoint_path(tmp_path, "rainfall_mm", [2000], [cycles], val)
+    assert one != staged
+
+
+def test_full_retrain_pooled_rejects_an_unknown_fit_mode(tmp_path):
+    with pytest.raises(ValueError):
+        pt.full_retrain_pooled([2000], 2001, tmp_path, fit_mode="everything")
+
+
+def test_staged_fit_skips_a_chunk_with_no_rows_and_keeps_every_round(tmp_path):
+    """Shapes-only synthetic frame. A chunk of cycles that holds no rows for the variable
+    (XGBoost raises on an iterator that never yields a batch) is skipped, and the
+    booster still carries the full n_estimators."""
+    df = _thin_synthetic_year(n=600, variables=("rainfall_mm",))
+    df["abs_error"] = np.abs(np.random.default_rng(3).normal(size=len(df)))
+    df["lead_day"] = np.random.default_rng(4).integers(1, 11, size=len(df))
+    p = tmp_path / "paired_2017.parquet"
+    df.to_parquet(p, index=False)
+    hbf = {(r, s): 0.1 for r in df["region_id"].unique() for s in df["season"].unique()}
+    empty = {pd.Timestamp("1990-01-01")}
+    booster, n_rows = pt._fit_booster({2017: p}, [2017], "rainfall_mm",
+                                      [empty, set(df["init_date"])], ["lead_day"], hbf,
+                                      tmp_path, "cpu", n_estimators=10)
+    assert n_rows == len(df)
+    assert booster.num_boosted_rounds() == 10

@@ -84,14 +84,16 @@ def _run_job_subprocess(job: dict, cache_dir: Path, log_dir: Path) -> dict:
     always indented. Take the LAST line that is exactly "{" with no leading whitespace."""
     years_arg = ",".join(str(y) for y in sorted(job["train_years"]))
     test_year = job["test_year"]
-    stdout_path = log_dir / f"job_test{test_year}_stdout.log"
-    stderr_path = log_dir / f"job_test{test_year}_stderr.log"
+    fit_mode = job.get("fit_mode", "sample")
+    stem = f"job_test{test_year}" + ("" if fit_mode == "sample" else f"_{fit_mode}")
+    stdout_path = log_dir / f"{stem}_stdout.log"
+    stderr_path = log_dir / f"{stem}_stderr.log"
     env = {**os.environ, "ALLOW_LOCAL_RETRAIN": "true"}
     with open(stdout_path, "wb") as out_f, open(stderr_path, "wb") as err_f:
         proc = subprocess.run(
             [sys.executable, "-m", "scripts.train_pooled",
              "--train-years", years_arg, "--test-year", str(test_year),
-             "--cache-dir", str(cache_dir), "--json"],
+             "--cache-dir", str(cache_dir), "--fit-mode", fit_mode, "--json"],
             stdout=out_f, stderr=err_f, cwd=BACKEND_DIR, env=env,
         )
     stdout_text = stdout_path.read_text(errors="replace")
@@ -105,6 +107,12 @@ def _run_job_subprocess(job: dict, cache_dir: Path, log_dir: Path) -> dict:
         return {"status": "crashed", "returncode": proc.returncode,
                "error": f"no JSON output from subprocess (rc={proc.returncode}): {tail}"}
     return result
+
+
+def _job_key(job: dict) -> tuple:
+    """A job's identity: the pool, the held-out year and the fit mode - the same years
+    fit in "staged" mode are a different job from the "sample" run, not a repeat of it."""
+    return (tuple(sorted(job["train_years"])), job["test_year"], job.get("fit_mode", "sample"))
 
 
 def run_queue(queue: list[dict], cache_dir: Path, out_path: Path, log_path: Path) -> list[dict]:
@@ -124,19 +132,16 @@ def run_queue(queue: list[dict], cache_dir: Path, out_path: Path, log_path: Path
         # silently skipped forever on every future resume, never producing a model, with
         # no error and no sign anything was wrong short of reading the full report.
         results = json.loads(out_path.read_text())
-    done_keys = {(tuple(sorted(r["train_years"])), r["test_year"])
-                for r in results if r.get("status") == "success"}
+    done_keys = {_job_key(r) for r in results if r.get("status") == "success"}
     # Superseded failed attempts stay in the log for history, but are dropped from the
     # report that gets rewritten below - a stale "exception" record next to this run's
     # fresh "success" for the identical job would just be confusing.
     results = [r for r in results
               if r.get("status") == "success"
-              or (tuple(sorted(r["train_years"])), r["test_year"]) not in
-                 {(tuple(sorted(j["train_years"])), j["test_year"]) for j in queue}]
+              or _job_key(r) not in {_job_key(j) for j in queue}]
 
     for i, job in enumerate(queue):
-        key = (tuple(sorted(job["train_years"])), job["test_year"])
-        if key in done_keys:
+        if _job_key(job) in done_keys:
             _log(log_path, f"[{i+1}/{len(queue)}] already succeeded: "
                             f"train={job['train_years']} test={job['test_year']} - skipping")
             continue
@@ -145,7 +150,7 @@ def run_queue(queue: list[dict], cache_dir: Path, out_path: Path, log_path: Path
                         f"test={job['test_year']}")
         t0 = time.time()
         record = {"train_years": job["train_years"], "test_year": job["test_year"],
-                  "started_at": _now()}
+                  "fit_mode": job.get("fit_mode", "sample"), "started_at": _now()}
         result = _run_job_subprocess(job, cache_dir, log_dir)
         result.setdefault("seconds", time.time() - t0)
         record.update(result)
