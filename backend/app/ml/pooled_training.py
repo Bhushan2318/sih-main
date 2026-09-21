@@ -76,15 +76,36 @@ def cache_year(year: int, cache_dir: Path) -> Path:
     own resumability convention."""
     cache_dir.mkdir(parents=True, exist_ok=True)
     path = cache_dir / f"paired_{year}.parquet"
+    # Existence is not validity. Real crash 2026-09-21: this process was killed mid-write
+    # during a disk squeeze, leaving paired_2000.parquet truncated at 1.59 GB of 3.65 GB;
+    # every later run reused it unread, and the pooled run died nine hours on in
+    # pooled_split, after re-caching seventeen other years for nothing.
     if path.exists():
-        return path
+        if _readable_parquet(path):
+            return path
+        path.unlink()
     lo, hi = pd.Timestamp(f"{year}-01-01"), pd.Timestamp(f"{year}-12-31")
     paired, _ = _build_paired_in_chunks(init_date_min=lo, init_date_max=hi)
     if paired.empty:
         raise ValueError(f"no paired forecast+observation data for {year} in the store")
-    paired.to_parquet(path, index=False)
+    # Written under a temporary name and renamed into place, so an interrupted write
+    # leaves no file rather than a plausible-looking partial one - the same convention
+    # parquet_store already uses for a batch.
+    tmp = path.with_name(path.name + ".tmp")
+    paired.to_parquet(tmp, index=False)
     del paired
+    tmp.replace(path)
     return path
+
+
+def _readable_parquet(path: Path) -> bool:
+    """Whether the file has an intact Parquet footer, i.e. was written to completion."""
+    import pyarrow.parquet as pq
+    try:
+        pq.ParquetFile(path).metadata
+        return True
+    except Exception:  # noqa: BLE001 - any unreadable footer means rebuild it
+        return False
 
 
 def pooled_split(cached_paths: dict, test_year: int):
@@ -120,34 +141,85 @@ def pooled_stats(cached_paths: dict, train_years: list, train_cycles: set):
     """
     event_cols = list(dict.fromkeys(
         fe.EVENT_KEYS + ["variable", "forecast_value", "observed_value"]))
-    thin_frames, event_frames = [], []
+    read_cols = list(dict.fromkeys(_THIN_STATS_COLUMNS + event_cols + ["init_date"]))
+
+    # Two bounded passes, never one concatenated frame. Real crash 2026-09-21: at 17
+    # pooled years `thin` is ~0.8 billion rows; casting one year's region_id to str asked
+    # for an 8.07 GiB <U29 array, and compute_historical_bust_frequency would then have
+    # copied the whole frame and walked it with itertuples(). Both are fine at the three
+    # years this was written for and impossible at seventeen. Percentiles need every
+    # value, so pass 1 keeps abs_error alone (float32, per variable); the rest is counting,
+    # which sums per year in pass 2.
+    per_var: dict = {}
+    event_frames = []
     for year in train_years:
-        df = pd.read_parquet(cached_paths[year],
-                             columns=list(dict.fromkeys(_THIN_STATS_COLUMNS + event_cols)))
+        df = pd.read_parquet(cached_paths[year], columns=read_cols)
         df = df[df["init_date"].isin(train_cycles)]
         if df.empty:
             continue
-        thin = df[_THIN_STATS_COLUMNS].copy()
-        # Cast per year, on the smaller frame, not after concatenation. Real crash
-        # 2026-09-14: two years' region_id/season categoricals whose category sets or
-        # order did not align exactly (e.g. 2019's, cached separately from 2016/2017's)
-        # made pd.concat silently fall back to plain object dtype for the combined
-        # column, and compute_historical_bust_frequency's own `.astype(str)` then had to
-        # materialise a fresh ~190M-row string array in one shot - 20.5 GiB, over the
-        # ceiling. Every year's own category set converts to str safely on its own; the
-        # concat below then only ever joins already-plain string columns.
-        thin["region_id"] = thin["region_id"].astype(str)
-        thin["season"] = thin["season"].astype(str)
-        thin_frames.append(thin)
+        # Native dtype, never a cast: rounding abs_error to float32 moved the 75th
+        # percentile enough to flip borderline rows and changed hbf in the 3rd decimal.
+        err = df["abs_error"].to_numpy()
+        codes, cats = _as_codes(df["variable"])
+        for i, cat in enumerate(cats):
+            vals = err[(codes == i) & ~np.isnan(err)]
+            if vals.size:
+                per_var.setdefault(str(cat), []).append(vals)
         event_frames.append(_event_mean_error(df))
-    if not thin_frames:
+        del df, err, codes
+    if not per_var:
         return {}, {}, {}
-    thin = pd.concat(thin_frames, ignore_index=True)
-    hbf = fe.compute_historical_bust_frequency(thin)
-    p90_error = compute_member_p90(thin[["variable", "abs_error"]])
+
+    thr_large, p90_error = {}, {}
+    for var, chunks in per_var.items():
+        vals = np.concatenate(chunks) if len(chunks) > 1 else chunks[0]
+        chunks.clear()
+        thr_large[var] = float(np.percentile(vals, 75.0))
+        p90_error[var] = float(np.percentile(vals, 90.0))
+        del vals
+    del per_var
+
+    # An error is "large" against its own variable's 75th percentile; a variable with no
+    # threshold gets inf, so it is never large - matching thr.get(var, np.inf) before.
+    # A NaN abs_error compares False, and still counts in its group's denominator.
+    large: dict = {}
+    total: dict = {}
+    for year in train_years:
+        df = pd.read_parquet(
+            cached_paths[year],
+            columns=list(dict.fromkeys(_THIN_STATS_COLUMNS + ["init_date"])))
+        df = df[df["init_date"].isin(train_cycles)]
+        if df.empty:
+            continue
+        codes, cats = _as_codes(df["variable"])
+        by_code = np.array([thr_large.get(str(c), np.inf) for c in cats])
+        is_large = df["abs_error"].to_numpy() > by_code[codes]
+        keyed = pd.DataFrame({
+            "region_id": df["region_id"].astype(object).to_numpy(),
+            "season": df["season"].astype(object).to_numpy(),
+            "is_large": is_large,
+        })
+        agg = keyed.groupby(["region_id", "season"], sort=False)["is_large"].agg(
+            ["sum", "count"])
+        for key, row in agg.iterrows():
+            k = (str(key[0]), str(key[1]))
+            large[k] = large.get(k, 0) + int(row["sum"])
+            total[k] = total.get(k, 0) + int(row["count"])
+        del df, codes, is_large, keyed, agg
+
+    hbf = {k: float(large[k] / total[k]) for k in total if total[k]}
     event_err = pd.concat(event_frames, ignore_index=True)
     bust_threshold = compute_error_thresholds(event_err, percentile=90.0)
     return hbf, p90_error, bust_threshold
+
+
+def _as_codes(col: "pd.Series"):
+    """Integer codes plus their categories, for a categorical or a plain column alike -
+    so a per-variable lookup never materialises one string per row."""
+    if isinstance(col.dtype, pd.CategoricalDtype):
+        return col.cat.codes.to_numpy(), list(col.cat.categories)
+    cats, codes = np.unique(col.to_numpy(), return_inverse=True)
+    return codes, list(cats)
 
 
 def _feature_columns_for(cached_paths: dict, years: list) -> list:
