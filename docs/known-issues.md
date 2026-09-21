@@ -756,3 +756,30 @@ here rather than discovered live.
   1,050 test events this is not distinguishable from noise on its own (the reported 95%
   CI on ROC-AUC is roughly +-0.05 wide). Not proof C3 adds real skill; consistent with
   it not hurting.
+
+### Seventeen-year pooled training, added 2026-09-21
+
+- **The regressors fit on a sample of training days, not every day.** Pooled training
+  over 2000-2016 has 6,193 training cycles. Measured on the real caches for one
+  variable, XGBoost's `QuantileDMatrix` peaked at 17.32 GB of commit for one year and
+  26.11 GB for two (25.89 GB with 4 threads instead of 20, so thread count is not the
+  cause), while the parquet reader on its own stayed flat at ~8.6 GB. At that rate,
+  seventeen years at every-day density does not fit the training laptop's 83 GB commit
+  limit (24 GB RAM + 60 GB pagefile) on either the CPU or the GPU. Every variable that
+  tried it hit the limit: Windows logged a low-virtual-memory event at 60-62 GB, and the
+  variable was dropped. So each variable's regressor, and each of its OOF fold models,
+  fits on `MAX_FIT_CYCLES` = 2,000 cycles, drawn by a fixed-seed uniform sample across
+  all seventeen years and every season (`pooled_training.fit_cycles`). Every other step
+  still uses every cycle: bust thresholds, historical bust frequency, validation, the
+  held-out 2017 test year and the classifier's training events. Consecutive days are
+  strongly autocorrelated, so a third of the days carries much more than a third of the
+  information, but that has not been measured here. Comparing a 2,000-cycle fit with a
+  full-density fit needs a machine with roughly 100 GB of memory.
+- **Every variable now trains on CUDA when a GPU is present.** Before this, the variables
+  were split half GPU and half CPU so the two halves could run at the same time. That
+  concurrency was removed on 2026-09-17, but the split was left in, so half the
+  variables still went to the device with less headroom.
+- **Each finished variable is checkpointed** to `_pooled_cache/_variable_checkpoints/`,
+  keyed on the pool, the exact fit and validation cycles, and the XGBoost parameters.
+  After a crash in any later stage, a rerun reuses the finished variables instead of
+  retraining them.
