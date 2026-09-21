@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import gc
 import pickle
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -108,6 +109,33 @@ def _readable_parquet(path: Path) -> bool:
         return False
 
 
+MAX_VAL_CYCLES = 365
+
+
+# How many training cycles one variable's regressor (and each OOF fold model) fits on.
+# Measured 2026-09-21 on the real caches, one variable: XGBoost's QuantileDMatrix peaked
+# at 17.32 GB of commit for one year and 26.11 GB for two - thread count made no
+# difference (25.89 GB at nthread=4) and the parquet iterator alone stays flat at ~8.6 GB
+# - so seventeen years at every-day density (6,193 cycles) cannot fit this machine's
+# 83 GB commit limit on either device. 2,000 is about a third of that pool. Every year and
+# season stays in the sample; thresholds, validation, test and classifier events are
+# unaffected and still use every cycle.
+MAX_FIT_CYCLES = 2000
+
+
+def fit_cycles(train_cycles: set, cap: "int | None" = None) -> set:
+    """The training cycles the per-variable fits use: all of them up to `cap`, otherwise
+    a fixed-seed uniform sample of `cap`. Random, not every k-th day: `assign_folds`
+    numbers sorted cycles `i % 3`, so a regular stride would put every kept cycle in one
+    OOF fold and leave that fold's model nothing to train on."""
+    cap = MAX_FIT_CYCLES if cap is None else cap
+    if len(train_cycles) <= cap:
+        return set(train_cycles)
+    ordered = sorted(train_cycles)
+    keep = np.random.default_rng(42).choice(len(ordered), size=cap, replace=False)
+    return {ordered[i] for i in keep}
+
+
 def pooled_split(cached_paths: dict, test_year: int):
     """Train/val/test cycles across a pool of cached years, holding `test_year` out
     entirely - the multi-year generalisation of `_split_by_year`. Reads only the
@@ -127,7 +155,19 @@ def pooled_split(cached_paths: dict, test_year: int):
         return set(pre_cycles), set(), test_cycles
     a = max(1, int(round(n * TRAIN_FRAC / (TRAIN_FRAC + VAL_FRAC))))
     a = min(a, n - 1)
-    return set(pre_cycles[:a]), set(pre_cycles[a:]), test_cycles
+    train, val = pre_cycles[:a], pre_cycles[a:]
+    # Validation is sized in absolute cycles, not as a share of a pool that grows with
+    # every year added. At seventeen years 15% is 1,093 cycles - 229 million rows, and
+    # pyarrow could not materialise that frame at all (one 28.4 GB allocation on a 23.7 GB
+    # machine, the crash on 2026-09-21). MAX_VAL_CYCLES is still nearly double the 193
+    # cycles the three-year runs validated on, so the signal is not weaker; what a bigger
+    # share would have bought is redundancy, and every surplus cycle is worth more in
+    # training. Nothing is discarded - the surplus is chronologically earlier than the
+    # cycles kept, so it joins training without leaking the validation window.
+    if len(val) > MAX_VAL_CYCLES:
+        train = train + val[:-MAX_VAL_CYCLES]
+        val = val[-MAX_VAL_CYCLES:]
+    return set(train), set(val), test_cycles
 
 
 def pooled_stats(cached_paths: dict, train_years: list, train_cycles: set):
@@ -194,23 +234,65 @@ def pooled_stats(cached_paths: dict, train_years: list, train_cycles: set):
         codes, cats = _as_codes(df["variable"])
         by_code = np.array([thr_large.get(str(c), np.inf) for c in cats])
         is_large = df["abs_error"].to_numpy() > by_code[codes]
-        keyed = pd.DataFrame({
-            "region_id": df["region_id"].astype(object).to_numpy(),
-            "season": df["season"].astype(object).to_numpy(),
-            "is_large": is_large,
-        })
-        agg = keyed.groupby(["region_id", "season"], sort=False)["is_large"].agg(
-            ["sum", "count"])
-        for key, row in agg.iterrows():
-            k = (str(key[0]), str(key[1]))
-            large[k] = large.get(k, 0) + int(row["sum"])
-            total[k] = total.get(k, 0) + int(row["count"])
-        del df, codes, is_large, keyed, agg
+        # Counted over integer codes with bincount, never over strings. Converting one
+        # year's region_id to objects is itself an 8.27 GiB <U29 array (the 2026-09-21
+        # crash, and then the same crash again in the first version of this rewrite):
+        # pandas materialises one value per row, and there are 76.5 million of them.
+        r_codes, r_cats = _codes_with_missing(df["region_id"])
+        s_codes, s_cats = _codes_with_missing(df["season"])
+        n_seasons = len(s_cats)
+        key = r_codes.astype(np.int64) * n_seasons + s_codes
+        n_keys = len(r_cats) * n_seasons
+        tot = np.bincount(key, minlength=n_keys)
+        lrg = np.bincount(key[is_large], minlength=n_keys)
+        for idx in np.nonzero(tot)[0]:
+            k = (r_cats[idx // n_seasons], s_cats[idx % n_seasons])
+            large[k] = large.get(k, 0) + int(lrg[idx])
+            total[k] = total.get(k, 0) + int(tot[idx])
+        del df, codes, is_large, r_codes, s_codes, key, tot, lrg
 
     hbf = {k: float(large[k] / total[k]) for k in total if total[k]}
     event_err = pd.concat(event_frames, ignore_index=True)
     bust_threshold = compute_error_thresholds(event_err, percentile=90.0)
     return hbf, p90_error, bust_threshold
+
+
+def _drop_stale_caches(cache_dir: Path, years: list) -> list:
+    """Delete any cached year narrower than its peers, so it is rebuilt with the columns
+    the current code produces.
+
+    A cache file is only valid for the feature set that existed when it was written. Real
+    crash 2026-09-21: paired_2016 and paired_2017 were built before the district
+    descriptors landed - 27 columns against the other sixteen years' 44 - and
+    `_feature_columns_for` reads the schema of one year to decide what to read from all of
+    them. The run died on `No match for FieldRef.Name(area_km2)` after eight hours of
+    caching. Comparing schemas costs one footer read per year."""
+    import pyarrow.parquet as pq
+    schemas = {}
+    for year in years:
+        path = cache_dir / f"paired_{year}.parquet"
+        if not path.exists():
+            continue
+        try:
+            schemas[year] = set(pq.ParquetFile(path).schema_arrow.names)
+        except Exception:  # noqa: BLE001 - unreadable is handled by cache_year itself
+            continue
+    if len(schemas) < 2:
+        return []
+    widest = max(len(n) for n in schemas.values())
+    stale = sorted(y for y, names in schemas.items() if len(names) < widest)
+    for year in stale:
+        (cache_dir / f"paired_{year}.parquet").unlink()
+    return stale
+
+
+def _codes_with_missing(col: "pd.Series"):
+    """Codes and their category names as strings, with missing values given their own
+    slot named "nan" - which is what `.astype(str)` called them before."""
+    codes, cats = _as_codes(col)
+    names = [str(c) for c in cats] + ["nan"]
+    codes = np.where(codes < 0, len(names) - 1, codes)
+    return codes, names
 
 
 def _as_codes(col: "pd.Series"):
@@ -312,7 +394,14 @@ class _YearDataIter(xgb.DataIter):
     def next(self, input_data) -> int:
         if self._i == len(self._paths):
             return 0
-        df = pd.read_parquet(self._paths[self._i], columns=self._read_cols)
+        # The variable filter goes into the read, so the other seven variables' rows are
+        # dropped row group by row group and never become one full-year frame. Real
+        # failure 2026-09-21: reading the whole year and filtering in pandas, 17 years x
+        # every QuantileDMatrix pass, drove the worker past 43 GB of commit before its
+        # first boosting round. Measured on real 2009+2010: peak 29.87 GB -> 9.38 GB,
+        # 69 s -> 10 s, identical rows and abs_error sums.
+        df = pd.read_parquet(self._paths[self._i], columns=self._read_cols,
+                             filters=[("variable", "==", self._variable)])
         df = df[(df["variable"] == self._variable) & (df["init_date"].isin(self._cycles))]
         self._i += 1
         if df.empty:
@@ -515,6 +604,32 @@ def _run_worker_subprocess(script: Path, job: dict) -> dict:
 
 
 _WORKER_SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "_train_pooled_variable_worker.py"
+_VAL_FRAME_WORKER_SCRIPT = (Path(__file__).resolve().parents[2] / "scripts"
+                            / "_build_val_frame_worker.py")
+
+
+def _run_val_frame_subprocess(cached: dict, val_years: list, val_cycles: set,
+                              columns: set, hbf: dict, out_dir: Path) -> dict:
+    """Build the validation frame in a throwaway process that spills it to `out_dir`.
+
+    The parent must be lean when it spawns a per-variable training worker: that worker
+    needs one ~9.19 GB allocation for XGBoost's quantised matrix over seventeen years,
+    and a parent holding this frame sat at 16.8 GB of 23.7 GB, so all eight variables
+    failed that malloc (2026-09-21). Freeing the frame in-process is not enough - the
+    read arena is not returned to the OS - so it is never allocated here at all."""
+    job = {"cached": cached, "val_years": val_years, "val_cycles": val_cycles,
+           "columns": columns, "hbf": hbf, "out_dir": str(out_dir)}
+    return _run_worker_subprocess(_VAL_FRAME_WORKER_SCRIPT, job)
+
+
+def _read_va_var(spill_dir: Path, variable: str) -> "pd.DataFrame":
+    """One variable's validation rows, read straight from its own partition."""
+    part = Path(spill_dir) / f"variable={variable}"
+    if not part.exists():
+        return pd.DataFrame()
+    df = pd.read_parquet(part)
+    df["variable"] = variable
+    return df.set_index("_va_row")
 
 
 def _run_variable_subprocess(cached: dict, train_years: list, variable: str,
@@ -548,24 +663,72 @@ def _run_variable_subprocess(cached: dict, train_years: list, variable: str,
               "cache_dir": cache_dir, "device": dev, "fold_of": fold_of}
         return _run_worker_subprocess(_WORKER_SCRIPT, job)
 
+    # A caught exception (the worker pickles `error`) is a failed attempt too, not only a
+    # hard crash with no pickle. Real 2026-09-21: a MemoryError the worker caught came
+    # back as a result, was taken as finished, and the variable was dropped unretried.
+    # Each attempt is printed as it ends - to the job's stderr log - so a retry or a skip
+    # is visible while the run is still going, not only in the report hours later.
     attempts_log = []
     devices_to_try = [device, device] + (["cpu"] if device != "cpu" else [])
     result = None
     for i, dev in enumerate(devices_to_try):
         result = attempt(dev)
-        if "artifact" in result:      # pickle came back - a hard crash did not happen
+        if "artifact" in result and not result.get("error"):
+            print(f"[pooled] {variable} attempt {i + 1} device={dev} ok"
+                  + (f" (skipped: {result['skipped']})" if result.get("skipped") else ""),
+                  file=sys.stderr, flush=True)
             if i > 0:
                 note = (f"succeeded on attempt {i + 1} (device={dev}) after: "
                         f"{' | '.join(attempts_log)}")
                 if result.get("skipped"):
                     result["skipped"] = f"{result['skipped']} [{note}]"
             return result
-        attempts_log.append(f"attempt {i + 1} device={dev}: {result.get('error')}")
+        err = str(result.get("error"))
+        print(f"[pooled] {variable} attempt {i + 1} device={dev} FAILED: {err[-1500:]}",
+              file=sys.stderr, flush=True)
+        attempts_log.append(f"attempt {i + 1} device={dev}: {err[-1500:]}")
 
-    # Every attempt hard-crashed with no pickled result at all.
-    msg = f"worker crashed on every attempt - {' | '.join(attempts_log)}"
+    msg = f"worker failed on every attempt - {' | '.join(attempts_log)}"
     return {"artifact": None, "val_pred": None, "fold_models": {},
            "skipped": msg, "error": msg}
+
+
+def _variable_checkpoint_path(cache_dir: Path, variable: str, train_years: list,
+                              train_cycles: set, val_cycles: set) -> Path:
+    """Where one variable's finished worker result is kept between runs.
+
+    At seventeen years a variable takes about an hour, and the results used to live only
+    in the parent's memory: a failure in any later stage threw every finished variable
+    away (2026-09-21, four finished CUDA variables lost with the run). The key covers
+    everything the result depends on - the pool, the exact train and validation cycles
+    (validation row numbering follows from them), and the model parameters - so a
+    changed split or changed params never picks up a stale result."""
+    import hashlib
+    h = hashlib.sha256()
+    h.update(repr(sorted(train_years)).encode())
+    h.update(repr(sorted(str(c) for c in train_cycles)).encode())
+    h.update(repr(sorted(str(c) for c in val_cycles)).encode())
+    h.update(repr(sorted(reg_mod.XGB_PARAMS.items())).encode())
+    return Path(cache_dir) / "_variable_checkpoints" / f"{variable}_{h.hexdigest()[:16]}.pkl"
+
+
+def _load_variable_checkpoint(path: Path) -> "dict | None":
+    if not path.exists():
+        return None
+    try:
+        with open(path, "rb") as f:
+            result = pickle.load(f)
+    except Exception:  # noqa: BLE001 - an unreadable checkpoint just means retrain
+        return None
+    return result if result.get("artifact") is not None else None
+
+
+def _save_variable_checkpoint(path: Path, result: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    with open(tmp, "wb") as f:
+        pickle.dump(result, f)
+    tmp.replace(path)
 
 
 _TEST_EVENTS_WORKER_SCRIPT = (Path(__file__).resolve().parents[2] / "scripts"
@@ -638,6 +801,9 @@ def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
 
     train_years = [y for y in train_years if y != test_year]
     all_years = sorted(set(train_years) | {test_year})
+    for stale_year in _drop_stale_caches(cache_dir, all_years):
+        print(f"pooled cache for {stale_year} was narrower than its peers - rebuilding",
+              flush=True)
     cached = {y: cache_year(y, cache_dir) for y in all_years}
 
     train_c, val_c, test_c = pooled_split(
@@ -681,23 +847,21 @@ def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
     # alongside everything else.
     val_years = sorted({y for y in train_years
                         for c in val_c if pd.Timestamp(c).year == y}) or train_years
-    _va_parts = []
-    for y in val_years:
-        part = pd.read_parquet(cached[y], columns=sorted(needed))
-        # Cast per year before concatenating - see pooled_stats for why: categoricals
-        # from different cached years are not guaranteed to share category sets/order,
-        # and pd.concat silently degrades a mismatch to plain object dtype.
-        part["region_id"] = part["region_id"].astype(str)
-        part["season"] = part["season"].astype(str)
-        _va_parts.append(part)
-    va = pd.concat(_va_parts, ignore_index=True)
-    va = va[va["init_date"].isin(val_c)]
-    if not va.empty:
-        va = attach_hbf_column(va, hbf)
+    va_spill = cache_dir / "_va_by_variable"
+    va_built = _run_val_frame_subprocess(cached, val_years, val_c, needed, hbf, va_spill)
+    if va_built.get("error"):
+        report.status = "failed"
+        report.error = f"validation frame build failed: {va_built['error'][-2000:]}"
+        return report
+    n_va = int(va_built["n_rows"])
 
     variables = sorted(pd.read_parquet(cached[train_years[0]], columns=["variable"])
                        ["variable"].unique())
     fold_of = assign_folds(train_c)
+    fit_c = fit_cycles(train_c)
+    report.split_cycles["fit"] = len(fit_c)
+    print(f"[pooled] regressors fit on {len(fit_c)} of {len(train_c)} training cycles",
+          file=sys.stderr, flush=True)
 
     # Split the variables across GPU and CPU devices, both running against the same `va`
     # and `hbf`. Each half returns its own partial results; the halves touch disjoint
@@ -712,11 +876,20 @@ def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
         # 2026-09-14 after 1-3 hours, always at a later point as smaller fixes landed,
         # never fixed by them because the real cause was cross-variable accumulation.
         g_artifacts, g_skipped, g_fold_models = {}, {}, {}
-        g_val_pred = pd.Series(np.nan, index=va.index, dtype=float)
+        g_val_pred = pd.Series(np.nan, index=pd.RangeIndex(n_va), dtype=float)
         for var in var_subset:
-            va_var = va[va["variable"] == var]
-            result = _run_variable_subprocess(
-                cached, train_years, var, train_c, va_var, hbf, cache_dir, device, fold_of)
+            ckpt = _variable_checkpoint_path(cache_dir, var, train_years, fit_c, val_c)
+            result = _load_variable_checkpoint(ckpt)
+            if result is not None:
+                print(f"[pooled] {var} reused from checkpoint {ckpt.name}",
+                      file=sys.stderr, flush=True)
+            else:
+                va_var = _read_va_var(va_spill, var)
+                result = _run_variable_subprocess(
+                    cached, train_years, var, fit_c, va_var, hbf, cache_dir, device, fold_of)
+                del va_var
+                if result.get("artifact") is not None:
+                    _save_variable_checkpoint(ckpt, result)
             art = result["artifact"]
             if art is None:
                 g_skipped[var] = result.get("skipped") or "regressor training returned None or too few rows"
@@ -727,13 +900,16 @@ def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
             g_fold_models[var] = result["fold_models"]
         return g_artifacts, g_skipped, g_val_pred, g_fold_models
 
-    half = max(1, len(variables) // 2)
-    gpu_vars, cpu_vars = variables[:half], variables[half:]
-
-    gpu_available = _cuda_available()
+    # Every variable on one device - CUDA when there is one, with _run_variable_subprocess
+    # falling back to CPU per variable after two CUDA failures. Real failure 2026-09-21,
+    # 17-year pool: the four variables trained on CUDA finished; every variable given to
+    # the CPU half drove its worker to 60-62 GB of virtual memory and into Windows' commit
+    # limit (System event 2004 at 16:28, 17:37 and 18:43 UTC). The halves only existed to
+    # run concurrently, and that was removed on 2026-09-17 (below).
+    device = "cuda" if _cuda_available() else "cpu"
 
     artifacts: dict = {}
-    val_pred = pd.Series(np.nan, index=va.index, dtype=float)
+    val_pred = pd.Series(np.nan, index=pd.RangeIndex(n_va), dtype=float)
     fold_models: dict = {}
     # Sequential, deliberately - NOT a ThreadPoolExecutor running both groups at once
     # anymore. Real crash 2026-09-17: each variable's worker is its own OS subprocess
@@ -747,11 +923,7 @@ def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
     # overlap; it cost reliably fitting in memory. Given this project's own rule (a model
     # that gets a number is worse than no number if it silently dropped 5 of 8 variables
     # getting there), correctness wins over the wall-clock saving.
-    if gpu_available and cpu_vars:
-        results = [_train_group(gpu_vars, "cuda"), _train_group(cpu_vars, "cpu")]
-    else:
-        # No GPU (or nothing left for a second group) - everything on CPU, one group.
-        results = [_train_group(variables, "cpu")]
+    results = [_train_group(variables, device)]
 
     for g_artifacts, g_skipped, g_val_pred, g_fold_models in results:
         artifacts.update(g_artifacts)
@@ -772,7 +944,15 @@ def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
         columns=needed)
     del fold_models  # only needed for event_tr's out-of-fold predictions, above
     gc.collect()
-    event_va = pv.build_event_frame(va, val_pred, p90_error, bust_threshold, hbf)
+    # Read back only now: every training worker has exited, so this is the one moment
+    # the parent can afford the frame it deliberately never built.
+    va = (pd.read_parquet(va_spill).set_index("_va_row").sort_index()
+          if n_va else pd.DataFrame())
+    event_va = pv.build_event_frame(va, val_pred, p90_error, bust_threshold, hbf,
+                                    copy_input=False)
+    del va
+    shutil.rmtree(va_spill, ignore_errors=True)
+    gc.collect()
 
     # Now safe to build: event_tr is built, fold_models is gone, and only the small
     # saved regressor artifacts (not the pooled training data) are needed to score the

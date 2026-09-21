@@ -451,3 +451,275 @@ def test_pooled_stats_matches_the_frame_building_implementation(tmp_path):
     assert set(got_p90) == set(want_p90)
     for k in want_p90:
         assert got_p90[k] == pytest.approx(want_p90[k], rel=1e-6)
+
+
+def test_val_frame_worker_spills_by_variable_and_parent_reads_one(tmp_path):
+    """The parent must never allocate the validation frame: it needs to be lean when it
+    spawns a training worker that wants one ~9.19 GB allocation for seventeen years. With
+    the frame built in-parent it sat at 16.8 GB of 23.7 GB and all eight variables failed
+    that malloc (2026-09-21). Runs the real worker, so an interface mistake is caught."""
+    from app.ml import pooled_training as pt
+
+    rng = np.random.default_rng(5)
+    n = 240
+    cycles = pd.to_datetime(["2016-01-01", "2016-01-02", "2016-01-03"])
+    df = pd.DataFrame({
+        "init_date": rng.choice(cycles, n),
+        "valid_date": rng.choice(cycles, n),
+        "lead_time_days": rng.integers(1, 11, n),
+        "region_id": pd.Categorical(rng.choice(["IND.1", "IND.2"], n)),
+        "season": pd.Categorical(rng.choice(["DJF", "JJAS"], n)),
+        "variable": pd.Categorical(rng.choice(["temperature_c", "rainfall_mm"], n)),
+        "abs_error": rng.gamma(2, 2, n),
+        "forecast_value": rng.normal(size=n),
+        "observed_value": rng.normal(size=n),
+    })
+    path = tmp_path / "paired_2016.parquet"
+    df.to_parquet(path, index=False)
+
+    spill = tmp_path / "_va_by_variable"
+    hbf = {("IND.1", "DJF"): 0.25, ("IND.2", "JJAS"): 0.5}
+    res = pt._run_val_frame_subprocess({2016: path}, [2016], set(cycles),
+                                       set(df.columns), hbf, spill)
+
+    assert res.get("error") is None, res.get("error")
+    assert res["n_rows"] == n
+
+    one = pt._read_va_var(spill, "temperature_c")
+    assert not one.empty
+    assert set(one["variable"].unique()) == {"temperature_c"}
+    assert len(one) == int((df["variable"] == "temperature_c").sum())
+    assert one.index.name == "_va_row"
+    assert one.index.max() < n
+    assert "historical_bust_frequency_region_season" in one.columns
+    assert pt._read_va_var(spill, "not_a_variable").empty
+
+
+# --- every variable on the GPU, and a caught worker failure is retried ----------------
+# Real failure 2026-09-21, 17-year pool: the four variables trained on CUDA all finished,
+# and every variable handed to the CPU half hit Windows' commit limit (python.exe at
+# 60-62 GB of virtual memory, System event 2004 at 16:28, 17:37 and 18:43 UTC). The
+# GPU/CPU split existed only so the two halves could run concurrently, which was removed
+# on 2026-09-17, so half the variables were being sent to the device that cannot hold
+# them for no remaining reason. A MemoryError the worker caught came back as a pickled
+# result and was treated as a finished attempt - the variable was dropped without a retry,
+# and nothing was printed until the whole run ended.
+
+def _fake_worker(results, seen_devices):
+    calls = iter(results)
+
+    def fake(script, job):
+        seen_devices.append(job["device"])
+        return next(calls)
+    return fake
+
+
+def _ok_result(art="ART"):
+    return {"artifact": art, "skipped": None, "val_pred": None, "fold_models": {}, "error": None}
+
+
+def test_variable_worker_retries_a_caught_exception(monkeypatch, capsys):
+    """Shapes-only: the worker results are hand-built dicts, no training happens."""
+    seen = []
+    caught = {"artifact": None, "skipped": "worker exception: MemoryError", "val_pred": None,
+              "fold_models": {}, "error": "Traceback ...\nMemoryError"}
+    monkeypatch.setattr(pt, "_run_worker_subprocess", _fake_worker([caught, _ok_result()], seen))
+    result = pt._run_variable_subprocess({}, [2000], "wind_speed_ms", set(), pd.DataFrame(),
+                                         {}, None, "cuda", {})
+    assert result["artifact"] == "ART"
+    assert seen == ["cuda", "cuda"]
+    err = capsys.readouterr().err
+    assert "wind_speed_ms attempt 1 device=cuda FAILED" in err
+    assert "wind_speed_ms attempt 2 device=cuda ok" in err
+
+
+def test_variable_worker_does_not_retry_a_legitimate_too_few_rows_skip(monkeypatch):
+    seen = []
+    too_few = {"artifact": None, "skipped": "regressor training returned None or too few rows",
+               "val_pred": None, "fold_models": {}, "error": None}
+    monkeypatch.setattr(pt, "_run_worker_subprocess", _fake_worker([too_few], seen))
+    result = pt._run_variable_subprocess({}, [2000], "rainfall_mm", set(), pd.DataFrame(),
+                                         {}, None, "cuda", {})
+    assert result["artifact"] is None
+    assert seen == ["cuda"]
+
+
+def test_variable_worker_falls_back_to_cpu_after_two_cuda_failures(monkeypatch):
+    seen = []
+    crash = {"error": "worker produced no output, rc=3221225477: "}
+    monkeypatch.setattr(pt, "_run_worker_subprocess",
+                        _fake_worker([crash, crash, _ok_result()], seen))
+    result = pt._run_variable_subprocess({}, [2000], "humidity_pct", set(), pd.DataFrame(),
+                                         {}, None, "cuda", {})
+    assert result["artifact"] == "ART"
+    assert seen == ["cuda", "cuda", "cpu"]
+
+
+def test_full_retrain_pooled_sends_every_variable_to_cuda_when_a_gpu_exists(
+        tmp_path, _ingested_slice, monkeypatch):
+    """Real paired slice, relabelled years (as in the end-to-end test above). The GPU probe
+    is forced True; the real worker is still run, on CPU, so this passes on machines
+    without a GPU - what it asserts is the device each variable was dispatched with."""
+    from app.ml.train_pipeline import _build_paired_in_chunks
+
+    base, _ = _build_paired_in_chunks()
+    cache_dir = tmp_path / "pooled_cache"
+    cache_dir.mkdir()
+    for year, offset in {2000: 0, 2001: 1, 2002: 2}.items():
+        shifted = base.copy()
+        for col in ("init_date", "valid_date"):
+            shifted[col] = pd.to_datetime(shifted[col]) + pd.DateOffset(years=offset)
+        shifted.to_parquet(cache_dir / f"paired_{year}.parquet", index=False)
+
+    dispatched = {}
+    real = pt._run_variable_subprocess
+
+    def spy(cached, train_years, variable, train_cycles, va_var, hbf, cdir, device, fold_of):
+        dispatched[variable] = device
+        return real(cached, train_years, variable, train_cycles, va_var, hbf, cdir, "cpu", fold_of)
+
+    monkeypatch.setattr(pt, "_cuda_available", lambda: True)
+    monkeypatch.setattr(pt, "_run_variable_subprocess", spy)
+    report = pt.full_retrain_pooled(train_years=[2000, 2001], test_year=2002, cache_dir=cache_dir)
+
+    assert report.status == "success", report.error
+    assert len(dispatched) == base["variable"].nunique()
+    assert set(dispatched.values()) == {"cuda"}
+
+
+def test_variable_checkpoint_round_trips_and_is_keyed_on_the_split(tmp_path):
+    """Shapes-only: the stored result is a hand-built dict."""
+    cycles = {pd.Timestamp("2000-01-01"), pd.Timestamp("2000-01-02")}
+    val = {pd.Timestamp("2000-02-01")}
+    p = pt._variable_checkpoint_path(tmp_path, "temperature_c", [2000], cycles, val)
+    assert pt._load_variable_checkpoint(p) is None
+    pt._save_variable_checkpoint(p, _ok_result())
+    assert pt._load_variable_checkpoint(p)["artifact"] == "ART"
+    other = pt._variable_checkpoint_path(tmp_path, "temperature_c", [2000],
+                                         cycles | {pd.Timestamp("2000-01-03")}, val)
+    assert other != p and pt._load_variable_checkpoint(other) is None
+
+
+def test_full_retrain_pooled_reuses_finished_variables_on_a_rerun(
+        tmp_path, _ingested_slice, monkeypatch):
+    """Real paired slice, relabelled years. The second run on the same pool must not
+    train any variable again - each one comes back from its checkpoint."""
+    from app.ml.train_pipeline import _build_paired_in_chunks
+
+    base, _ = _build_paired_in_chunks()
+    cache_dir = tmp_path / "pooled_cache"
+    cache_dir.mkdir()
+    for year, offset in {2000: 0, 2001: 1, 2002: 2}.items():
+        shifted = base.copy()
+        for col in ("init_date", "valid_date"):
+            shifted[col] = pd.to_datetime(shifted[col]) + pd.DateOffset(years=offset)
+        shifted.to_parquet(cache_dir / f"paired_{year}.parquet", index=False)
+
+    monkeypatch.setattr(pt, "_cuda_available", lambda: False)
+    first = pt.full_retrain_pooled(train_years=[2000, 2001], test_year=2002, cache_dir=cache_dir)
+    assert first.status == "success", first.error
+
+    calls = []
+    real = pt._run_variable_subprocess
+    monkeypatch.setattr(pt, "_run_variable_subprocess",
+                        lambda *a, **k: calls.append(a[2]) or real(*a, **k))
+    second = pt.full_retrain_pooled(train_years=[2000, 2001], test_year=2002, cache_dir=cache_dir)
+    assert second.status == "success", second.error
+    assert calls == []
+    assert second.modelled_variables == first.modelled_variables
+    assert second.regressor_metrics == first.regressor_metrics
+
+
+def test_year_data_iter_reads_only_its_own_variable_from_disk(tmp_path, monkeypatch):
+    """Shapes-only synthetic frame. Real failure 2026-09-21: the iterator read every
+    variable of a 76.5M-row year and filtered in pandas, 17 years x every QuantileDMatrix
+    pass; measured on real 2009+2010 caches, peak commit 29.87 GB and 16.58 GB left
+    resident, against 9.38 GB / 4.82 GB with the filter pushed into the read - identical
+    rows and identical abs_error sums. At 17 years the worker climbed past 43 GB of commit
+    before its first boosting round."""
+    df = _thin_synthetic_year(n=400, variables=("temperature_c", "rainfall_mm"))
+    df["abs_error"] = np.abs(np.random.default_rng(1).normal(size=len(df)))
+    df["lead_day"] = 1
+    p = tmp_path / "paired_2017.parquet"
+    df.to_parquet(p, index=False)
+
+    calls = []
+    real = pd.read_parquet
+    monkeypatch.setattr(pt.pd, "read_parquet", lambda *a, **k: calls.append(k) or real(*a, **k))
+    hbf = {(r, s): 0.1 for r in df["region_id"].unique() for s in df["season"].unique()}
+    it = pt._YearDataIter({2017: p}, [2017], "rainfall_mm", set(df["init_date"]),
+                          ["lead_day"], hbf, tmp_path)
+    got = []
+    it.next(lambda data, label: got.append(len(label)))
+    assert calls and calls[0].get("filters") == [("variable", "==", "rainfall_mm")]
+    assert got == [int((df["variable"] == "rainfall_mm").sum())]
+
+
+# --- regressor fits on a bounded, evenly spread sample of training cycles -------------
+# Measured 2026-09-21 on the real caches, one variable: XGBoost's QuantileDMatrix peaked
+# at 17.32 GB of commit for one year and 26.11 GB for two (thread count made no
+# difference: 25.89 GB at nthread=4), while the parquet iterator alone stayed flat at
+# ~8.6 GB. Seventeen years at every-day density cannot fit this machine's 83 GB commit
+# limit on any device. Every year stays in the pool; the per-variable fits see a
+# bounded sample of its days, and everything else (thresholds, validation, test,
+# classifier events) keeps every day.
+
+def _daily_cycles(years):
+    return {pd.Timestamp(d) for y in years for d in pd.date_range(f"{y}-01-01", f"{y}-12-31")}
+
+
+def test_fit_cycles_keeps_a_small_pool_whole():
+    cycles = _daily_cycles([2000])
+    assert pt.fit_cycles(cycles, cap=2000) == cycles
+
+
+def test_fit_cycles_caps_a_large_pool_and_spans_every_year_and_season():
+    cycles = _daily_cycles(range(2000, 2017))
+    got = pt.fit_cycles(cycles, cap=2000)
+    assert len(got) == 2000 and got <= cycles
+    assert got == pt.fit_cycles(cycles, cap=2000)  # deterministic
+    assert {c.year for c in got} == set(range(2000, 2017))
+    assert {c.month for c in got} == set(range(1, 13))
+    per_year = pd.Series([c.year for c in got]).value_counts()
+    assert per_year.min() >= 0.7 * per_year.mean()
+
+
+def test_fit_cycles_leaves_every_oof_fold_with_training_cycles():
+    """assign_folds numbers sorted cycles i % 3 - an every-third-day sample would put
+    every kept cycle in one fold and leave that fold's model nothing to train on."""
+    cycles = _daily_cycles(range(2000, 2017))
+    fold_of = pt.assign_folds(cycles)
+    got = pt.fit_cycles(cycles, cap=2000)
+    per_fold = pd.Series([fold_of[c] for c in got]).value_counts()
+    assert set(per_fold.index) == {0, 1, 2}
+    assert per_fold.min() >= 0.25 * len(got)
+
+
+def test_full_retrain_pooled_fits_regressors_on_the_capped_sample(
+        tmp_path, _ingested_slice, monkeypatch):
+    """Real paired slice, relabelled years. The cap is forced below the pool so the
+    sample is exercised end to end; the worker must receive the sample, not the pool."""
+    from app.ml.train_pipeline import _build_paired_in_chunks
+
+    base, _ = _build_paired_in_chunks()
+    cache_dir = tmp_path / "pooled_cache"
+    cache_dir.mkdir()
+    for year, offset in {2000: 0, 2001: 1, 2002: 2}.items():
+        shifted = base.copy()
+        for col in ("init_date", "valid_date"):
+            shifted[col] = pd.to_datetime(shifted[col]) + pd.DateOffset(years=offset)
+        shifted.to_parquet(cache_dir / f"paired_{year}.parquet", index=False)
+
+    n_train = len(pt.pooled_split({y: cache_dir / f"paired_{y}.parquet" for y in (2000, 2001, 2002)},
+                                  2002)[0])
+    cap = max(2, n_train - 1)
+    monkeypatch.setattr(pt, "MAX_FIT_CYCLES", cap)
+    monkeypatch.setattr(pt, "_cuda_available", lambda: False)
+    seen = []
+    real = pt._run_variable_subprocess
+    monkeypatch.setattr(pt, "_run_variable_subprocess",
+                        lambda *a, **k: seen.append(len(a[3])) or real(*a, **k))
+    report = pt.full_retrain_pooled(train_years=[2000, 2001], test_year=2002, cache_dir=cache_dir)
+    assert report.status == "success", report.error
+    assert report.split_cycles["fit"] == cap < report.split_cycles["train"]
+    assert seen and set(seen) == {cap}
