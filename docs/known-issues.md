@@ -803,3 +803,11 @@ here rather than discovered live.
   what earlier trees left over on their own chunk, so this is not equivalent to one fit
   on every cycle at once. Whether it beats sample mode is decided on the same held-out
   2017 rows, not assumed.
+- **Classifier events are built one batch of forecast dates at a time**
+  (`EVENTS_BATCH_CYCLES` = 100), for training years and for the held-out year. On
+  2026-09-22 a whole 76.5M-row year in pandas peaked at 41.6 GB of commit, and the
+  2015 worker died on a 1.14 GiB allocation on both attempts, which ended the first
+  17-year run after all eight regressors had finished. Batched, real 2015 peaks at
+  14.3 GB. This is exact, not an approximation: `EVENT_KEYS` include `init_date`, and
+  a test compares the batched and whole-year frames on real data. Test-year metrics are
+  computed once per variable over every row, not averaged across batches.

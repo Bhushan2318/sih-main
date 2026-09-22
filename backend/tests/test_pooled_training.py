@@ -889,3 +889,87 @@ def test_staged_fit_skips_a_chunk_with_no_rows_and_keeps_every_round(tmp_path):
                                       tmp_path, "cpu", n_estimators=10)
     assert n_rows == len(df)
     assert booster.num_boosted_rounds() == 10
+
+
+# --- the per-year event frame is built one batch of forecast dates at a time --------
+# Real crash 2026-09-22, 17-year pool: the year-events worker read a whole 76.5M-row
+# year (41.6 GB peak commit measured on real 2015) and died on a 1.14 GiB allocation on
+# both attempts. EVENT_KEYS include init_date and build_event_frame only groups within
+# an event, so building it batch by batch and concatenating is exactly the whole-year
+# frame - the same argument the per-year split already rests on.
+
+def test_year_event_frame_is_identical_whether_built_whole_or_one_cycle_at_a_time(
+        tmp_path, _ingested_slice):
+    """Real paired slice (GEFS + ERA5 samples), real fold models trained on it."""
+    from app.ml.train_pipeline import _build_paired_in_chunks
+
+    base, _ = _build_paired_in_chunks()
+    p = tmp_path / "paired_2019.parquet"
+    base.to_parquet(p, index=False)
+    cached = {2019: p}
+    cycles = set(pd.to_datetime(base["init_date"]).dt.normalize().unique())
+    assert len(cycles) >= 3
+    hbf, p90_error, bust_threshold = pt.pooled_stats(cached, [2019], cycles)
+    fold_of = pt.assign_folds(cycles)
+    fold_models = {v: pt.oof_fold_models(cached, [2019], v, cycles, hbf, fold_of, tmp_path)
+                   for v in sorted(base["variable"].unique())}
+    columns = set(base.columns) - {"historical_bust_frequency_region_season"}
+
+    whole = pt.year_event_frame(p, cycles, hbf, p90_error, bust_threshold, fold_models,
+                                fold_of, columns, max_cycles_per_batch=10**6)
+    batched = pt.year_event_frame(p, cycles, hbf, p90_error, bust_threshold, fold_models,
+                                  fold_of, columns, max_cycles_per_batch=1)
+
+    def norm(df):
+        df = df.copy()
+        df["region_id"] = df["region_id"].astype(str)
+        df["season"] = df["season"].astype(str)
+        return df.sort_values(list(fe.EVENT_KEYS)).reset_index(drop=True)[sorted(df.columns)]
+
+    assert len(whole) > 0
+    pd.testing.assert_frame_equal(norm(whole), norm(batched), check_dtype=False)
+
+
+def test_cycle_batches_cover_every_cycle_once_in_order():
+    cycles = [pd.Timestamp("2015-01-01") + pd.Timedelta(days=i) for i in range(365)]
+    batches = pt._cycle_batches(set(cycles), 100)
+    assert [len(b) for b in batches] == [100, 100, 100, 65]
+    assert [c for b in batches for c in b] == cycles
+
+
+def test_test_event_frame_and_metrics_are_identical_whole_or_batched(tmp_path, _ingested_slice):
+    """Real paired slice, real regressors trained on it. The held-out year is scored the
+    same way: batched by forecast date, with each variable's metrics computed once over
+    every row, so they equal the whole-year computation exactly."""
+    from app.ml.train_pipeline import _build_paired_in_chunks
+
+    base, _ = _build_paired_in_chunks()
+    p = tmp_path / "paired_2019.parquet"
+    base.to_parquet(p, index=False)
+    cached = {2019: p}
+    cycles = set(pd.to_datetime(base["init_date"]).dt.normalize().unique())
+    hbf, p90_error, bust_threshold = pt.pooled_stats(cached, [2019], cycles)
+    artifacts = {}
+    for v in sorted(base["variable"].unique()):
+        art = pt.train_variable_regressor_pooled(cached, [2019], v, cycles, pd.DataFrame(
+            columns=base.columns), hbf, tmp_path)
+        if art is not None:
+            artifacts[v] = art
+    assert artifacts
+    columns = set(base.columns) - {"historical_bust_frequency_region_season"}
+
+    whole, m_whole = pt.test_event_frame(p, cycles, hbf, p90_error, bust_threshold,
+                                         artifacts, columns, max_cycles_per_batch=10**6)
+    batched, m_batched = pt.test_event_frame(p, cycles, hbf, p90_error, bust_threshold,
+                                             artifacts, columns, max_cycles_per_batch=1)
+
+    def norm(df):
+        df = df.copy()
+        df["region_id"] = df["region_id"].astype(str)
+        df["season"] = df["season"].astype(str)
+        return df.sort_values(list(fe.EVENT_KEYS)).reset_index(drop=True)[sorted(df.columns)]
+
+    pd.testing.assert_frame_equal(norm(whole), norm(batched), check_dtype=False)
+    assert m_whole.keys() == m_batched.keys() and m_whole
+    for v in m_whole:
+        assert m_batched[v] == pytest.approx(m_whole[v], rel=1e-9, nan_ok=True)
