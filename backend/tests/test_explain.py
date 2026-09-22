@@ -15,6 +15,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+import pytest
+
 from app.ml import explain
 
 
@@ -76,3 +78,76 @@ def test_no_cap_explains_every_row(monkeypatch):
 
 def test_the_regressor_cap_is_a_real_bound():
     assert explain.SHAP_ROWS_PER_GROUP is not None and 10 <= explain.SHAP_ROWS_PER_GROUP <= 100
+
+
+# --- a model reloaded from the registry can still be explained -------------------------
+# Real failure 2026-09-22: XGBoost's JSON round-trip does not preserve the sklearn
+# wrapper's enable_categorical flag, so TreeExplainer refused a reloaded model whose
+# frame has categorical columns ("Invalid columns: season: cat") and explain_model
+# silently fell back to feature importance. Training never saw it - it explains the
+# in-memory model - but anything explaining a SAVED run does. The values with the flag
+# restored are identical to the in-memory model's.
+
+def test_a_registry_loaded_model_keeps_its_categorical_flag(tmp_path, monkeypatch):
+    """Shapes-only synthetic frame."""
+    import numpy as np
+    import pandas as pd
+    import xgboost as xgb
+
+    from app.ml import registry
+
+    monkeypatch.setattr(registry, "MODEL_DIR", tmp_path)
+    X = pd.DataFrame({"a": np.random.default_rng(0).random(60),
+                      "season": pd.Categorical(["DJF", "JJAS"] * 30)})
+    y = np.random.default_rng(1).integers(0, 2, 60)
+    clf = xgb.XGBClassifier(n_estimators=5, max_depth=2, enable_categorical=True)
+    clf.fit(X, y)
+    reg = xgb.XGBRegressor(n_estimators=5, max_depth=2, enable_categorical=True)
+    reg.fit(X, y.astype(float))
+    registry.save_classifier("run_x", clf, list(X.columns))
+    registry.save_regressor("run_x", "temperature_c", reg, list(X.columns))
+
+    loaded_clf, _ = registry.load_classifier("run_x")
+    loaded_reg, _ = registry.load_regressors("run_x")["temperature_c"]
+    assert loaded_clf.get_params()["enable_categorical"] is True
+    assert loaded_reg.get_params()["enable_categorical"] is True
+    # The point of the flag: predicting and explaining a categorical frame both work.
+    assert len(loaded_clf.predict_proba(X)) == len(X)
+    shap = pytest.importorskip("shap")
+    vals = shap.TreeExplainer(loaded_clf).shap_values(X, check_additivity=False)
+    assert np.asarray(vals).shape == X.shape
+
+
+def test_per_group_means_describe_their_own_group_when_the_index_repeats(monkeypatch):
+    """A frame concatenated from batches has repeated labels. The summary must not care.
+
+    finalize_for_serving builds each regressor's explanation sample one batch of forecast
+    dates at a time, and every batch is reset to its own 0..n-1 index. Grouping by label
+    rather than by position then averaged rows from other groups into each group - which
+    does not fail, it just makes every district's "what drove this prediction" identical
+    to the national mean. Caught 2026-09-22 while finalising the seventeen-year run.
+    """
+    # Each half is one region, all of whose contributions are the same number, so the
+    # right per-region answer is visible without computing anything.
+    def half(region, value):
+        return pd.DataFrame({"f1": np.full(50, value), "f2": np.full(50, value),
+                             "region_id": region, "lead_time_days": 1}, index=range(50))
+
+    repeated = pd.concat([half("R_A", 0.0), half("R_B", 10.0)])
+    assert repeated.index.has_duplicates, "this test is pointless without repeated labels"
+
+    # The recorded "SHAP values" are the feature values themselves, so a group's mean
+    # absolute contribution is just its own value.
+    monkeypatch.setattr(explain, "_shap_values", lambda model, X: X.to_numpy(float))
+
+    out = explain.explain_model(object(), repeated, ["f1", "f2"], [], model_name="m",
+                                max_rows_per_group=None)
+    per_region = out[(out["group_region_id"] != "__all__") & (out["feature"] == "f1")]
+    assert dict(zip(per_region["group_region_id"], per_region["mean_abs_shap"])) == \
+        {"R_A": 0.0, "R_B": 10.0}
+    # And the same rows with unique labels must give the same answer.
+    unique = repeated.reset_index(drop=True)
+    same = explain.explain_model(object(), unique, ["f1", "f2"], [], model_name="m",
+                                 max_rows_per_group=None)
+    pd.testing.assert_frame_equal(out.sort_values(list(out.columns)).reset_index(drop=True),
+                                  same.sort_values(list(same.columns)).reset_index(drop=True))
