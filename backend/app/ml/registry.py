@@ -111,6 +111,15 @@ def current_run_id() -> Optional[str]:
         return None
 
 
+def _restore_categorical(model) -> None:
+    """Every model here was trained with `enable_categorical=True` (region_id and season
+    are categorical), but XGBoost's JSON round-trip does not carry that sklearn-wrapper
+    flag back. Real failure 2026-09-22: SHAP refused a reloaded classifier - "Invalid
+    columns: season: cat" - and the explanation silently degraded to feature importance.
+    With the flag restored the SHAP values equal the in-memory model's exactly."""
+    model.set_params(enable_categorical=True)
+
+
 def load_feature_columns(run_id: str) -> dict:
     path = run_dir(run_id) / "feature_columns.json"
     return json.loads(path.read_text()) if path.exists() else {}
@@ -124,6 +133,7 @@ def load_regressors(run_id: str) -> dict:
         var = p.name[: -len("_regressor.json")]
         m = xgb.XGBRegressor()
         m.load_model(p)
+        _restore_categorical(m)
         out[var] = (m, cols.get(f"regressor::{var}", []))
     return out
 
@@ -134,6 +144,7 @@ def load_classifier(run_id: str):
         return None, []
     m = xgb.XGBClassifier()
     m.load_model(p)
+    _restore_categorical(m)
     return m, load_feature_columns(run_id).get("classifier", [])
 
 

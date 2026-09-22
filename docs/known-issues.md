@@ -837,3 +837,109 @@ here rather than discovered live.
   1,050 test events this is not distinguishable from noise on its own (the reported 95%
   CI on ROC-AUC is roughly +-0.05 wide). Not proof C3 adds real skill; consistent with
   it not hurting.
+
+### Seventeen-year pooled training, added 2026-09-21
+
+- **The regressors fit on a sample of training days, not every day.** Pooled training
+  over 2000-2016 has 6,193 training cycles. Measured on the real caches for one
+  variable, XGBoost's `QuantileDMatrix` peaked at 17.32 GB of commit for one year and
+  26.11 GB for two (25.89 GB with 4 threads instead of 20, so thread count is not the
+  cause), while the parquet reader on its own stayed flat at ~8.6 GB. At that rate,
+  seventeen years at every-day density does not fit the training laptop's 83 GB commit
+  limit (24 GB RAM + 60 GB pagefile) on either the CPU or the GPU. Every variable that
+  tried it hit the limit: Windows logged a low-virtual-memory event at 60-62 GB, and the
+  variable was dropped. So each variable's regressor, and each of its OOF fold models,
+  fits on `MAX_FIT_CYCLES` = 2,000 cycles, drawn by a fixed-seed uniform sample across
+  all seventeen years and every season (`pooled_training.fit_cycles`). Every other step
+  still uses every cycle: bust thresholds, historical bust frequency, validation, the
+  held-out 2017 test year and the classifier's training events. Consecutive days are
+  strongly autocorrelated, so a third of the days carries much more than a third of the
+  information, but that has not been measured here. Comparing a 2,000-cycle fit with a
+  full-density fit needs a machine with roughly 100 GB of memory.
+- **Every variable now trains on CUDA when a GPU is present.** Before this, the variables
+  were split half GPU and half CPU so the two halves could run at the same time. That
+  concurrency was removed on 2026-09-17, but the split was left in, so half the
+  variables still went to the device with less headroom.
+- **Each finished variable is checkpointed** to `_pooled_cache/_variable_checkpoints/`,
+  keyed on the pool, the exact fit and validation cycles, and the XGBoost parameters.
+  After a crash in any later stage, a rerun reuses the finished variables instead of
+  retraining them.
+- **`laf_spread_ratio` was `inf` wherever this cycle's members agreed exactly while
+  earlier cycles did not.** Pool spread divided by an own spread of exactly zero. This is
+  common for dry-day rainfall, where every member says 0 mm (1.2-1.4 M rows per year),
+  and it also hit saturated humidity and soil moisture. XGBoost refuses `inf`, so
+  `humidity_pct` failed to train on 2026-09-21. The ratio is undefined there and is now
+  NaN, which XGBoost treats as missing. Every model trained before this fix saw `inf` in
+  this column for those rows. Cached years built before the fix are repaired in place
+  by `_ensure_finite_cache`: `inf` could only come from x/0 with x > 0, so the repaired
+  file is exactly what a rebuild would write. `inf` in any other float column is
+  refused, not rewritten.
+- **Staged mode (`--fit-mode staged`) fits on every training cycle.** The training
+  cycles are split into disjoint chunks of at most `MAX_FIT_CYCLES` (`fit_chunks`, a
+  fixed-seed shuffle, so each chunk spans every year, season and OOF fold). The chunks
+  are boosted one after another into the same booster, with `n_estimators` divided
+  between them, so peak memory is the same as sample mode. The result is still one
+  model per variable, so SHAP and serving are unchanged. The trade-off: trees from
+  earlier chunks are fit without ever seeing later chunks, and later trees only correct
+  what earlier trees left over on their own chunk, so this is not equivalent to one fit
+  on every cycle at once. Whether it beats sample mode is decided on the same held-out
+  2017 rows, not assumed.
+- **Classifier events are built one batch of forecast dates at a time**
+  (`EVENTS_BATCH_CYCLES` = 100), for training years and for the held-out year. On
+  2026-09-22 a whole 76.5M-row year in pandas peaked at 41.6 GB of commit, and the
+  2015 worker died on a 1.14 GiB allocation on both attempts, which ended the first
+  17-year run after all eight regressors had finished. Batched, real 2015 peaks at
+  14.3 GB. This is exact, not an approximation: `EVENT_KEYS` include `init_date`, and
+  a test compares the batched and whole-year frames on real data. Test-year metrics are
+  computed once per variable over every row, not averaged across batches.
+- **The classifier trains on events from the regressors' 2,000-cycle fit sample, not
+  from every training cycle.** At seventeen years, every training cycle's events come to
+  about 39 M rows (float64). With those in memory, the parent could not allocate 306 MB
+  to read the validation set back (2026-09-22). This applies in staged mode too. Event
+  frames are now float32, which is the precision XGBoost trains in anyway. Validation
+  events are built in their own worker, one batch of forecast dates at a time, and a
+  test on real data shows they equal the previous whole-frame output.
+
+### Serving a pooled model, added 2026-09-22
+
+- **CI cannot train the model the site serves.** Seventeen pooled years need a GPU, about
+  50 GB of memory headroom and more wall clock than a GitHub Actions job may take, so the
+  model is trained on the workstation and published as the `serving-model` release. The
+  refresh workflow installs it and skips its own training, while still pulling a fresh
+  GEFS cycle every six hours. Deleting that release returns the pipeline to training its
+  own model; `ignore_pinned_model` does the same for a single run.
+- **The refusal to promote used to stop the data refresh.** `train_pipeline` exits 1 when
+  the gate refuses a model, which skips packaging and publishing - so between 2026-09-19
+  and 2026-09-22 every scheduled run failed (CI models scoring ~0.67 against the served
+  0.80) and the site served three-day-old forecasts while looking healthy. With a model
+  pinned, the run no longer trains, so a refusal cannot block the data. The exit code
+  itself is unchanged for the unpinned path.
+- **A pooled run is not servable until it is finalized.** `full_retrain_pooled` did not
+  write `shap_summary.parquet` or the manifest's `shap_method`, which the region panel's
+  "what drove this prediction" reads, so a pooled model would have served no explanation
+  at all. `finalize_for_serving` writes them, rebuilding the validation events from the
+  caches in batches and refusing unless they reproduce the run's saved validation ROC-AUC.
+  It now runs at the end of every pooled run, and `--finalize RUN_ID` backfills one.
+- **The explanation summary grouped by index label, not by row.** `explain_model` built its
+  contribution frame on the caller's index and then looked each group up by label. Every
+  caller until now handed it a frame with unique labels, so it was right by luck; the
+  finalize path builds each regressor's sample one batch of forecast dates at a time, and
+  each batch carries its own `0..n` index, so the labels repeat. A label lookup then pulls
+  in every row sharing the label and each district's mean drifts toward the national one -
+  in a two-district reproduction with true means 0 and 10, both came back 5.0. Nothing
+  raises and the panel still renders, which is why this is written down rather than left as
+  obvious. Grouping is positional now, and a test asserts a repeated-index frame gives the
+  same answer as the same rows with unique labels. Models served before 2026-09-22 are
+  unaffected - their explanations were built in one frame, and the live panel still returns
+  different drivers per district.
+- **A model reloaded from the registry lost its categorical flag.** XGBoost's JSON
+  round-trip does not restore the sklearn wrapper's `enable_categorical`, so SHAP refused
+  a reloaded model ("Invalid columns: season: cat") and silently degraded to feature
+  importance. Restored on load; the SHAP values then equal the in-memory model's exactly.
+- **Pooled runs have no baseline ladder yet.** `scripts/run_baselines` scores the eval
+  events `--emit-eval` writes, which the pooled path does not produce, so the Model page
+  reports no baseline table for a pooled model rather than a stale one.
+- **`jump_rel_climatology` is always missing for pooled models.** The pooled cache builder
+  fits no jump climatology, so the column is entirely NaN in every cached year: the models
+  never learned from it, and serving leaves it missing too, which is consistent but means
+  one C1 feature is dead weight in this family.

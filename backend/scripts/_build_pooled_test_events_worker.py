@@ -33,33 +33,13 @@ def main() -> int:
 
     result = {"event_frame": None, "test_metrics": {}, "error": None}
     try:
-        import numpy as np
-        import pandas as pd
+        from app.ml.pooled_training import test_event_frame
 
-        from app.features import pivot as pv
-        from app.ml import regressors as reg_mod
-        from app.ml.pooled_training import attach_hbf_column
-
-        columns = job["columns"]
-        df = pd.read_parquet(job["cached_path"], columns=sorted(columns) if columns else None)
-        df = df[df["init_date"].isin(job["test_cycles"])]
-        if df.empty:
-            result["event_frame"] = pd.DataFrame()
-        else:
-            hbf = job["hbf"]
-            df = attach_hbf_column(df, hbf)
-            pred = pd.Series(np.nan, index=df.index, dtype=float)
-            for var, art in job["artifacts"].items():
-                tmask = df["variable"] == var
-                if not tmask.any():
-                    continue
-                p = reg_mod.predict_variable_error(art, df[tmask])
-                pred.loc[tmask] = p
-                if tmask.sum() >= 5:
-                    result["test_metrics"][var] = reg_mod._evaluate(
-                        df.loc[tmask, "abs_error"], p)
-            result["event_frame"] = pv.build_event_frame(
-                df, pred, job["p90_error"], job["bust_threshold"], hbf, copy_input=False)
+        # One batch of forecast dates at a time - see test_event_frame. The whole-year
+        # read is what failed for a training year on 2026-09-22 (41.6 GB peak commit).
+        result["event_frame"], result["test_metrics"] = test_event_frame(
+            job["cached_path"], job["test_cycles"], job["hbf"], job["p90_error"],
+            job["bust_threshold"], job["artifacts"], job["columns"])
     except Exception:
         result["error"] = traceback.format_exc()
 

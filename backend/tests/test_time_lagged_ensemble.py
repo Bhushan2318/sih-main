@@ -107,6 +107,23 @@ def test_a_single_member_cycle_contributes_zero_within_cycle_variance():
     assert row["laf_pool_std"] == pytest.approx(10 / math.sqrt(2))
 
 
+def test_members_that_agree_exactly_with_earlier_cycles_give_an_undefined_ratio_not_inf():
+    """Real failure 2026-09-21: humidity_pct members all at saturation agree exactly
+    (own_std = 0) while an earlier cycle's mean differs (pool_std > 0), and the ratio
+    divided by zero - 630 to 2,205 inf values in every year 2000-2016, which XGBoost
+    rejects outright. The ratio is undefined there, so it is NaN (missing), never inf and
+    never a made-up number."""
+    agree = {"2017-11-09": [90, 90], "2017-11-10": [100, 100]}
+    j = _laf(_fc_rows("A", "humidity_pct", VALID, agree), window=3)
+    row = j.loc["2017-11-10"]
+    # pool = [100, 100] + [90]: std > 0; own std = 0.
+    assert row["laf_pool_std"] > 0
+    assert np.isnan(row["laf_spread_ratio"])
+    # The first cycle has no earlier cycle, so its ratio is 1 by construction even
+    # though its own members agree - the documented n_prior == 0 case, unchanged.
+    assert j.loc["2017-11-09"]["laf_spread_ratio"] == pytest.approx(1.0)
+
+
 def test_regions_variables_and_valid_dates_do_not_mix():
     a = _fc_rows("A", "temperature_c", VALID, MEMBERS)
     b = _fc_rows("B", "temperature_c", VALID, {"2017-11-09": [0, 0], "2017-11-10": [100, 100]})

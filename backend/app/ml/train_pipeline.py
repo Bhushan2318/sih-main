@@ -119,9 +119,12 @@ def _build_paired_in_chunks(init_date_max=None, init_date_min=None) -> "tuple[pd
     in the same store: --init-date-max alone would silently pull every earlier year in as
     training data too. A cross-year run needs to name both ends of its training window.
     """
-    inits = parquet_store.read_dataset(
-        value_types=["forecast"], columns=["init_date"], dedupe=False,
-    )["init_date"].dropna().unique()
+    # From Parquet footers, not by reading every forecast row's init_date: at 20 years
+    # that column is ~1.3 billion values and the listing alone needed a ~9.7 GiB
+    # allocation, once per call - so once per cached year. Measured 2026-09-21: 7.4 s and
+    # ~2 MB this way, and verified to return exactly the same cycles. Same fix, same
+    # reason, as cycles_in_store in scripts/ingest_districts_chunked.py.
+    inits = parquet_store.distinct_forecast_init_dates()
     if len(inits) == 0:
         return pd.DataFrame(), 0
     inits = sorted(pd.to_datetime(pd.Series(inits)).dt.normalize().unique())
