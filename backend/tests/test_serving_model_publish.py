@@ -144,3 +144,25 @@ def test_the_serving_check_runs_without_a_gpu(tmp_path, monkeypatch):
     src = _run_dir(tmp_path / "src")
     assert pub.serving_check(tmp_path / "live", src) == {"ok": True}
     assert seen["CUDA_VISIBLE_DEVICES"] == ""
+
+
+def test_the_check_reads_regions_from_the_shape_that_endpoint_actually_returns():
+    """/api/regions/all answers for every lead day at once.
+
+    It returns `days[]`, each with its own `regions`, and no top-level `regions` key -
+    see AllRegionsResponse in the frontend's types. Reading a top-level `regions` gave an
+    empty list, and the check refused a model that was scoring 36 districts across all ten
+    lead days. Caught 2026-09-22 on the first real dry run of the seventeen-year model.
+    """
+    from scripts import _serving_check_worker as w
+
+    all_regions = {"days": [{"lead_time_days": 1, "regions": [{"region_id": "IN-TN-CHENNAI"}]},
+                            {"lead_time_days": 2, "regions": [{"region_id": "IN-TN-CHENNAI"},
+                                                              {"region_id": "IN-HP-SHIMLA"}]}]}
+    rows = w.scored_regions(all_regions)
+    assert [r["region_id"] for r in rows] == ["IN-TN-CHENNAI", "IN-TN-CHENNAI", "IN-HP-SHIMLA"]
+    # The single-lead endpoint's shape still works, and an empty body is empty.
+    assert w.scored_regions({"regions": [{"region_id": "IN-HP-SHIMLA"}]})[0]["region_id"] \
+        == "IN-HP-SHIMLA"
+    assert w.scored_regions({"days": []}) == []
+    assert w.scored_regions({}) == []
