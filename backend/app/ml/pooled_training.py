@@ -1173,7 +1173,10 @@ def finalize_for_serving(run_id: str, cache_dir: Path,
 
     frames = []
     for var, parts in samples.items():
-        sub = pd.concat(parts) if parts else pd.DataFrame()
+        # ignore_index: each batch was reset to its own 0..n-1, so keeping the labels
+        # would give the sample a repeated index and make the second stratified sample
+        # inside explain_model depend on how ties happen to sort.
+        sub = pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
         if len(sub) >= 20:
             model, cols = regs[var]
             frames.append(explain_mod.explain_model(

@@ -82,7 +82,13 @@ def explain_model(
         fi = np.asarray(getattr(model, "feature_importances_", np.zeros(len(feature_columns))), float)
         contrib = np.tile(fi, (len(X), 1))
 
-    contrib_df = pd.DataFrame(contrib, columns=feature_columns, index=val_df.index)
+    # Row i of `contrib` is row i of `val_df`, and that is the only relationship worth
+    # relying on. Carrying val_df's own labels over and then grouping by them breaks as
+    # soon as a caller hands us a frame concatenated from batches, whose labels repeat:
+    # a label-based lookup pulls in every row sharing the label, so each group's mean
+    # drifts toward the overall mean - silently, since nothing raises and the panel still
+    # renders. Positional throughout instead.
+    contrib_df = pd.DataFrame(contrib, columns=feature_columns)
     rows = []
 
     overall = contrib_df.mean(axis=0)
@@ -93,11 +99,13 @@ def explain_model(
 
     gcols = [c for c in group_cols if c in val_df.columns]
     if gcols:
-        group_keys = [val_df[c].to_numpy() for c in gcols]
-        for keys, idx in contrib_df.groupby(group_keys, observed=True).groups.items():
+        # Keys given as positionally-indexed Series, matching contrib_df's own index, so
+        # one vectorised groupby replaces a per-group lookup over the whole frame.
+        keys_by_col = [pd.Series(np.asarray(val_df[c]), name=c) for c in gcols]
+        grouped = contrib_df.groupby(keys_by_col, observed=True, sort=False).mean()
+        for keys, means in grouped.iterrows():
             keys = keys if isinstance(keys, tuple) else (keys,)
             gr = dict(zip(gcols, keys))
-            means = contrib_df.loc[idx, feature_columns].mean(axis=0)
             for feat, v in means.items():
                 rows.append(dict(
                     model=model_name,
