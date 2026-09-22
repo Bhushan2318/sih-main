@@ -964,12 +964,30 @@ here rather than discovered live.
   too narrow" both refuse the healthy 17-year model, which serves 90.4% in the `low` band
   at an IQR of 0.119 - tighter than one of the broken runs. A quiet day is genuinely
   quiet; what distinguishes damage is which rail the mass is pinned against.
-- **The deployed bundle scores 36 districts; the store can score 666.** The live map is
-  limited by which observations are packaged, not by the model or by CDS. On the training
-  machine the canonical store holds full ERA5-CDS district observations - 666 regions x 8
-  variables per day, exactly one row per (region, variable, date), `verification_status`
-  'final' - for both 2017 and 2018, and the source parquet for all twenty years 2000-2019
-  is present at 243,090 rows (666 x 365) and ~19.7 MB per year. Scoring
-  `run_20260922T043925Z` against that store returns 6,660 events, 666 districts across all
-  ten lead days. Until those observations reach the deploy bundle the site shows a real but
-  very sparse map, which reads as a coverage failure and is not one.
+- **The live feed was never migrated to districts; it still samples 36 city points.**
+  CLAUDE.md describes each district's value as the area-weighted mean of every 0.25 degree
+  cell its polygon overlaps. That is true of the archive/reforecast path. It is not true of
+  the live NOMADS path: `app/live/gefs.py` reads `scripts/india_cities.json`, which holds
+  **36 points**, samples the grid at each one, and resolves the point to whatever district
+  contains it. `grep -riE 'district|weight_table|area_weight' app/live/` returns nothing.
+  The published bundle shows the consequence - 1,520,552 rows, of which forecasts are
+  1,077,896 over **71 regions** and observations 442,656 over the same 71, with
+  `region_resolution_method` on every forecast row being a point resolver
+  (point_in_polygon 47, name 23, nearest_polygon 1). 71 is the union of districts those 36
+  points have fallen in over time.
+  This is worth stating precisely because the obvious fix is the wrong one. Packaging the
+  666-district ERA5-CDS observations into the bundle does **not** move the map: the
+  classifier needs a forecast row to score a district, and the forecast side would still be
+  36 points. The observations are not the narrow side - both sides are 71. The real fix is
+  to call the existing district weight table from `app/live/gefs.py` instead of sampling
+  points, which is a change to one call site and not new geography (there is exactly one
+  weight table and rule "do not write a second one" stands). It needs neither CDS nor the
+  17-year model.
+  It is not a change to make casually. Going from 71 to 666 regions multiplies served
+  forecast rows by ~9.4x - roughly 14 M rows for the same cycles - and serving already uses
+  388 MB of the 512 MB at which the box is killed rather than throttled. Rule 5 applies:
+  `.github/workflows/measure-serving-memory.yml` exists for this, and the honest sequence is
+  migrate on a branch, run that workflow, read the real RSS, then decide.
+  Meanwhile the model itself is not the limitation. Scored against a store that does have
+  full district observations, `run_20260922T043925Z` returns 6,660 events across 666
+  districts and all ten lead days.
