@@ -20,6 +20,19 @@ BACKEND_DIR = SCRIPT_DIR.parent
 sys.path.insert(0, str(BACKEND_DIR))
 
 
+def scored_regions(payload: dict) -> list:
+    """The region rows in an /api/regions/all body.
+
+    That endpoint answers for every lead day at once - `days[]`, each a RegionsResponse
+    with its own `regions` - and carries no top-level `regions` key. Reading one gave an
+    empty list and made a perfectly good model look like it scored nothing.
+    """
+    days = payload.get("days")
+    if isinstance(days, list):
+        return [r for day in days for r in (day.get("regions") or [])]
+    return payload.get("regions") or []
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--run-id", required=True)
@@ -44,8 +57,11 @@ def main() -> int:
 
         regions = client.get("/api/regions/all")
         regions.raise_for_status()
-        rows = regions.json().get("regions", [])
-        observed["regions"] = len(rows)
+        body = regions.json()
+        rows = scored_regions(body)
+        observed["lead_days"] = len(body.get("days") or [])
+        observed["regions"] = len({r.get("region_id") for r in rows})
+        observed["region_rows"] = len(rows)
         if not rows:
             print(json.dumps(observed))
             print("no regions scored", file=sys.stderr)
@@ -68,6 +84,25 @@ def main() -> int:
             print(json.dumps(observed))
             print(f"explanations are {observed['top_factors_method']}, not shap",
                   file=sys.stderr)
+            return 1
+
+        # An explanation that is the same everywhere explains nothing. A summary built by
+        # grouping on a repeated index gave every district the national mean - byte for
+        # byte identical - and still rendered, so "it returned factors" is not enough.
+        # Different districts may honestly share a leading feature; they do not share its
+        # value to the last decimal.
+        sampled = [r.get("region_id") for r in rows][:40]
+        seen = {}
+        for one in dict.fromkeys(sampled):
+            got = (client.get(f"/api/regions/{one}").json().get("top_factors") or [])
+            if got:
+                seen[one] = (got[0]["feature"], got[0]["importance"])
+        observed["districts_sampled"] = len(seen)
+        observed["distinct_leading_factors"] = len(set(seen.values()))
+        if len(seen) > 2 and observed["distinct_leading_factors"] < 2:
+            print(json.dumps(observed))
+            print(f"every one of {len(seen)} districts reports the same leading factor and "
+                  f"the same value - the explanation is not per-district", file=sys.stderr)
             return 1
 
         for path in ("/api/ensemble", "/api/alerts"):
