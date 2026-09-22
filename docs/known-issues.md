@@ -811,3 +811,10 @@ here rather than discovered live.
   14.3 GB. This is exact, not an approximation: `EVENT_KEYS` include `init_date`, and
   a test compares the batched and whole-year frames on real data. Test-year metrics are
   computed once per variable over every row, not averaged across batches.
+- **The classifier trains on events from the regressors' 2,000-cycle fit sample, not
+  from every training cycle.** At seventeen years, every training cycle's events come to
+  about 39 M rows (float64). With those in memory, the parent could not allocate 306 MB
+  to read the validation set back (2026-09-22). This applies in staged mode too. Event
+  frames are now float32, which is the precision XGBoost trains in anyway. Validation
+  events are built in their own worker, one batch of forecast dates at a time, and a
+  test on real data shows they equal the previous whole-frame output.
