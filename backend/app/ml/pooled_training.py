@@ -740,9 +740,45 @@ def year_event_frame(cached_path: Path, train_cycles: set, hbf: dict, p90_error:
                 if not fmask.any():
                     continue
                 oof.loc[fmask] = model.predict(reg_mod._prep_X(df.loc[fmask], cols))
-        frames.append(pv.build_event_frame(df, oof, p90_error, bust_threshold, hbf,
-                                           copy_input=False))
+        frames.append(_events_float32(pv.build_event_frame(
+            df, oof, p90_error, bust_threshold, hbf, copy_input=False)))
         del df, oof
+        gc.collect()
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+
+def _events_float32(df: "pd.DataFrame") -> "pd.DataFrame":
+    """Float columns of an event frame as float32 - the precision XGBoost trains and
+    predicts in anyway, so no model sees a different number. Integer labels and
+    categoricals are untouched. Halves the frames the parent holds for the classifier."""
+    floats = df.select_dtypes(include=["float64"]).columns
+    if len(floats):
+        df[floats] = df[floats].astype(np.float32)
+    return df
+
+
+def val_event_frame(spill_dir: Path, val_pred, hbf: dict, p90_error: dict,
+                    bust_threshold: dict,
+                    max_cycles_per_batch: int = EVENTS_BATCH_CYCLES) -> "pd.DataFrame":
+    """Validation events from the spilled validation frame (see _build_val_frame_worker),
+    one batch of forecast dates at a time. `val_pred` is indexed by `_va_row`, the shared
+    row numbering the spill carries. Same exactness argument as year_event_frame."""
+    import pyarrow.dataset as ds
+
+    val_pred = np.asarray(val_pred, dtype=float)
+    dataset = ds.dataset(spill_dir, format="parquet", partitioning="hive")
+    cycles = set(pd.to_datetime(dataset.to_table(columns=["init_date"])
+                                .column("init_date").unique().to_pandas()))
+    frames = []
+    for batch in _cycle_batches(cycles, max_cycles_per_batch):
+        df = pd.read_parquet(spill_dir, filters=[("init_date", "in", list(batch))])
+        if df.empty:
+            continue
+        df = df.set_index("_va_row").sort_index()
+        pred = pd.Series(val_pred[df.index.to_numpy()], index=df.index)
+        frames.append(_events_float32(pv.build_event_frame(
+            df, pred, p90_error, bust_threshold, hbf, copy_input=False)))
+        del df, pred
         gc.collect()
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
@@ -777,8 +813,8 @@ def test_event_frame(cached_path: Path, test_cycles: set, hbf: dict, p90_error: 
             pred.loc[tmask] = p
             y_parts.setdefault(var, []).append(df.loc[tmask, "abs_error"].to_numpy())
             p_parts.setdefault(var, []).append(np.asarray(p, dtype=float))
-        frames.append(pv.build_event_frame(df, pred, p90_error, bust_threshold, hbf,
-                                           copy_input=False))
+        frames.append(_events_float32(pv.build_event_frame(
+            df, pred, p90_error, bust_threshold, hbf, copy_input=False)))
         del df, pred
         gc.collect()
     metrics = {}
@@ -966,6 +1002,27 @@ def _save_variable_checkpoint(path: Path, result: dict) -> None:
     with open(tmp, "wb") as f:
         pickle.dump(result, f)
     tmp.replace(path)
+
+
+_VAL_EVENTS_WORKER_SCRIPT = (Path(__file__).resolve().parents[2] / "scripts"
+                             / "_build_pooled_val_events_worker.py")
+
+
+def _run_val_events_subprocess(spill_dir: Path, val_pred, hbf: dict, p90_error: dict,
+                               bust_threshold: dict) -> "pd.DataFrame":
+    """Validation events in a fresh process - see _build_pooled_val_events_worker.py.
+    Retried once, like the year-events worker: a fresh process is a different memory
+    state, and this runs hours into a seventeen-year job."""
+    job = {"spill_dir": str(spill_dir), "val_pred": np.asarray(val_pred, dtype=float),
+           "hbf": hbf, "p90_error": p90_error, "bust_threshold": bust_threshold}
+    errors = []
+    for _ in range(2):
+        result = _run_worker_subprocess(_VAL_EVENTS_WORKER_SCRIPT, job)
+        if not result.get("error"):
+            return result["event_frame"]
+        errors.append(str(result["error"])[-3000:])
+    raise RuntimeError("val-events worker failed on both attempts:\n"
+                       + "\n---\n".join(errors))
 
 
 _TEST_EVENTS_WORKER_SCRIPT = (Path(__file__).resolve().parents[2] / "scripts"
@@ -1191,18 +1248,22 @@ def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
         report.error = "no variable had enough paired rows to train a regressor"
         return report
 
+    # The classifier trains on events from the same bounded cycle sample the regressors
+    # fit on (in staged mode too). Real crash 2026-09-22: every training cycle's events
+    # at seventeen years (~39 M rows, float64) left the parent unable to allocate 306 MB.
+    # Out-of-fold predictions stay honest either way - a cycle's own fold model never
+    # trained on it.
+    clf_c = fit_cycles(train_c)
+    report.split_cycles["classifier"] = len(clf_c)
     event_tr = build_pooled_train_events(
-        cached, train_years, train_c, hbf, p90_error, bust_threshold, fold_models, fold_of,
+        cached, train_years, clf_c, hbf, p90_error, bust_threshold, fold_models, fold_of,
         columns=needed)
     del fold_models  # only needed for event_tr's out-of-fold predictions, above
     gc.collect()
-    # Read back only now: every training worker has exited, so this is the one moment
-    # the parent can afford the frame it deliberately never built.
-    va = (pd.read_parquet(va_spill).set_index("_va_row").sort_index()
-          if n_va else pd.DataFrame())
-    event_va = pv.build_event_frame(va, val_pred, p90_error, bust_threshold, hbf,
-                                    copy_input=False)
-    del va
+    # Built in a worker, batched by forecast date - see _run_val_events_subprocess.
+    event_va = (_run_val_events_subprocess(va_spill, val_pred.to_numpy(), hbf, p90_error,
+                                           bust_threshold)
+                if n_va else pd.DataFrame())
     shutil.rmtree(va_spill, ignore_errors=True)
     gc.collect()
 

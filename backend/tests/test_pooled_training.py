@@ -973,3 +973,86 @@ def test_test_event_frame_and_metrics_are_identical_whole_or_batched(tmp_path, _
     assert m_whole.keys() == m_batched.keys() and m_whole
     for v in m_whole:
         assert m_batched[v] == pytest.approx(m_whole[v], rel=1e-9, nan_ok=True)
+
+
+# --- validation events off the parent, and bounded classifier training events --------
+# Real crash 2026-09-22 (04:26 UTC): with every training cycle's events resident (float64,
+# ~39 M rows at seventeen years), the parent read the whole validation spill back to build
+# event_va and failed a 306 MB malloc. Validation events are now built in a worker, one
+# batch of forecast dates at a time; the classifier's training events come from the same
+# bounded cycle sample the regressors fit on; event frames are float32 - the precision
+# XGBoost trains in anyway.
+
+def _spill_like_the_worker(base, spill_dir):
+    """Real slice, laid out exactly as _build_val_frame_worker writes it."""
+    df = base.reset_index(drop=True).copy()
+    df["_va_row"] = range(len(df))
+    df.to_parquet(spill_dir, partition_cols=["variable"], index=False)
+    return len(df)
+
+
+def test_val_event_frame_matches_the_old_whole_frame_path(tmp_path, _ingested_slice):
+    from app.features import pivot as pv
+    from app.ml.train_pipeline import _build_paired_in_chunks
+
+    base, _ = _build_paired_in_chunks()
+    p = tmp_path / "paired_2019.parquet"
+    base.to_parquet(p, index=False)
+    cycles = set(pd.to_datetime(base["init_date"]).dt.normalize().unique())
+    hbf, p90_error, bust_threshold = pt.pooled_stats({2019: p}, [2019], cycles)
+    spill = tmp_path / "_va"
+    n = _spill_like_the_worker(pt.attach_hbf_column(base.copy(), hbf), spill)
+    val_pred = np.random.default_rng(0).random(n)  # stand-in predictions, shapes only
+
+    old = pv.build_event_frame(pd.read_parquet(spill).set_index("_va_row").sort_index(),
+                               pd.Series(val_pred), p90_error, bust_threshold, hbf,
+                               copy_input=False)
+    new = pt.val_event_frame(spill, val_pred, hbf, p90_error, bust_threshold,
+                             max_cycles_per_batch=1)
+
+    def norm(df):
+        df = df.copy()
+        for c in ("region_id", "season"):
+            df[c] = df[c].astype(str)
+        return df.sort_values(list(fe.EVENT_KEYS)).reset_index(drop=True)[sorted(df.columns)]
+
+    assert len(old) > 0
+    pd.testing.assert_frame_equal(norm(old), norm(new), check_dtype=False, rtol=1e-6)
+
+
+def test_event_frames_come_back_as_float32():
+    df = pd.DataFrame({"a": np.array([1.5, 2.5]), "y_bust": [0, 1],
+                       "region_id": pd.Categorical(["r1", "r2"])})
+    out = pt._events_float32(df)
+    assert out["a"].dtype == np.float32
+    assert out["y_bust"].dtype == df["y_bust"].dtype
+    assert isinstance(out["region_id"].dtype, pd.CategoricalDtype)
+
+
+def test_classifier_training_events_come_from_the_fit_sample(tmp_path, _ingested_slice,
+                                                             monkeypatch):
+    """Real paired slice, relabelled years. With the cap below the pool, the events the
+    classifier trains on must cover only the sampled cycles."""
+    from app.ml.train_pipeline import _build_paired_in_chunks
+
+    base, _ = _build_paired_in_chunks()
+    cache_dir = tmp_path / "pooled_cache"
+    cache_dir.mkdir()
+    for year, offset in {2000: 0, 2001: 1, 2002: 2}.items():
+        shifted = base.copy()
+        for col in ("init_date", "valid_date"):
+            shifted[col] = pd.to_datetime(shifted[col]) + pd.DateOffset(years=offset)
+        shifted.to_parquet(cache_dir / f"paired_{year}.parquet", index=False)
+    n_train = len(pt.pooled_split({y: cache_dir / f"paired_{y}.parquet" for y in (2000, 2001, 2002)},
+                                  2002)[0])
+    cap = max(2, n_train - 2)
+    monkeypatch.setattr(pt, "MAX_FIT_CYCLES", cap)
+    monkeypatch.setattr(pt, "_cuda_available", lambda: False)
+    seen = []
+    real = pt.build_pooled_train_events
+    monkeypatch.setattr(pt, "build_pooled_train_events",
+                        lambda *a, **k: seen.append(len(a[2])) or real(*a, **k))
+    report = pt.full_retrain_pooled(train_years=[2000, 2001], test_year=2002, cache_dir=cache_dir)
+    assert report.status == "success", report.error
+    assert seen == [cap]
+    assert report.split_cycles["classifier"] == cap
