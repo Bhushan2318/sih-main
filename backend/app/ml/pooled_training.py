@@ -1025,6 +1025,8 @@ def _run_val_events_subprocess(spill_dir: Path, val_pred, hbf: dict, p90_error: 
                        + "\n---\n".join(errors))
 
 
+_FINALIZE_WORKER_SCRIPT = (Path(__file__).resolve().parents[2] / "scripts"
+                           / "_finalize_pooled_run_worker.py")
 _TEST_EVENTS_WORKER_SCRIPT = (Path(__file__).resolve().parents[2] / "scripts"
                               / "_build_pooled_test_events_worker.py")
 
@@ -1075,6 +1077,132 @@ def _cuda_available() -> bool:
     except ImportError:
         return False
     return bool(torch.cuda.is_available())
+
+
+# Forecast dates per batch when a finished run's validation events are rebuilt for SHAP.
+# Smaller than EVENTS_BATCH_CYCLES because this can run beside a training job.
+FINALIZE_BATCH_CYCLES = 20
+
+
+def finalize_for_serving(run_id: str, cache_dir: Path,
+                         max_cycles_per_batch: int = FINALIZE_BATCH_CYCLES) -> dict:
+    """Make a finished pooled run servable: write `shap_summary.parquet` and the
+    manifest's `shap_method`/`paired_rows`, the way `train_pipeline.full_retrain` does.
+
+    The region panel's "what drove this prediction" reads the classifier's rows of that
+    summary. Without it a pooled run would serve no explanation at all, silently.
+
+    Rebuilds the validation events from the cached years, one batch of forecast dates
+    at a time, using the run's own saved regressors and thresholds. It refuses
+    (ValueError) unless those events reproduce the run's saved validation ROC-AUC, so the
+    explanation is provably of the events the model was scored on and not a near miss.
+    Regressors are explained on up to SHAP_ROWS_PER_GROUP validation rows per (region,
+    lead) and the classifier on every validation event, as in full_retrain."""
+    import json as _json
+
+    import pyarrow.parquet as pq
+
+    from app.ml import explain as explain_mod
+    from app.ml import registry
+    from app.ml.train_pipeline import _CLF_CATEGORICAL, _REG_CATEGORICAL
+
+    rd = registry.run_dir(run_id)
+    manifest = _json.loads((rd / "manifest.json").read_text())
+    train_years = list(manifest["pooled_train_years"])
+    test_year = int(manifest["test_year"])
+    cached = {y: Path(cache_dir) / f"paired_{y}.parquet" for y in train_years + [test_year]}
+    missing = [str(p) for p in cached.values() if not p.exists()]
+    if missing:
+        raise FileNotFoundError(f"cached years this run was trained on are missing: {missing}")
+
+    regs = registry.load_regressors(run_id)
+    clf, clf_cols = registry.load_classifier(run_id)
+    thr = registry.load_thresholds(run_id)
+    hbf = registry.load_historical_bust_freq(run_id)
+    saved = registry.load_metrics(run_id) or {}
+    saved_auc = (((saved.get("classifier") or {}).get("val")) or {}).get("roc_auc")
+    if clf is None or thr is None or not regs or saved_auc is None:
+        raise ValueError(f"{run_id} lacks a classifier, thresholds, regressors or a saved "
+                         f"validation ROC-AUC - nothing to finalize against")
+
+    _, val_c, _ = pooled_split(cached, test_year)
+    needed = set(_feature_columns_for(cached, train_years)) | set(fe.EVENT_KEYS) | {
+        "variable", "forecast_value", "observed_value", "ensemble_spread",
+        "abs_error", "region_id", "season"}
+    needed.discard("historical_bust_frequency_region_season")
+    read_cols = sorted(needed)
+
+    # Which file holds which cycle is read from the files, not inferred from the year in
+    # the name - the same rule year_event_frame follows.
+    want = {pd.Timestamp(c) for c in val_c}
+    events, samples = [], {v: [] for v in regs}
+    for year in train_years:
+        present = pd.to_datetime(pq.read_table(cached[year], columns=["init_date"])
+                                 .column("init_date").unique().to_pandas())
+        mine = want & set(present)
+        for batch in _cycle_batches(mine, max_cycles_per_batch):
+            df = pd.read_parquet(cached[year], columns=read_cols,
+                                 filters=[("init_date", "in", list(batch))])
+            if df.empty:
+                continue
+            df = attach_hbf_column(df.reset_index(drop=True), hbf)
+            pred = pd.Series(np.nan, index=df.index, dtype=float)
+            for var, (model, cols) in regs.items():
+                vmask = df["variable"] == var
+                if not vmask.any():
+                    continue
+                sub = df.loc[vmask]
+                pred.loc[vmask] = model.predict(reg_mod._prep_X(sub, cols))
+                samples[var].append(explain_mod._stratified_sample(
+                    sub, ("region_id", "lead_time_days"), explain_mod.SHAP_ROWS_PER_GROUP))
+            events.append(_events_float32(pv.build_event_frame(
+                df, pred, thr.p90_error, thr.bust_threshold, hbf, copy_input=False)))
+            del df, pred
+            gc.collect()
+    event_va = pd.concat(events, ignore_index=True) if events else pd.DataFrame()
+    del events
+
+    art = clf_mod.ClassifierArtifact(model=clf, feature_columns=clf_cols, metrics={},
+                                     n_train=0, n_val=len(event_va),
+                                     train_bust_rate=float("nan"))
+    got = clf_mod._evaluate(event_va["y_bust"], clf_mod.predict_bust_probability(art, event_va))
+    if abs(got["roc_auc"] - float(saved_auc)) > 1e-6:
+        raise ValueError(f"{run_id}: rebuilt validation events score validation ROC-AUC "
+                         f"{got['roc_auc']:.6f}, but the run recorded {float(saved_auc):.6f} - "
+                         f"refusing to explain events that are not the ones it was scored on")
+
+    frames = []
+    for var, parts in samples.items():
+        sub = pd.concat(parts) if parts else pd.DataFrame()
+        if len(sub) >= 20:
+            model, cols = regs[var]
+            frames.append(explain_mod.explain_model(
+                model, sub, cols, _REG_CATEGORICAL, model_name=f"regressor::{var}",
+                max_rows_per_group=explain_mod.SHAP_ROWS_PER_GROUP))
+    if len(event_va) >= 20:
+        frames.append(explain_mod.explain_model(clf, event_va, clf_cols, _CLF_CATEGORICAL,
+                                                model_name="classifier"))
+    frames = [f for f in frames if not f.empty]
+    if not frames:
+        raise ValueError(f"{run_id}: nothing could be explained")
+    shap_summary = pd.concat(frames, ignore_index=True)
+    tmp = rd / "shap_summary.parquet.tmp"
+    shap_summary.to_parquet(tmp, index=False)
+    tmp.replace(rd / "shap_summary.parquet")
+
+    shap_methods = shap_summary.groupby("model")["method"].first().to_dict()
+    manifest.update({
+        "shap_method": shap_methods.get("classifier", next(iter(shap_methods.values()))),
+        "shap_methods": shap_methods,
+        "shap_regressor_rows_per_group": explain_mod.SHAP_ROWS_PER_GROUP,
+        # Rows the pool held across its training years, read from the cache footers.
+        "paired_rows": int(sum(pq.ParquetFile(cached[y]).metadata.num_rows
+                               for y in train_years)),
+        "finalized_validation_roc_auc": got["roc_auc"],
+    })
+    registry.save_manifest(run_id, manifest)
+    return {"run_id": run_id, "validation_events": len(event_va),
+            "validation_roc_auc": got["roc_auc"], "shap_method": manifest["shap_method"]}
 
 
 FIT_MODES = ("sample", "staged")
@@ -1308,6 +1436,20 @@ def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
         "split_cycles": report.split_cycles, "modelled_variables": report.modelled_variables,
         "skipped_variables": report.skipped_variables,
     })
+
+    # Servable, not just saved - see finalize_for_serving. In its own process: it reads the
+    # validation year again, and this parent has held a seventeen-year job's worth of arena.
+    # The model directory is passed, not inherited: the worker must read the run this
+    # process just wrote, whatever its own environment would resolve MODEL_DIR to.
+    fin = _run_worker_subprocess(_FINALIZE_WORKER_SCRIPT,
+                                 {"run_id": rid, "cache_dir": str(cache_dir),
+                                  "model_dir": str(registry.MODEL_DIR)})
+    if fin.get("error"):
+        report.status = "failed"
+        report.error = (f"models saved as {rid}, but finalize_for_serving failed: "
+                        f"{str(fin['error'])[-2000:]}")
+        return report
+    print(f"[pooled] finalized {rid} for serving: {fin['summary']}", file=sys.stderr, flush=True)
 
     report.status = "success"
     report.made_current = False
