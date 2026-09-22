@@ -818,3 +818,35 @@ here rather than discovered live.
   frames are now float32, which is the precision XGBoost trains in anyway. Validation
   events are built in their own worker, one batch of forecast dates at a time, and a
   test on real data shows they equal the previous whole-frame output.
+
+### Serving a pooled model, added 2026-09-22
+
+- **CI cannot train the model the site serves.** Seventeen pooled years need a GPU, about
+  50 GB of memory headroom and more wall clock than a GitHub Actions job may take, so the
+  model is trained on the workstation and published as the `serving-model` release. The
+  refresh workflow installs it and skips its own training, while still pulling a fresh
+  GEFS cycle every six hours. Deleting that release returns the pipeline to training its
+  own model; `ignore_pinned_model` does the same for a single run.
+- **The refusal to promote used to stop the data refresh.** `train_pipeline` exits 1 when
+  the gate refuses a model, which skips packaging and publishing - so between 2026-09-19
+  and 2026-09-22 every scheduled run failed (CI models scoring ~0.67 against the served
+  0.80) and the site served three-day-old forecasts while looking healthy. With a model
+  pinned, the run no longer trains, so a refusal cannot block the data. The exit code
+  itself is unchanged for the unpinned path.
+- **A pooled run is not servable until it is finalized.** `full_retrain_pooled` did not
+  write `shap_summary.parquet` or the manifest's `shap_method`, which the region panel's
+  "what drove this prediction" reads, so a pooled model would have served no explanation
+  at all. `finalize_for_serving` writes them, rebuilding the validation events from the
+  caches in batches and refusing unless they reproduce the run's saved validation ROC-AUC.
+  It now runs at the end of every pooled run, and `--finalize RUN_ID` backfills one.
+- **A model reloaded from the registry lost its categorical flag.** XGBoost's JSON
+  round-trip does not restore the sklearn wrapper's `enable_categorical`, so SHAP refused
+  a reloaded model ("Invalid columns: season: cat") and silently degraded to feature
+  importance. Restored on load; the SHAP values then equal the in-memory model's exactly.
+- **Pooled runs have no baseline ladder yet.** `scripts/run_baselines` scores the eval
+  events `--emit-eval` writes, which the pooled path does not produce, so the Model page
+  reports no baseline table for a pooled model rather than a stale one.
+- **`jump_rel_climatology` is always missing for pooled models.** The pooled cache builder
+  fits no jump climatology, so the column is entirely NaN in every cached year: the models
+  never learned from it, and serving leaves it missing too, which is consistent but means
+  one C1 feature is dead weight in this family.
