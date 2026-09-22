@@ -694,6 +694,102 @@ def _run_year_events_subprocess(cached_path: Path, train_cycles: set, hbf: dict,
         f"year-events worker failed on both attempts:\n" + "\n---\n".join(errors))
 
 
+# Forecast dates per batch when one year's event frame is built. Measured on real 2015:
+# the whole year's needed columns peak at 41.6 GB of commit in pandas, and the worker died
+# on a 1.14 GiB allocation on both attempts (2026-09-22). 100 dates is about a quarter.
+EVENTS_BATCH_CYCLES = 100
+
+
+def _cycle_batches(cycles: set, max_per_batch: int) -> list:
+    """`cycles` in date order, in consecutive runs of at most `max_per_batch`."""
+    ordered = sorted(cycles)
+    return [ordered[i:i + max_per_batch] for i in range(0, len(ordered), max_per_batch)]
+
+
+def year_event_frame(cached_path: Path, train_cycles: set, hbf: dict, p90_error: dict,
+                     bust_threshold: dict, fold_models: dict, fold_of: dict, columns,
+                     max_cycles_per_batch: int = EVENTS_BATCH_CYCLES) -> "pd.DataFrame":
+    """One cached year's training events with out-of-fold regressor predictions,
+    built one batch of forecast dates at a time and concatenated.
+
+    Exact, not an approximation: EVENT_KEYS include init_date and build_event_frame only
+    groups within an event, so a batch of dates yields exactly its own events - the same
+    argument that makes the per-year split exact."""
+    import pyarrow.parquet as pq
+
+    present = pd.to_datetime(pq.read_table(cached_path, columns=["init_date"])
+                             .column("init_date").unique().to_pandas())
+    mine = set(present) & {pd.Timestamp(c) for c in train_cycles}
+    read_cols = sorted(columns) if columns else None
+    frames = []
+    for batch in _cycle_batches(mine, max_cycles_per_batch):
+        df = pd.read_parquet(cached_path, columns=read_cols,
+                             filters=[("init_date", "in", list(batch))])
+        if df.empty:
+            continue
+        df = attach_hbf_column(df, hbf)
+        df["_fold"] = df["init_date"].map(fold_of)
+        oof = pd.Series(np.nan, index=df.index, dtype=float)
+        for variable in sorted(df["variable"].unique()):
+            models_for_var = fold_models.get(variable, {})
+            if not models_for_var:
+                continue
+            vmask = df["variable"] == variable
+            for fold, (model, cols) in models_for_var.items():
+                fmask = vmask & (df["_fold"] == fold)
+                if not fmask.any():
+                    continue
+                oof.loc[fmask] = model.predict(reg_mod._prep_X(df.loc[fmask], cols))
+        frames.append(pv.build_event_frame(df, oof, p90_error, bust_threshold, hbf,
+                                           copy_input=False))
+        del df, oof
+        gc.collect()
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+
+def test_event_frame(cached_path: Path, test_cycles: set, hbf: dict, p90_error: dict,
+                     bust_threshold: dict, artifacts: dict, columns,
+                     max_cycles_per_batch: int = EVENTS_BATCH_CYCLES) -> tuple:
+    """The held-out year's events and each variable's test metrics, one batch of
+    forecast dates at a time - same reasoning and same exactness as year_event_frame.
+    Metrics are not averaged across batches: each variable's targets and predictions are
+    kept (one value per row of that variable, the dtypes the whole-year path used) and
+    scored once at the end, so they equal the whole-year computation."""
+    import pyarrow.parquet as pq
+
+    present = pd.to_datetime(pq.read_table(cached_path, columns=["init_date"])
+                             .column("init_date").unique().to_pandas())
+    mine = set(present) & {pd.Timestamp(c) for c in test_cycles}
+    read_cols = sorted(columns) if columns else None
+    frames, y_parts, p_parts = [], {}, {}
+    for batch in _cycle_batches(mine, max_cycles_per_batch):
+        df = pd.read_parquet(cached_path, columns=read_cols,
+                             filters=[("init_date", "in", list(batch))])
+        if df.empty:
+            continue
+        df = attach_hbf_column(df, hbf)
+        pred = pd.Series(np.nan, index=df.index, dtype=float)
+        for var, art in artifacts.items():
+            tmask = df["variable"] == var
+            if not tmask.any():
+                continue
+            p = reg_mod.predict_variable_error(art, df[tmask])
+            pred.loc[tmask] = p
+            y_parts.setdefault(var, []).append(df.loc[tmask, "abs_error"].to_numpy())
+            p_parts.setdefault(var, []).append(np.asarray(p, dtype=float))
+        frames.append(pv.build_event_frame(df, pred, p90_error, bust_threshold, hbf,
+                                           copy_input=False))
+        del df, pred
+        gc.collect()
+    metrics = {}
+    for var, ys in y_parts.items():
+        y = np.concatenate(ys)
+        if len(y) >= 5:
+            metrics[var] = reg_mod._evaluate(y, np.concatenate(p_parts[var]))
+    events = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+    return events, metrics
+
+
 def build_pooled_train_events(cached_paths: dict, train_years: list, train_cycles: set,
                               hbf: dict, p90_error: dict, bust_threshold: dict,
                               fold_models: dict, fold_of: dict,
