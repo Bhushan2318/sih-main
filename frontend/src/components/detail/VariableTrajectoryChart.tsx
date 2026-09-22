@@ -2,6 +2,7 @@ import {
   CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 import type { VariableSeries } from "../../api/types";
+import { variableUnit } from "../../lib/displayNames";
 import { CHART } from "../../theme";
 
 export function VariableTrajectoryChart({ series }: { series: VariableSeries }) {
@@ -23,13 +24,29 @@ export function VariableTrajectoryChart({ series }: { series: VariableSeries }) 
 
   const provisional = series.points.filter((p) => p.observed_status === "provisional");
 
+  const shortUnit = variableUnit(series.variable);
+
   return (
     <>
       <ResponsiveContainer width="100%" height={210}>
         <LineChart data={data} margin={{ top: 8, right: 12, bottom: 4, left: -4 }}>
           <CartesianGrid strokeDasharray="3 3" />
-          <XAxis dataKey="lead" tickFormatter={(d) => `D${d}`} />
-          <YAxis width={58} domain={["auto", "auto"]} tickFormatter={(v: number) => formatTick(v)} />
+          <XAxis
+            dataKey="lead" tickFormatter={(d) => `D${d}`}
+            label={{ value: "Lead day", position: "insideBottom", offset: -2, fontSize: 10 }}
+            height={34}
+          />
+          {/* The unit belongs on the axis, not only in a caption under the chart: the
+            * caption sat bottom-right, far from the numbers it explains, so the y scale
+            * read as bare figures. Short form here (kg/m2), full string still below,
+            * because the API's unit carries detail worth keeping (TCWV, from-direction). */}
+          <YAxis
+            width={58} domain={["auto", "auto"]} tickFormatter={(v: number) => formatTick(v)}
+            label={shortUnit ? {
+              value: shortUnit, angle: -90, position: "insideLeft",
+              offset: 14, fontSize: 10, style: { textAnchor: "middle" },
+            } : undefined}
+          />
           <Tooltip
             labelFormatter={(l) => `Lead day ${l}`}
             formatter={(v: number) => (v == null ? "—" : `${formatTick(v)}${series.unit ? ` ${series.unit}` : ""}`)}
