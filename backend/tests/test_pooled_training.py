@@ -18,6 +18,8 @@ archive year - it exercises the whole orchestration path, not the meteorology.
 """
 from __future__ import annotations
 
+import json
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -1056,3 +1058,55 @@ def test_classifier_training_events_come_from_the_fit_sample(tmp_path, _ingested
     assert report.status == "success", report.error
     assert seen == [cap]
     assert report.split_cycles["classifier"] == cap
+
+
+# --- a pooled run is made servable: SHAP summary and manifest, from the same code -----
+# Real gap 2026-09-22: full_retrain_pooled saved models, thresholds and metrics but not
+# shap_summary.parquet or the manifest's shap_method, both of which full_retrain writes.
+# The region panel's "what drove this prediction" reads that summary, so serving a pooled
+# run would have silently served no explanation. finalize_for_serving rebuilds the
+# validation events from the caches in batches, refuses unless they reproduce the saved
+# validation ROC-AUC exactly, and explains the models the way full_retrain does.
+
+def _pooled_run_on_slice(tmp_path, monkeypatch):
+    from app.ml.train_pipeline import _build_paired_in_chunks
+
+    base, _ = _build_paired_in_chunks()
+    cache_dir = tmp_path / "pooled_cache"
+    cache_dir.mkdir()
+    for year, offset in {2000: 0, 2001: 1, 2002: 2}.items():
+        shifted = base.copy()
+        for col in ("init_date", "valid_date"):
+            shifted[col] = pd.to_datetime(shifted[col]) + pd.DateOffset(years=offset)
+        shifted.to_parquet(cache_dir / f"paired_{year}.parquet", index=False)
+    monkeypatch.setattr(pt, "_cuda_available", lambda: False)
+    report = pt.full_retrain_pooled(train_years=[2000, 2001], test_year=2002, cache_dir=cache_dir)
+    assert report.status == "success", report.error
+    return report, cache_dir
+
+
+def test_a_pooled_run_ships_with_a_shap_summary_and_manifest(tmp_path, _ingested_slice,
+                                                             monkeypatch):
+    from app.ml import registry
+
+    report, _ = _pooled_run_on_slice(tmp_path, monkeypatch)
+    rd = registry.run_dir(report.run_id)
+    shap = pd.read_parquet(rd / "shap_summary.parquet")
+    assert "classifier" in set(shap["model"])
+    assert any(m.startswith("regressor::") for m in set(shap["model"]))
+    manifest = json.loads((rd / "manifest.json").read_text())
+    assert manifest["shap_method"] == "shap"
+    assert manifest["paired_rows"] > 0
+
+
+def test_finalize_refuses_a_run_whose_classifier_does_not_reproduce_its_metrics(
+        tmp_path, _ingested_slice, monkeypatch):
+    from app.ml import registry
+
+    report, cache_dir = _pooled_run_on_slice(tmp_path, monkeypatch)
+    metrics_path = registry.run_dir(report.run_id) / "metrics.json"
+    metrics = json.loads(metrics_path.read_text())
+    metrics["classifier"]["val"]["roc_auc"] = 0.123  # no longer what the model scores
+    metrics_path.write_text(json.dumps(metrics))
+    with pytest.raises(ValueError, match="validation ROC-AUC"):
+        pt.finalize_for_serving(report.run_id, cache_dir)

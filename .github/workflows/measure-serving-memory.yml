@@ -18,6 +18,10 @@ on:
         description: "Reforecast years to add before the second measurement"
         type: string
         default: "2010-2015"
+      use_serving_model:
+        description: "Measure with the pinned serving-model release installed"
+        type: boolean
+        default: false
 
 concurrency:
   group: measure-serving-memory
@@ -48,6 +52,19 @@ jobs:
           gh release download data-latest -p "sanket-data.tar.gz" -D /tmp --clobber
           tar xzf /tmp/sanket-data.tar.gz -C .
           ls -l /tmp/sanket-data.tar.gz
+
+      - name: Install the pinned serving model
+        if: inputs.use_serving_model
+        working-directory: backend
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # The box is killed at 512 MB, not throttled, so a model that is about to be
+        # pinned is measured on Linux before it is pinned - not after the site dies.
+        run: |
+          gh release download serving-model -p "sanket-model.tar.gz" -p "model.json" \
+            -D /tmp --clobber
+          python -m scripts.install_serving_model \
+            --bundle /tmp/sanket-model.tar.gz --manifest /tmp/model.json
 
       - name: Write the measurement harness
         run: |

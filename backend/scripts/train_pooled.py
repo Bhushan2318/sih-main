@@ -37,14 +37,29 @@ def _parse_years(spec: str) -> list:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--train-years", required=True, help="2016-2018, or 2016,2017,2018")
-    ap.add_argument("--test-year", type=int, required=True)
+    ap.add_argument("--train-years", help="2016-2018, or 2016,2017,2018")
+    ap.add_argument("--test-year", type=int)
+    ap.add_argument("--finalize", metavar="RUN_ID",
+                    help="do not train: write the SHAP summary and manifest entries a "
+                         "finished pooled run needs before it can be served, and exit")
     ap.add_argument("--cache-dir", type=Path, default=BACKEND_DIR / "data" / "_pooled_cache")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--fit-mode", choices=["sample", "staged"], default="sample",
                     help="sample: regressors fit on MAX_FIT_CYCLES cycles; staged: on every "
                          "training cycle, boosted chunk by chunk")
     args = ap.parse_args()
+
+    if args.finalize:
+        # Makes an already-trained run servable; trains nothing, so the retrain guard
+        # does not apply. See pooled_training.finalize_for_serving.
+        from app.ml.pooled_training import finalize_for_serving
+
+        print(json.dumps(finalize_for_serving(args.finalize, args.cache_dir),
+                         indent=2, default=str))
+        return 0
+
+    if not args.train_years or args.test_year is None:
+        ap.error("--train-years and --test-year are required unless --finalize is given")
 
     from app.config import settings
     if not settings.allow_local_retrain:
