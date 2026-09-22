@@ -943,3 +943,33 @@ here rather than discovered live.
   fits no jump climatology, so the column is entirely NaN in every cached year: the models
   never learned from it, and serving leaves it missing too, which is consistent but means
   one C1 feature is dead weight in this family.
+- **A model can pass the promotion gate and still serve one number for the whole country.**
+  `run_20260910T064804Z` held out at ROC-AUC 0.8411 and Brier 0.1656, with its held-out
+  probabilities spread evenly over the five calibration bins (11.3 / 23.2 / 16.5 / 20.9 /
+  28.1 per cent). It was promoted on those numbers and then served 642 of 666 districts in
+  the bust band, median served probability 0.977, 46.2% of events above 0.99. Both facts
+  are true at once because ROC-AUC is rank-based: it is invariant under any monotone
+  transform of the scores, so crushing every probability toward 1 leaves it untouched. The
+  held-out histogram missed it too, because the held-out rows were the 34 districts that
+  had observations when the model was trained, scored against the observation set that
+  existed then. The cause was not code drift - `git diff` on the feature module since the
+  training commit is 386 insertions and zero deletions - but that the store's observation
+  side was replaced underneath the model: it was fitted against 34-district city-point
+  ERA5 and is now asked to score 666-district ERA5-CDS. The data it learned from no longer
+  exists. `app/ml/serving_sanity.py` now scores a real cycle from the store after the
+  held-out gate has said yes, and refuses a run whose bust band swallows more than 60% of
+  events, whose probabilities pin against either rail for more than 10%, or whose
+  interquartile range collapses below 0.02. Note the two criteria that do **not** work and
+  should not be reintroduced: "too much of the map in one band" and "interquartile range
+  too narrow" both refuse the healthy 17-year model, which serves 90.4% in the `low` band
+  at an IQR of 0.119 - tighter than one of the broken runs. A quiet day is genuinely
+  quiet; what distinguishes damage is which rail the mass is pinned against.
+- **The deployed bundle scores 36 districts; the store can score 666.** The live map is
+  limited by which observations are packaged, not by the model or by CDS. On the training
+  machine the canonical store holds full ERA5-CDS district observations - 666 regions x 8
+  variables per day, exactly one row per (region, variable, date), `verification_status`
+  'final' - for both 2017 and 2018, and the source parquet for all twenty years 2000-2019
+  is present at 243,090 rows (666 x 365) and ~19.7 MB per year. Scoring
+  `run_20260922T043925Z` against that store returns 6,660 events, 666 districts across all
+  ten lead days. Until those observations reach the deploy bundle the site shows a real but
+  very sparse map, which reads as a coverage failure and is not one.

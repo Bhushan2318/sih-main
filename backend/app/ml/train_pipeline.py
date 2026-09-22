@@ -24,6 +24,7 @@ from app.ml import classifier as clf_mod
 from app.ml import explain as explain_mod
 from app.ml import regressors as reg_mod
 from app.ml import registry
+from app.ml import serving_sanity
 from app.ml.thresholds import (
     Thresholds,
     compute_error_thresholds,
@@ -480,6 +481,21 @@ def full_retrain(triggered_by_batch_id: str | None = None, make_current: bool = 
         report.seconds = time.time() - t0
         if make_current:
             promote, why = _promotion_decision({"classifier": report.classifier_metrics})
+            if promote:
+                # Held-out metrics have now said yes. They are not sufficient on their own:
+                # ROC-AUC is rank-based, so a model whose probabilities have collapsed onto
+                # one value scores exactly as well as one that has not, and
+                # run_20260910T064804Z was promoted on a held-out 0.8411 and then served
+                # 642 of 666 districts in the bust band. The last question is therefore not
+                # about the test set but about the store: score a real cycle and look at
+                # what comes out. See app/ml/serving_sanity.py.
+                # Local import: training has no other reason to hold the serving stack.
+                from app.ml import inference as inference_mod
+
+                serves, serving_why = serving_sanity.check_served_model(
+                    inference_mod.load_model_state(run_id))
+                if not serves:
+                    promote, why = False, f"{serving_why} (held-out said: {why})"
             report.promotion_note = why
             if promote:
                 registry.set_current(run_id)
