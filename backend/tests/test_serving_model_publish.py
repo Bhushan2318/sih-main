@@ -13,6 +13,7 @@ under test is the refusal logic, not the meteorology.
 from __future__ import annotations
 
 import json
+import subprocess
 import tarfile
 
 import pytest
@@ -125,3 +126,21 @@ def test_the_gate_question_leaves_this_checkouts_registry_pointing_where_it_was(
     root, _ = _live_root(tmp_path, 0.80)
     pub.gate_decision({"classifier": {"test": {"roc_auc": 0.9}}}, root, "run_live")
     assert (registry.MODEL_DIR, registry.CURRENT_JSON) == (before, before_json)
+
+
+def test_the_serving_check_runs_without_a_gpu(tmp_path, monkeypatch):
+    """The box it stands in for has none, and a training run may be using the one here.
+
+    A pooled model is trained with device="cuda", which XGBoost records in the saved
+    model, so a check that ran on a GPU would exercise a path Render never takes.
+    """
+    seen = {}
+
+    def fake_run(cmd, **kw):
+        seen.update(kw["env"])
+        return subprocess.CompletedProcess(cmd, 0, stdout='{"ok": true}\n', stderr="")
+
+    monkeypatch.setattr(pub.subprocess, "run", fake_run)
+    src = _run_dir(tmp_path / "src")
+    assert pub.serving_check(tmp_path / "live", src) == {"ok": True}
+    assert seen["CUDA_VISIBLE_DEVICES"] == ""

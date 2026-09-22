@@ -839,6 +839,18 @@ here rather than discovered live.
   at all. `finalize_for_serving` writes them, rebuilding the validation events from the
   caches in batches and refusing unless they reproduce the run's saved validation ROC-AUC.
   It now runs at the end of every pooled run, and `--finalize RUN_ID` backfills one.
+- **The explanation summary grouped by index label, not by row.** `explain_model` built its
+  contribution frame on the caller's index and then looked each group up by label. Every
+  caller until now handed it a frame with unique labels, so it was right by luck; the
+  finalize path builds each regressor's sample one batch of forecast dates at a time, and
+  each batch carries its own `0..n` index, so the labels repeat. A label lookup then pulls
+  in every row sharing the label and each district's mean drifts toward the national one -
+  in a two-district reproduction with true means 0 and 10, both came back 5.0. Nothing
+  raises and the panel still renders, which is why this is written down rather than left as
+  obvious. Grouping is positional now, and a test asserts a repeated-index frame gives the
+  same answer as the same rows with unique labels. Models served before 2026-09-22 are
+  unaffected - their explanations were built in one frame, and the live panel still returns
+  different drivers per district.
 - **A model reloaded from the registry lost its categorical flag.** XGBoost's JSON
   round-trip does not restore the sklearn wrapper's `enable_categorical`, so SHAP refused
   a reloaded model ("Invalid columns: season: cat") and silently degraded to feature

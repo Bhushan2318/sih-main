@@ -116,3 +116,38 @@ def test_a_registry_loaded_model_keeps_its_categorical_flag(tmp_path, monkeypatc
     shap = pytest.importorskip("shap")
     vals = shap.TreeExplainer(loaded_clf).shap_values(X, check_additivity=False)
     assert np.asarray(vals).shape == X.shape
+
+
+def test_per_group_means_describe_their_own_group_when_the_index_repeats(monkeypatch):
+    """A frame concatenated from batches has repeated labels. The summary must not care.
+
+    finalize_for_serving builds each regressor's explanation sample one batch of forecast
+    dates at a time, and every batch is reset to its own 0..n-1 index. Grouping by label
+    rather than by position then averaged rows from other groups into each group - which
+    does not fail, it just makes every district's "what drove this prediction" identical
+    to the national mean. Caught 2026-09-22 while finalising the seventeen-year run.
+    """
+    # Each half is one region, all of whose contributions are the same number, so the
+    # right per-region answer is visible without computing anything.
+    def half(region, value):
+        return pd.DataFrame({"f1": np.full(50, value), "f2": np.full(50, value),
+                             "region_id": region, "lead_time_days": 1}, index=range(50))
+
+    repeated = pd.concat([half("R_A", 0.0), half("R_B", 10.0)])
+    assert repeated.index.has_duplicates, "this test is pointless without repeated labels"
+
+    # The recorded "SHAP values" are the feature values themselves, so a group's mean
+    # absolute contribution is just its own value.
+    monkeypatch.setattr(explain, "_shap_values", lambda model, X: X.to_numpy(float))
+
+    out = explain.explain_model(object(), repeated, ["f1", "f2"], [], model_name="m",
+                                max_rows_per_group=None)
+    per_region = out[(out["group_region_id"] != "__all__") & (out["feature"] == "f1")]
+    assert dict(zip(per_region["group_region_id"], per_region["mean_abs_shap"])) == \
+        {"R_A": 0.0, "R_B": 10.0}
+    # And the same rows with unique labels must give the same answer.
+    unique = repeated.reset_index(drop=True)
+    same = explain.explain_model(object(), unique, ["f1", "f2"], [], model_name="m",
+                                 max_rows_per_group=None)
+    pd.testing.assert_frame_equal(out.sort_values(list(out.columns)).reset_index(drop=True),
+                                  same.sort_values(list(same.columns)).reset_index(drop=True))
