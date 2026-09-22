@@ -103,6 +103,13 @@ def serving_check(live_root: Path, run_dir: Path) -> dict:
         "DB_PATH": str(live_root / "metadata.db"),
         "LIVE_INGEST_ENABLED": "false",
         "WARM_CACHES_ON_STARTUP": "false",
+        # The serving box has no GPU, so neither may this check. A pooled model is trained
+        # with device="cuda" and XGBoost keeps that in the saved JSON, so checking it on a
+        # machine that has a GPU would exercise a path the 512 MB box never takes and hide
+        # whatever it does instead. It also keeps the check off a GPU a training run may be
+        # using: contention there cost a variable a restart on 2026-09-22, when a
+        # concurrent finalize left too little VRAM for the trainer to allocate.
+        "CUDA_VISIBLE_DEVICES": "",
     }
     # A subprocess, because this process has already imported app.config with different
     # paths, and settings are read once at import.
