@@ -66,13 +66,30 @@ that two districts have a common border and draws slivers between them. Hence
         -simplify percentage=12% keep-shapes planar \
         -clean \
         -rename-layers districts \
-        -o format=topojson frontend/src/assets/geo/india_districts.topojson
+        -o format=topojson /tmp/districts_simplified.topojson
 
 666 districts land at 374 KB (111 KB gzipped) - smaller than the 36-state file it sits
 beside, which was never simplified. ``-clean`` matters: it drops 421 sliver polygons left
 between neighbours, and was checked to keep all 666 districts with no empty geometry.
 ``percentage=25%`` is not better - it leaves *more* unrepaired self-intersections (526
 against 288), because those come from the source boundaries rather than from simplifying.
+
+**That is not the finished file.** ``keep-shapes`` keeps one ring per *feature*, not per
+part, so every district made of several pieces keeps its largest and loses the rest - 700
+rings across 64 districts. Checking that all 666 districts survive, as the paragraph above
+does, cannot see this: the feature is still there, with pieces missing from inside it.
+Lakshadweep is nothing but small islands, so it lost 23 of 24 and vanished from the map
+altogether. Restore them as the last step:
+
+    npx mapshaper@0.6 /tmp/districts_simplified.topojson -o format=geojson /tmp/base.geojson
+    python backend/scripts/restore_island_rings.py \
+        /tmp/base.geojson backend/data/geo/india_districts.geojson /tmp/merged.geojson
+    npx mapshaper@0.6 /tmp/merged.geojson -rename-layers districts \
+        -o format=topojson frontend/src/assets/geo/india_districts.topojson
+
+That restores 550 rings and costs 383 KB -> 415 KB (114 KB -> 126 KB gzipped), leaving
+every pre-existing vertex within 45 m - below the quantisation step. Simplifying more
+gently is not an alternative; see ``restore_island_rings.py`` for the measurements.
 """
 from __future__ import annotations
 

@@ -1,6 +1,9 @@
 import { useState } from "react";
 import { useRegionDetail } from "../../hooks/useDashboardData";
+import { variableLabel } from "../../lib/displayNames";
 import { EmptyState, ErrorState, LoadingState, RiskBadge } from "../common/States";
+import { CopyLinkButton } from "../common/CopyLinkButton";
+import { retryingHint } from "../../lib/retryHint";
 import { BustProbabilityCurve } from "./BustProbabilityCurve";
 import { ShapFactorsList } from "./ShapFactorsList";
 import { VariableTrajectoryChart } from "./VariableTrajectoryChart";
@@ -14,7 +17,7 @@ export function RegionDetailPanel({
   onClose: () => void;
   riskCuts?: { medium: number; high: number };
 }) {
-  const { data, isLoading, error } = useRegionDetail(regionId);
+  const { data, isLoading, error, failureCount } = useRegionDetail(regionId);
   const [activeVariable, setActiveVariable] = useState<string | null>(null);
 
   if (!regionId) {
@@ -24,7 +27,7 @@ export function RegionDetailPanel({
       </aside>
     );
   }
-  if (isLoading) return <aside className="panel"><LoadingState label="Loading region…" /></aside>;
+  if (isLoading) return <aside className="panel"><LoadingState label="Loading region…" hint={retryingHint(failureCount)} /></aside>;
   if (error) return <aside className="panel"><ErrorState error={error} /></aside>;
   if (!data) return null;
 
@@ -51,7 +54,12 @@ export function RegionDetailPanel({
             {data.init_date ? ` · cycle ${data.init_date}` : ""}
           </p>
         </div>
-        <button type="button" className="btn btn--ghost" onClick={onClose} aria-label="Close detail panel">×</button>
+        <div className="panel__actions">
+          {/* The URL carries this district and the lead day, so the panel is the one
+            * place a shareable link is genuinely worth offering. */}
+          <CopyLinkButton />
+          <button type="button" className="btn btn--ghost" onClick={onClose} aria-label="Close detail panel">×</button>
+        </div>
       </header>
 
       {data.message ? <p className="muted">{data.message}</p> : null}
@@ -67,7 +75,7 @@ export function RegionDetailPanel({
             </div>
           </div>
           {worst.dominant_variable ? (
-            <p className="muted small">Mostly driven by: {worst.dominant_variable.replace(/_/g, " ")}</p>
+            <p className="muted small">Mostly driven by: {variableLabel(worst.dominant_variable).toLowerCase()}</p>
           ) : null}
         </section>
       ) : null}
@@ -89,8 +97,9 @@ export function RegionDetailPanel({
                   aria-selected={current?.variable === v.variable}
                   className={current?.variable === v.variable ? "tab tab--active" : "tab"}
                   onClick={() => setActiveVariable(v.variable)}
+                  title={v.variable}
                 >
-                  {v.variable}
+                  {variableLabel(v.variable)}
                 </button>
               ))}
             </div>

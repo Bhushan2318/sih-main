@@ -1,12 +1,15 @@
+import { API_BASE } from "../../api/client";
 import { useModelStatus } from "../../hooks/useDashboardData";
+import { variableLabel, variableUnit } from "../../lib/displayNames";
 import { formatMetric } from "../../lib/format";
 import { ErrorState, LoadingState } from "../common/States";
+import { retryingHint } from "../../lib/retryHint";
 import { BaselineLadderTable } from "../model/BaselineLadderTable";
 
 export function AboutPage({ onReplay }: { onReplay: () => void }) {
-  const { data, isLoading, error } = useModelStatus();
+  const { data, isLoading, error, failureCount } = useModelStatus();
 
-  if (isLoading) return <main className="page page--wide"><LoadingState label="Loading…" /></main>;
+  if (isLoading) return <main className="page page--wide"><LoadingState label="Loading…" hint={retryingHint(failureCount)} /></main>;
   if (error) return <main className="page page--wide"><ErrorState error={error} /></main>;
   if (!data) return null;
 
@@ -62,9 +65,14 @@ export function AboutPage({ onReplay }: { onReplay: () => void }) {
               data only. Each variable therefore has its own threshold, in its own units:
             </p>
             <ul className="taglist">
-              {Object.entries(thr).map(([v, t]) => (
-                <li key={v} className="tag">{v} ≥ {formatMetric(t, 2)}</li>
-              ))}
+              {Object.entries(thr).map(([v, t]) => {
+                const unit = variableUnit(v);
+                return (
+                  <li key={v} className="tag" title={v}>
+                    {variableLabel(v)} ≥ {formatMetric(t, 2)}{unit ? ` ${unit}` : ""}
+                  </li>
+                );
+              })}
             </ul>
           </section>
 
@@ -212,6 +220,42 @@ export function AboutPage({ onReplay }: { onReplay: () => void }) {
             otherwise silently halve the quantity that drives most busts. Total hosting
             cost: nothing.
           </p>
+        </section>
+
+        {/* The API has been public and documented since the first deploy, and nothing on
+          * the site said so. For a problem statement set by a forecasting centre, "you
+          * could integrate with this" is a different claim from "look at this dashboard",
+          * and it costs one link to make. */}
+        <section className="card">
+          <header className="card__head"><h3>Use it as a service, not just a page</h3></header>
+          <p className="muted small">
+            Every number on this site is read from a public, documented HTTP API — the same
+            one this page calls. There is no private back channel and no figure baked into
+            the frontend. <b>17 endpoints</b>, schema-checked with Pydantic and described by
+            an auto-generated OpenAPI document, so a forecast desk could pull bust risk
+            straight into its own tooling.
+          </p>
+          <ul className="notes">
+            <li>
+              <b>Interactive docs</b> — <a href={`${API_BASE}/docs`} target="_blank" rel="noopener noreferrer">/docs</a>{" "}
+              (Swagger UI, every endpoint callable from the browser), and the raw schema at{" "}
+              <a href={`${API_BASE}/openapi.json`} target="_blank" rel="noopener noreferrer">/openapi.json</a>.
+            </li>
+            <li>
+              <b>The ones worth starting with</b> —{" "}
+              <a className="mono" href={`${API_BASE}/api/regions/all`} target="_blank" rel="noopener noreferrer">/api/regions/all</a>{" "}
+              for every district at every lead day,{" "}
+              <a className="mono" href={`${API_BASE}/api/alerts`} target="_blank" rel="noopener noreferrer">/api/alerts</a>{" "}
+              for what is above the watch level right now, and{" "}
+              <a className="mono" href={`${API_BASE}/api/model/status`} target="_blank" rel="noopener noreferrer">/api/model/status</a>{" "}
+              for the scores on this page, straight from the served model.
+            </li>
+            <li>
+              <b>Fair warning</b> — this is a free-tier box that sleeps after 15 minutes
+              idle, so a first call can take 30–50 seconds to wake it. That is the cost of
+              the $0 hosting, not a fault.
+            </li>
+          </ul>
         </section>
 
         <section className="card">

@@ -12,6 +12,17 @@ here rather than discovered live.
 - **The opening screen is one viewport on desktop only.** On phones the KPI strip, the
   cue row and the ticker sit below the fold. The page scrolls and what is visible is
   composed; only the single-screen effect is lost.
+- **Installable, but not offline.** There is a web app manifest, so the site can be added
+  to a phone's home screen and opens standalone. There is deliberately **no service
+  worker**: caching the app shell is what strands a visitor on a stale build, and the
+  recovery for someone already holding a bad one is poor. That is not a thing to ship
+  unattended in the days before a deadline. Anyone who opens it without a connection gets
+  the browser's offline page, not a cached last forecast.
+- **The app icon is 180×180, not the 512×512 a manifest wants.** The largest square source
+  in the repo is `apple-touch-icon.png`; there is no vector original. Android will scale
+  it, and on a splash screen that will be visibly soft. Upscaling it to 512 and declaring
+  it as such would only move the blur somewhere less honest — this needs a real source
+  file, not a resample.
 - **Replay offers the 10 most recent cycles**, not every cycle in the store
   (`replay_service._MAX_CYCLES`). Each candidate costs one scoring pass on first call.
 - **Feature and variable names render raw, in snake_case.** The SHAP panel lists
@@ -363,6 +374,53 @@ here rather than discovered live.
   re-measured end to end. Found 2026-09-18.
 
 ## Geography
+
+- **Surface pressure error is dominated by elevation, not by forecast difficulty.**
+  Median absolute pressure error per district on the held-out split of
+  `run_20260910T064804Z`, worst first: Leh **5.32 hPa**, Srinagar 2.56, East Sikkim 1.90,
+  Shimla 1.83, Papum Pare 1.77 — against an all-district median of **0.555**. The best are
+  Jaipur 0.45, Lakshadweep 0.48, Hyderabad 0.49. That ordering is elevation, not weather:
+  Leh sits at ~3,500 m and runs about **10× the typical district**.
+
+  So a "pressure bust" at a high-altitude district is mostly a statement about the station,
+  and the per-variable p90 threshold — computed **pooled across districts** — is too tight
+  there and too loose in the plains. The labels are still self-consistent, and this does
+  not invalidate the headline scores, but it does mean pressure contributes label noise
+  that is spatially structured rather than random.
+
+  Found while picking a case study for the deck: the rule-based pick returned Leh with a
+  19.26 hPa pressure error at 7× its threshold, which would have been presented as a
+  caught bust to a room of forecasters. `scripts/ppt_figures.py` now excludes
+  (district, variable) pairs whose own median error exceeds twice the all-district median.
+  **Not fixed in the model**: the real fix is either a per-district threshold or reducing
+  pressure to a common level before differencing, and both change the label definition, so
+  neither is a thing to do days before a deadline.
+
+- **Simplification silently deletes island districts, and the check that was meant to
+  catch it cannot.** The map's TopoJSON is built with `-simplify percentage=12%
+  keep-shapes`, and `keep-shapes` guarantees one ring per *feature*, not per part. Every
+  district made of several pieces therefore kept its largest and lost the rest: **700 rings
+  across 64 districts** (North & Middle Andaman 119 → 5, Kachchh 106 → 11). The pipeline's
+  own check — that all 666 districts survive — passes regardless, because the feature is
+  still present with pieces missing from inside it.
+
+  Lakshadweep is nothing but small islands, so it lost 23 of 24 and the union territory
+  was **absent from the map of India** in a way no automated check noticed. What remained
+  measured 0.64 × 1.23 units in a 620 × 680 viewBox — under one CSS pixel on a desktop,
+  a third of one on a phone — and its click target was the same size.
+
+  Fixed on both sides, and both halves were needed: `restore_island_rings.py` puts the
+  550 missing rings back after mapshaper (383 KB → 415 KB, every pre-existing vertex
+  within 45 m), and `IndiaChoroplethMap` draws a marker for any region whose projected
+  area falls under 30 square units. Geometry alone was not enough — restored at true
+  scale the islands are still sub-pixel, which is *why* the marker exists rather than
+  being a shortcut around the geometry.
+
+  Still open: **10 of Lakshadweep's 24 islands are degenerate at the shipped
+  quantisation** (0.0006°, against islets of 0.003°), so they carry position but not
+  shape. Nothing on the map depends on their shape today; if a drill-down ever needs it,
+  that file needs finer quantisation, not gentler simplification — measured, 70%
+  simplification still keeps only 3 of the 24 islands at 860 KB.
 
 - **Display and aggregation boundary geometry are the same GADM 4.1 file now**, not two
   separate ones — CLAUDE.md's note about them being reviewed separately predates the

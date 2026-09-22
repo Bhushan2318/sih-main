@@ -1,21 +1,58 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Alert, RiskBand } from "../../api/types";
 import { stamp } from "../../format";
 import { useAlerts } from "../../hooks/useDashboardData";
 import { EmptyState, ErrorState, LoadingState, RiskBadge } from "../common/States";
+import { retryingHint } from "../../lib/retryHint";
 import { bandLabel } from "../../theme";
+import { variableLabel } from "../../lib/displayNames";
+import { alertsToCsv, csvFilename } from "../../lib/alertsCsv";
 
 const LIMIT = 200;
+
+/**
+ * How many rows to show before asking. The request still fetches all 200 and the summary
+ * above still counts all 200 - this is only how much of the table is on screen at once.
+ *
+ * 200 rows measured 8,348px tall on a desktop and 9,123px on a phone, which is eleven
+ * screens of near-identical rows below a summary that has already said what they add up
+ * to. Nobody scrolls that, and on a bad forecast day every one of them is a real alert,
+ * so it is not a problem the next retrain removes.
+ */
+const PAGE = 25;
 
 export function AlertsPage({ onSelect, filter, onFilter }: {
   onSelect: (regionId: string, lead: number) => void;
   filter: RiskBand | undefined;
   onFilter: (b: RiskBand | undefined) => void;
 }) {
-  const { data, isLoading, error } = useAlerts(LIMIT, filter);
+  const { data, isLoading, error, failureCount } = useAlerts(LIMIT, filter);
   const alerts = data?.alerts;
+  const [shown, setShown] = useState(PAGE);
+
+  // Back to the top of the list whenever the filter changes, so switching to "watch"
+  // does not silently keep an expansion made while looking at "bust".
+  useEffect(() => setShown(PAGE), [filter]);
 
   const stats = useMemo(() => summarise(alerts), [alerts]);
+  const visible = alerts?.slice(0, shown) ?? [];
+  const remaining = (alerts?.length ?? 0) - visible.length;
+
+  /**
+   * Exports every alert fetched, not just the rows currently expanded on screen - "Show
+   * 25 more" is about reading, and someone asking for the file wants the whole list.
+   */
+  const downloadCsv = () => {
+    if (!alerts?.length) return;
+    const blob = new Blob([alertsToCsv(alerts)], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = csvFilename(data?.generated_at);
+    a.click();
+    // Freed on the next tick: revoking synchronously can cancel the download in Safari.
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+  };
 
   return (
     <main className="page page--wide">
@@ -28,6 +65,11 @@ export function AlertsPage({ onSelect, filter, onFilter }: {
           </p>
         </div>
         <div className="filters">
+          {alerts?.length ? (
+            <button type="button" className="chip" onClick={downloadCsv}>
+              Download CSV
+            </button>
+          ) : null}
           {(["high", "medium"] as RiskBand[]).map((b) => (
             <button
               key={b}
@@ -41,7 +83,7 @@ export function AlertsPage({ onSelect, filter, onFilter }: {
         </div>
       </header>
 
-      {isLoading ? <LoadingState label="Loading alerts…" /> : null}
+      {isLoading ? <LoadingState label="Loading alerts…" hint={retryingHint(failureCount)} /> : null}
       {error ? <ErrorState error={error} /> : null}
       {data && !data.model_trained ? <EmptyState title="No alerts yet" message={data.message} /> : null}
       {data?.model_trained && !alerts?.length ? (
@@ -59,7 +101,7 @@ export function AlertsPage({ onSelect, filter, onFilter }: {
             note={<>across <b>{stats.regions}</b> distinct regions</>} />
           <Stat cap="blue" label="Peak bust risk" value={`${(stats.peak.bust_probability * 100).toFixed(0)}%`}
             note={<><b>{stats.peak.region_name ?? stats.peak.region_id}</b> · D{stats.peak.lead_time_days}</>} />
-          <Stat cap="blue" label="Most common cause" value={stats.topDriver?.[0] ?? "—"}
+          <Stat cap="blue" label="Most common cause" value={variableLabel(stats.topDriver?.[0]) || "—"}
             note={stats.topDriver
               ? <>the main cause in <b>{stats.topDriver[1]}</b> of {stats.total}</>
               : <>no dominant variable recorded</>} />
@@ -74,14 +116,16 @@ export function AlertsPage({ onSelect, filter, onFilter }: {
                 <tr>
                   <th>Region</th>
                   <th className="dtable__num">Lead</th>
-                  <th>Valid date</th>
+                  {/* Dropped on a phone: the date is lead + cycle, and the band is a
+                    * restatement of the risk column beside it. See .dtable__opt. */}
+                  <th className="dtable__opt">Valid date</th>
                   <th className="dtable__num">Bust risk</th>
-                  <th>Band</th>
+                  <th className="dtable__opt">Band</th>
                   <th>Main cause</th>
                 </tr>
               </thead>
               <tbody>
-                {alerts.map((a) => (
+                {visible.map((a) => (
                   <tr
                     key={a.alert_id}
                     className="dtable__row"
@@ -97,17 +141,30 @@ export function AlertsPage({ onSelect, filter, onFilter }: {
                   >
                     <td className="dtable__strong">{a.region_name ?? a.region_id}</td>
                     <td className="dtable__num mono">D{a.lead_time_days}</td>
-                    <td className="mono muted">{a.valid_date ?? "—"}</td>
+                    <td className="dtable__opt mono muted">{a.valid_date ?? "—"}</td>
                     <td className="dtable__num mono dtable__strong">
                       {(a.bust_probability * 100).toFixed(0)}%
                     </td>
-                    <td><RiskBadge band={a.risk_band} /></td>
-                    <td className="mono muted">{a.dominant_variable ?? "—"}</td>
+                    <td className="dtable__opt"><RiskBadge band={a.risk_band} /></td>
+                    <td className="muted">{variableLabel(a.dominant_variable) || "—"}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
+          {remaining > 0 ? (
+            <div className="tablemore">
+              <button type="button" className="chip" onClick={() => setShown((n) => n + PAGE)}>
+                Show {Math.min(PAGE, remaining)} more
+              </button>
+              <button type="button" className="chip" onClick={() => setShown(alerts.length)}>
+                Show all {alerts.length}
+              </button>
+              <span className="muted small">
+                Showing <b>{visible.length}</b> of <b>{alerts.length}</b>, worst first
+              </span>
+            </div>
+          ) : null}
         </section>
       ) : null}
 

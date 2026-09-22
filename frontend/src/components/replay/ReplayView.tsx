@@ -58,7 +58,12 @@ export function ReplayView({ topology }: { topology: Topology | null }) {
   const chartableRegionIds = new Set(focusOptions.map((o) => o.region_id));
 
   if (replayQuery.isLoading || cyclesQuery.isLoading) {
-    return <LoadingState label="Scoring the historical cycle…" />;
+    return (
+      <LoadingState
+        label="Scoring the historical cycle…"
+        hint="Replay runs the model over all 666 districts for all ten lead days, on request rather than from a cache. The first one after an idle period takes a few seconds."
+      />
+    );
   }
   if (replayQuery.error) return <ErrorState error={replayQuery.error} />;
   if (replay && !replay.model_trained) {

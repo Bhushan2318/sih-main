@@ -147,6 +147,21 @@ def load_baselines(run_id: str) -> Optional[dict]:
         return None
 
 
+def load_misses(run_id: str) -> Optional[dict]:
+    """The worst held-out calls, written beside the model by scripts/run_baselines.py.
+
+    Same shape of contract as load_baselines: absent for any run trained before this
+    existed, so every caller must handle None rather than assume it.
+    """
+    path = run_dir(run_id) / "misses.json"
+    if not path.is_file():
+        return None
+    try:
+        return json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+
+
 def load_thresholds(run_id: str) -> Optional[Thresholds]:
     p = run_dir(run_id) / "thresholds.json"
     return Thresholds.from_json(p) if p.exists() else None
