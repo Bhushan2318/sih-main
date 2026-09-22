@@ -180,3 +180,22 @@ def test_run_job_subprocess_parses_a_no_grids_style_refusal(tmp_path, monkeypatc
     assert "status" in result
     assert (log_dir / "job_test2100_stdout.log").exists()
     assert (log_dir / "job_test2100_stderr.log").exists()
+
+
+def test_a_staged_job_is_not_skipped_because_the_sample_run_of_the_same_years_succeeded(
+        tmp_path, monkeypatch):
+    calls = []
+
+    def fake(job, cache_dir, log_dir):
+        calls.append(job.get("fit_mode", "sample"))
+        return {"status": "success", "run_id": "r"}
+
+    monkeypatch.setattr(orch, "_run_job_subprocess", fake)
+    monkeypatch.setattr("app.config.settings.allow_local_retrain", True)
+    out, log = tmp_path / "report.json", tmp_path / "log.txt"
+    job = {"train_years": [2000, 2001], "test_year": 2017}
+    orch.run_queue([job], tmp_path, out, log)
+    orch.run_queue([job, {**job, "fit_mode": "staged"}], tmp_path, out, log)
+    assert calls == ["sample", "staged"]
+    report = json.loads(out.read_text())
+    assert [r["fit_mode"] for r in report] == ["sample", "staged"]

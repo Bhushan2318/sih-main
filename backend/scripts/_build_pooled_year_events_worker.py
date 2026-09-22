@@ -37,7 +37,6 @@ and read by nothing else afterward, so it is passed with `copy_input=False`.
 from __future__ import annotations
 
 import argparse
-import gc
 import pickle
 import sys
 import traceback
@@ -59,45 +58,14 @@ def main() -> int:
 
     result = {"event_frame": None, "error": None}
     try:
-        import numpy as np
-        import pandas as pd
+        from app.ml.pooled_training import year_event_frame
 
-        from app.features import pivot as pv
-        from app.ml import regressors as reg_mod
-        from app.ml.pooled_training import attach_hbf_column
-
-        columns = job["columns"]
-        df = pd.read_parquet(job["cached_path"], columns=sorted(columns) if columns else None)
-        df = df[df["init_date"].isin(job["train_cycles"])]
-        if df.empty:
-            result["event_frame"] = pd.DataFrame()
-        else:
-            hbf = job["hbf"]
-            df = attach_hbf_column(df, hbf)
-            df["_fold"] = df["init_date"].map(job["fold_of"])
-            oof = pd.Series(np.nan, index=df.index, dtype=float)
-            fold_models = job["fold_models"]
-            for variable in sorted(df["variable"].unique()):
-                models_for_var = fold_models.get(variable, {})
-                if not models_for_var:
-                    continue
-                vmask = df["variable"] == variable
-                for fold, (model, cols) in models_for_var.items():
-                    fmask = vmask & (df["_fold"] == fold)
-                    if not fmask.any():
-                        continue
-                    oof.loc[fmask] = model.predict(reg_mod._prep_X(df.loc[fmask], cols))
-
-            # fold_models (real Booster objects, up to 24 of them) and job (which holds
-            # them, plus p90_error/bust_threshold we've already pulled out below) are
-            # done being useful the moment oof is filled in - freed here, not left
-            # resident through build_event_frame's own big allocation.
-            p90_error, bust_threshold = job["p90_error"], job["bust_threshold"]
-            del fold_models, job
-            gc.collect()
-
-            result["event_frame"] = pv.build_event_frame(
-                df, oof, p90_error, bust_threshold, hbf, copy_input=False)
+        # One batch of forecast dates at a time - see year_event_frame. Real crash
+        # 2026-09-22: the whole 76.5M-row year in pandas peaked at 41.6 GB of commit and
+        # a 1.14 GiB allocation failed on both attempts.
+        result["event_frame"] = year_event_frame(
+            job["cached_path"], job["train_cycles"], job["hbf"], job["p90_error"],
+            job["bust_threshold"], job["fold_models"], job["fold_of"], job["columns"])
     except Exception:
         result["error"] = traceback.format_exc()
 

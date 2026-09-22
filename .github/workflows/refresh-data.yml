@@ -48,6 +48,10 @@ on:
         description: "Reforecast years to train on, added to a throwaway copy of the store"
         type: string
         default: "2000-2019"
+      ignore_pinned_model:
+        description: "Train here even if a serving-model release is published"
+        type: boolean
+        default: false
 
 # Writing the release asset is the only write this needs.
 permissions:
@@ -112,6 +116,42 @@ jobs:
             echo "no previous asset (first run) - starting from an empty store"
           fi
 
+      - name: Use the pinned serving model, if one is published
+        id: pin
+        working-directory: backend
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IGNORE: ${{ inputs.ignore_pinned_model }}
+        # A model trained on the seventeen-year reforecast pool cannot be produced here:
+        # it needs a GPU, ~50 GB of memory headroom and more wall clock than a job may
+        # take. So it is trained on the workstation, published as the `serving-model`
+        # release (scripts/publish_serving_model.py, which runs the same promotion gate
+        # this pipeline uses), and installed here.
+        #
+        # The release either exists or it does not, so this needs no second switch to
+        # stay consistent: deleting it returns the pipeline to training its own model,
+        # and `ignore_pinned_model` does the same for one run.
+        #
+        # A pinned model that fails to install fails the run on purpose. A corrupt or
+        # incomplete model must not be papered over by quietly training a different one.
+        run: |
+          if [ "$IGNORE" = "true" ]; then
+            echo "pinned=false" >> "$GITHUB_OUTPUT"
+            echo "ignore_pinned_model set - training here this run"
+            exit 0
+          fi
+          if gh release download serving-model -p "sanket-model.tar.gz" -p "model.json" \
+               -D /tmp --clobber 2>/dev/null; then
+            RUN_ID=$(python -m scripts.install_serving_model \
+              --bundle /tmp/sanket-model.tar.gz --manifest /tmp/model.json)
+            echo "pinned=true" >> "$GITHUB_OUTPUT"
+            echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+            echo "serving the pinned model $RUN_ID; this run will not train"
+          else
+            echo "pinned=false" >> "$GITHUB_OUTPUT"
+            echo "no serving-model release - training here, as before"
+          fi
+
       - name: Pull the cycle, verify, retrain
         working-directory: backend
         # Exit 2 means the cycle was refused as too incomplete to publish; the failure is
@@ -125,6 +165,7 @@ jobs:
             ${{ inputs.cycle && format('--cycle {0}', inputs.cycle) || '' }}
 
       - name: Train on the full archive, in a throwaway copy of the store
+        if: steps.pin.outputs.pinned != 'true'
         # One-off, skipped entirely unless `backfill_years` is set, so every scheduled
         # run is byte-for-byte the workflow it was before this existed.
         #
@@ -165,6 +206,7 @@ jobs:
           echo "serving store before=$BEFORE after=$(du -sh data/canonical | cut -f1)"
 
       - name: Prove the archive training did not touch the serving store
+        if: steps.pin.outputs.pinned != 'true'
         # The safety argument is that the box receives the store it already runs, plus
         # whatever this run's own cycle pull legitimately added - and nothing from the
         # archive. So the checksum brackets the archive step specifically: taken just
@@ -188,6 +230,7 @@ jobs:
           print(f'SHIPPING store: {len(d):,} rows, {pd.to_datetime(f.init_date).nunique()} cycles')"
 
       - name: Score the baseline ladder for this run
+        if: steps.pin.outputs.pinned != 'true'
         # "ROC-AUC 0.84" claims nothing without "against what?". This scores climatology,
         # lead-day and ensemble-spread baselines on the EXACT rows the classifier was
         # scored on - the event frames the training step above just published - and writes
@@ -287,6 +330,7 @@ jobs:
             echo "| | |"
             echo "|---|---|"
             echo "| Model run | \`${{ steps.pack.outputs.run_id }}\` |"
+            echo "| Model source | ${{ steps.pin.outputs.pinned == 'true' && 'pinned serving-model release' || 'trained by this run' }} |"
             echo "| Asset size | ${{ steps.pack.outputs.size }} |"
             echo "| Deploy hook | ${{ steps.deploy.outputs.state }} |"
           } >> "$GITHUB_STEP_SUMMARY"
