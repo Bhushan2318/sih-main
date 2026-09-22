@@ -159,7 +159,13 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 }
 .scrollcue:hover { color: var(--ink); }
 
-.cuerow { display: flex; align-items: center; justify-content: center; gap: 20px; flex-wrap: wrap; }
+/* Column, not a row: with the scroll cue beside it the button's centre sat 82px left of
+ * the page's, and the row had no vertical padding at all - 43px tall around a 43px
+ * button - so it touched the KPI strip above and the ticker below. */
+.cuerow {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 12px; padding: 26px 1.3rem 20px;
+}
 /* The one thing on the opening screen worth clicking: replaying a real bust is the whole
  * argument, and it used to sit here as 9.5px uppercase mono in the same ink as the body
  * text, reading as a caption rather than an invitation. Bigger, in the accent colour, and
@@ -168,16 +174,16 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 .cuerow__primary {
   display: inline-flex; align-items: center; gap: 9px;
   padding: 13px 26px; border: 0; border-radius: 999px;
-  background: var(--accent); color: #fff; cursor: pointer;
+  background: var(--bust); color: #fff; cursor: pointer;
   font-family: var(--f-b); font-size: 14px; font-weight: 700;
   letter-spacing: 0.01em; text-transform: none;
-  box-shadow: 0 12px 26px -10px rgba(43, 78, 255, 0.55);
+  box-shadow: 0 12px 26px -10px rgba(245, 37, 74, 0.5);
   transition: transform 0.18s cubic-bezier(0.2, 0.7, 0.25, 1), box-shadow 0.18s, background 0.18s;
 }
 .cuerow__primary:hover {
-  background: var(--blue-2);
+  background: #e01840;
   transform: translateY(-2px);
-  box-shadow: 0 18px 34px -10px rgba(43, 78, 255, 0.6);
+  box-shadow: 0 18px 34px -10px rgba(245, 37, 74, 0.55);
 }
 .cuerow__primary:active { transform: translateY(0); }
 @media (prefers-reduced-motion: reduce) {
@@ -188,7 +194,7 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 @media (max-width: 400px) {
   .cuerow__primary { font-size: 13px; padding: 12px 18px; }
 }
-.cuerow__primary:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.cuerow__primary:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
 .scrollcue svg { animation: sk-bob 2.6s ease-in-out infinite; }
 @keyframes sk-bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(4px); } }
 
@@ -458,7 +464,15 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 @media (max-width: 1100px), (max-height: 700px) {
   .app__body--ops { height: auto; grid-template-columns: minmax(0, 1fr) 380px; }
   .app__body--ops .map-wrap { flex: none; align-self: stretch; aspect-ratio: auto; }
-  .app__body--ops .map { height: auto; }
+
+  /* The map is `flex: 1 1 0` inside .map-wrap, which above this breakpoint is stretched
+     to a row height set by the grid. Below it the row is `height: auto` and the wrap's
+     own `aspect-ratio` is dropped, so nothing in the chain had an intrinsic height:
+     `flex-basis: 0` resolved against an auto-height parent and the SVG collapsed to
+     exactly 0px. Measured across widths, the national map - the centrepiece of the first
+     screen - was invisible at every viewport from 1099px down, and at any width when the
+     window is under 700px tall. Give it back the ratio the wrap used to supply. */
+  .app__body--ops .map { flex: none; height: auto; aspect-ratio: 620 / 680; width: 100%; }
 
   .app__body--ops > .panel {
     height: auto; overflow-y: visible; max-height: none; position: static;
@@ -1107,3 +1121,96 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
   .evcard__answer b { font-size: 22px; }
   .evcard__chart, .corpcard__chart { height: 200px; }
 }
+
+/* ---- F6: where the model was wrong ------------------------------------------------ */
+.misses__switch { display: flex; gap: 6px; margin: 2px 0 10px; }
+.misses__tab {
+  border: 1px solid var(--rule); background: var(--card); color: var(--ink-2);
+  border-radius: 999px; padding: 5px 12px; cursor: pointer;
+  font-family: var(--f-b); font-size: 12px; font-weight: 600;
+}
+.misses__tab.is-on { background: var(--ink); border-color: var(--ink); color: #fff; }
+
+.misses__list { list-style: none; margin: 10px 0 8px; padding: 0; }
+.missrow { border-top: 1px solid var(--rule-2); padding: 9px 0; }
+.missrow:first-child { border-top: 0; }
+.missrow__head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.missrow__body { margin: 3px 0 0; font-size: 12.5px; color: var(--ink-2); line-height: 1.5; }
+.missrow__low { color: var(--bust); }
+.missrow__high { color: var(--watch); }
+
+/* ---- Phone layout ------------------------------------------------------------------
+ *
+ * Everything above was laid out and checked at desktop width. Measured at 390x844 (the
+ * iPhone viewport a judge is most likely to open the link on), no page scrolls
+ * horizontally and every table sits in a .tablewrap that genuinely scrolls - so nothing
+ * was unreachable. What was wrong is narrower and worse: values were being *silently
+ * truncated to an ellipsis*, which reads as a real value rather than as missing text.
+ *
+ * "temperat…" in a KPI, "3,903,6…" for the pair count, and on Alerts a table whose only
+ * on-screen column was the region name - the risk, the lead day and the cause all sat off
+ * the right edge behind a scroll nobody is told about.
+ *
+ * Scoped to a media query and additive on purpose: the desktop layout is the one that has
+ * been reviewed in front of people, and nothing here may move it. */
+
+.state__hint {
+  margin: 0.6rem auto 0; max-width: 46ch; font-size: 12.5px;
+  line-height: 1.5; color: var(--ink-3);
+}
+/* The pulse bar is a ::after on the container, so it lands under the hint already. */
+
+/* Columns a phone drops. Not display:none at width alone - the cell is removed from the
+ * table for everyone at this width, header and body together, so the column count stays
+ * consistent and assistive tech is not told about a column it cannot reach. */
+@media (max-width: 700px) {
+  .dtable__opt { display: none; }
+
+  /* A KPI value is a headline number, but two of them are words ("Temperature",
+   * "Puducherry"). Let those wrap instead of clipping; the numbers are short enough that
+   * wrapping never triggers for them. */
+  .kpi__value {
+    white-space: normal; overflow: visible; text-overflow: clip;
+    overflow-wrap: break-word; font-size: clamp(21px, 5.9vw, 30px);
+  }
+
+  /* auto-fit at a 3.5rem minimum put four columns on a 322px card, which is how a
+   * seven-figure pair count became "3,903,6…". Two columns fit the real values. */
+  .metrics--compact { grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr)); }
+  .metrics dd { white-space: normal; overflow-wrap: break-word; }
+
+  /* Give the four surviving Alerts columns room, and let a long district name wrap
+   * rather than forcing the table wider than the screen. */
+  .dtable { font-size: 12px; }
+  .dtable th, .dtable td { padding: 8px 6px; }
+  /* A header like "skill vs climatology" is nowrap by default, so the header alone set
+   * the column width and pushed the numbers under it off-screen. */
+  .dtable th { white-space: normal; }
+  .dtable--fill th:not(:last-child), .dtable--fill td:not(:last-child) { white-space: normal; }
+  .dtable--fill th:last-child, .dtable--fill td:last-child { width: auto; }
+
+  /* SHAP is the feature this project is built around, and its rows now carry English
+   * phrases rather than column names - which do not fit a 1fr column beside two fixed
+   * ones. Put the name on its own line and the bar under it. */
+  .factors li { grid-template-columns: 1fr 52px; gap: 0.2rem 0.5rem; }
+  .factors__name { grid-column: 1 / -1; white-space: normal; overflow: visible; }
+
+  /* 27px tall was under any reasonable touch target; 44px is the iOS guideline. */
+  .viewtab { padding: 12px 10px; }
+  .brand { min-height: 44px; }
+}
+
+/* Alerts: the row budget. The table shows PAGE rows and these expand it. */
+.tablemore {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px;
+  padding: 12px 0.25rem 4px; border-top: 1px solid var(--rule-2);
+}
+.tablemore .muted { margin-left: auto; }
+@media (max-width: 700px) { .tablemore .muted { margin-left: 0; width: 100%; } }
+
+/* Present to a screen reader, absent to everyone else. */
+.visually-hidden {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
+}
+.panel__actions { display: flex; align-items: center; gap: 8px; flex: none; }

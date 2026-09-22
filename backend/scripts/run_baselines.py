@@ -38,6 +38,7 @@ sys.path.insert(0, str(BACKEND_DIR))
 from app.ml import baselines as bl               # noqa: E402
 from app.ml import classifier as clf_mod         # noqa: E402
 from app.ml import verification as ver           # noqa: E402
+from app.ml import misses as miss_mod          # noqa: E402
 
 EVAL_DIR = BACKEND_DIR / "data" / "analysis" / "eval_events"
 RESULTS_MD = BACKEND_DIR.parent / "docs" / "results.md"
@@ -317,6 +318,34 @@ def main() -> int:
             (run_dir / "baselines.json").write_text(json.dumps(payload, indent=2),
                                                     encoding="utf-8")
             print(f"wrote {run_dir / 'baselines.json'}")
+
+            # The worst held-out calls, beside the model rather than in this table: a
+            # panel that shows where the model failed needs cases, not a summary, and
+            # this script is already the one place that has the eval events and the
+            # run directory at the same time.
+            thr = registry.load_thresholds(run_id)
+            bust_thr = dict(getattr(thr, "bust_threshold", {}) or {})
+            names = {}
+            try:
+                from app.utils import india_districts as idist  # noqa: PLC0415
+                for rid in (set(test["region_id"]) if "region_id" in test else set()):
+                    d = idist.resolve_by_id(rid)
+                    if d is None:
+                        continue
+                    # Same "District, State" form the regions API uses, so the two agree.
+                    names[rid] = (f"{d.region_name}, {d.state_name}"
+                                  if d.state_name else d.region_name)
+            except Exception as exc:  # noqa: BLE001 - a name is a nicety, not the point
+                print(f"  (region names unavailable: {exc})", file=sys.stderr)
+            misses = miss_mod.worst_misses(ev, bust_thr, split="test", k=5,
+                                           region_names=names)
+            misses["run_id"] = run_id
+            misses["generated_at"] = datetime.now(timezone.utc).isoformat()
+            (run_dir / "misses.json").write_text(json.dumps(misses, indent=2),
+                                                 encoding="utf-8")
+            print(f"wrote {run_dir / 'misses.json'}  "
+                  f"({len(misses['missed_busts'])} missed, "
+                  f"{len(misses['false_alarms'])} false alarms)")
         else:
             print(f"run directory {run_dir} not found; skipped the run artifact",
                   file=sys.stderr)

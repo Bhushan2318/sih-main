@@ -1,21 +1,24 @@
 import type { ModelStatusResponse } from "../../api/types";
 import { stamp } from "../../format";
 import { useModelStatus } from "../../hooks/useDashboardData";
+import { variableLabel } from "../../lib/displayNames";
 import { useLiveStore } from "../../store/liveStore";
 import { ErrorState, LoadingState } from "../common/States";
+import { retryingHint } from "../../lib/retryHint";
 import { UploadPanel } from "../upload/UploadPanel";
 import { CorpReliabilityCard } from "./CorpReliabilityCard";
 import { EconomicValueCard } from "./EconomicValueCard";
+import { MissesCard } from "./MissesCard";
 import { PipelineLog } from "./PipelineLog";
 
 const UPLOAD_ENABLED = import.meta.env.VITE_ENABLE_UPLOAD !== "false";
 
 export function ModelPage() {
-  const { data, isLoading, error } = useModelStatus();
+  const { data, isLoading, error, failureCount } = useModelStatus();
   const connection = useLiveStore((s) => s.connectionStatus);
   const training = useLiveStore((s) => s.trainingInProgress);
 
-  if (isLoading) return <main className="page page--wide"><LoadingState label="Loading model status…" /></main>;
+  if (isLoading) return <main className="page page--wide"><LoadingState label="Loading model status…" hint={retryingHint(failureCount)} /></main>;
   if (error) return <main className="page page--wide"><ErrorState error={error} /></main>;
   if (!data) return null;
 
@@ -138,12 +141,14 @@ export function ModelPage() {
                 </p>
               </div>
               <ul className="taglist">
-                {data.modelled_variables.map((v) => <li key={v} className="tag">{v}</li>)}
+                {data.modelled_variables.map((v) => (
+                  <li key={v} className="tag" title={v}>{variableLabel(v)}</li>
+                ))}
               </ul>
               {Object.keys(data.skipped_variables).length ? (
                 <p className="muted small">
                   Not modelled (too few matched forecast–observation pairs):{" "}
-                  {Object.entries(data.skipped_variables).map(([v, why]) => `${v} (${why})`).join("; ")}
+                  {Object.entries(data.skipped_variables).map(([v, why]) => `${variableLabel(v)} (${why})`).join("; ")}
                 </p>
               ) : (
                 <p className="muted small">Every ingested variable is modelled.</p>
@@ -169,7 +174,7 @@ export function ModelPage() {
                   <tbody>
                     {Object.entries(data.thresholds?.bust_threshold ?? {}).map(([v, t]) => (
                       <tr key={v}>
-                        <td className="mono">{v}</td>
+                        <td className="mono" title={v}>{variableLabel(v)}</td>
                         <td className="dtable__num mono dtable__strong">{t.toFixed(2)}</td>
                         <td className="dtable__num mono muted">
                           {num(data.thresholds?.p90_error?.[v], 2)}
@@ -202,9 +207,12 @@ export function ModelPage() {
                       <th className="dtable__num">MAE</th>
                       <th className="dtable__num">Baseline MAE</th>
                       <th className="dtable__num">Skill</th>
-                      <th className="dtable__num">RMSE</th>
-                      <th className="dtable__num">R²</th>
-                      <th className="dtable__num">forecasts</th>
+                      {/* Dropped on a phone. Skill is the column this table exists to
+                        * show, and at 390px it was the one pushed off the right edge
+                        * behind a scroll with no affordance. See .dtable__opt. */}
+                      <th className="dtable__num dtable__opt">RMSE</th>
+                      <th className="dtable__num dtable__opt">R²</th>
+                      <th className="dtable__num dtable__opt">forecasts</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -212,15 +220,15 @@ export function ModelPage() {
                       const skill = skillScore(m.mae, m.baseline_mae);
                       return (
                         <tr key={v}>
-                          <td className="mono dtable__strong">{v}</td>
+                          <td className="mono dtable__strong" title={v}>{variableLabel(v)}</td>
                           <td className="dtable__num mono">{num(m.mae, 3)}</td>
                           <td className="dtable__num mono muted">{num(m.baseline_mae, 3)}</td>
                           <td className="dtable__num mono">
                             {skill == null ? "—" : <SkillCell skill={skill} />}
                           </td>
-                          <td className="dtable__num mono muted">{num(m.rmse, 3)}</td>
-                          <td className="dtable__num mono muted">{num(m.r2, 3)}</td>
-                          <td className="dtable__num mono muted">{m.n?.toLocaleString() ?? "—"}</td>
+                          <td className="dtable__num dtable__opt mono muted">{num(m.rmse, 3)}</td>
+                          <td className="dtable__num dtable__opt mono muted">{num(m.r2, 3)}</td>
+                          <td className="dtable__num dtable__opt mono muted">{m.n?.toLocaleString() ?? "—"}</td>
                         </tr>
                       );
                     })}
@@ -238,10 +246,15 @@ export function ModelPage() {
 
           {/* Workstream D's evidence, which had no screen until now: what the forecast is
             * worth to act on (F3) and whether its probabilities mean what they say (F4). */}
+          {/* The two charts share a row because they are the same shape of thing. The
+            * misses go full width underneath rather than stacked in one column: stacking
+            * them made that column 338px taller than the other, which read as a hole in
+            * the page, and a list of cases uses the width better than a chart would. */}
           <div className="page--split">
             <EconomicValueCard data={data} />
             <CorpReliabilityCard data={data} />
           </div>
+          <MissesCard data={data} />
 
           {UPLOAD_ENABLED ? <UploadPanel /> : null}
         </>
