@@ -18,6 +18,8 @@ archive year - it exercises the whole orchestration path, not the meteorology.
 """
 from __future__ import annotations
 
+import json
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -451,3 +453,660 @@ def test_pooled_stats_matches_the_frame_building_implementation(tmp_path):
     assert set(got_p90) == set(want_p90)
     for k in want_p90:
         assert got_p90[k] == pytest.approx(want_p90[k], rel=1e-6)
+
+
+def test_val_frame_worker_spills_by_variable_and_parent_reads_one(tmp_path):
+    """The parent must never allocate the validation frame: it needs to be lean when it
+    spawns a training worker that wants one ~9.19 GB allocation for seventeen years. With
+    the frame built in-parent it sat at 16.8 GB of 23.7 GB and all eight variables failed
+    that malloc (2026-09-21). Runs the real worker, so an interface mistake is caught."""
+    from app.ml import pooled_training as pt
+
+    rng = np.random.default_rng(5)
+    n = 240
+    cycles = pd.to_datetime(["2016-01-01", "2016-01-02", "2016-01-03"])
+    df = pd.DataFrame({
+        "init_date": rng.choice(cycles, n),
+        "valid_date": rng.choice(cycles, n),
+        "lead_time_days": rng.integers(1, 11, n),
+        "region_id": pd.Categorical(rng.choice(["IND.1", "IND.2"], n)),
+        "season": pd.Categorical(rng.choice(["DJF", "JJAS"], n)),
+        "variable": pd.Categorical(rng.choice(["temperature_c", "rainfall_mm"], n)),
+        "abs_error": rng.gamma(2, 2, n),
+        "forecast_value": rng.normal(size=n),
+        "observed_value": rng.normal(size=n),
+    })
+    path = tmp_path / "paired_2016.parquet"
+    df.to_parquet(path, index=False)
+
+    spill = tmp_path / "_va_by_variable"
+    hbf = {("IND.1", "DJF"): 0.25, ("IND.2", "JJAS"): 0.5}
+    res = pt._run_val_frame_subprocess({2016: path}, [2016], set(cycles),
+                                       set(df.columns), hbf, spill)
+
+    assert res.get("error") is None, res.get("error")
+    assert res["n_rows"] == n
+
+    one = pt._read_va_var(spill, "temperature_c")
+    assert not one.empty
+    assert set(one["variable"].unique()) == {"temperature_c"}
+    assert len(one) == int((df["variable"] == "temperature_c").sum())
+    assert one.index.name == "_va_row"
+    assert one.index.max() < n
+    assert "historical_bust_frequency_region_season" in one.columns
+    assert pt._read_va_var(spill, "not_a_variable").empty
+
+
+# --- every variable on the GPU, and a caught worker failure is retried ----------------
+# Real failure 2026-09-21, 17-year pool: the four variables trained on CUDA all finished,
+# and every variable handed to the CPU half hit Windows' commit limit (python.exe at
+# 60-62 GB of virtual memory, System event 2004 at 16:28, 17:37 and 18:43 UTC). The
+# GPU/CPU split existed only so the two halves could run concurrently, which was removed
+# on 2026-09-17, so half the variables were being sent to the device that cannot hold
+# them for no remaining reason. A MemoryError the worker caught came back as a pickled
+# result and was treated as a finished attempt - the variable was dropped without a retry,
+# and nothing was printed until the whole run ended.
+
+def _fake_worker(results, seen_devices):
+    calls = iter(results)
+
+    def fake(script, job):
+        seen_devices.append(job["device"])
+        return next(calls)
+    return fake
+
+
+def _ok_result(art="ART"):
+    return {"artifact": art, "skipped": None, "val_pred": None, "fold_models": {}, "error": None}
+
+
+def test_variable_worker_retries_a_caught_exception(monkeypatch, capsys):
+    """Shapes-only: the worker results are hand-built dicts, no training happens."""
+    seen = []
+    caught = {"artifact": None, "skipped": "worker exception: MemoryError", "val_pred": None,
+              "fold_models": {}, "error": "Traceback ...\nMemoryError"}
+    monkeypatch.setattr(pt, "_run_worker_subprocess", _fake_worker([caught, _ok_result()], seen))
+    result = pt._run_variable_subprocess({}, [2000], "wind_speed_ms", set(), pd.DataFrame(),
+                                         {}, None, "cuda", {})
+    assert result["artifact"] == "ART"
+    assert seen == ["cuda", "cuda"]
+    err = capsys.readouterr().err
+    assert "wind_speed_ms attempt 1 device=cuda FAILED" in err
+    assert "wind_speed_ms attempt 2 device=cuda ok" in err
+
+
+def test_variable_worker_does_not_retry_a_legitimate_too_few_rows_skip(monkeypatch):
+    seen = []
+    too_few = {"artifact": None, "skipped": "regressor training returned None or too few rows",
+               "val_pred": None, "fold_models": {}, "error": None}
+    monkeypatch.setattr(pt, "_run_worker_subprocess", _fake_worker([too_few], seen))
+    result = pt._run_variable_subprocess({}, [2000], "rainfall_mm", set(), pd.DataFrame(),
+                                         {}, None, "cuda", {})
+    assert result["artifact"] is None
+    assert seen == ["cuda"]
+
+
+def test_variable_worker_falls_back_to_cpu_after_two_cuda_failures(monkeypatch):
+    seen = []
+    crash = {"error": "worker produced no output, rc=3221225477: "}
+    monkeypatch.setattr(pt, "_run_worker_subprocess",
+                        _fake_worker([crash, crash, _ok_result()], seen))
+    result = pt._run_variable_subprocess({}, [2000], "humidity_pct", set(), pd.DataFrame(),
+                                         {}, None, "cuda", {})
+    assert result["artifact"] == "ART"
+    assert seen == ["cuda", "cuda", "cpu"]
+
+
+def test_full_retrain_pooled_sends_every_variable_to_cuda_when_a_gpu_exists(
+        tmp_path, _ingested_slice, monkeypatch):
+    """Real paired slice, relabelled years (as in the end-to-end test above). The GPU probe
+    is forced True; the real worker is still run, on CPU, so this passes on machines
+    without a GPU - what it asserts is the device each variable was dispatched with."""
+    from app.ml.train_pipeline import _build_paired_in_chunks
+
+    base, _ = _build_paired_in_chunks()
+    cache_dir = tmp_path / "pooled_cache"
+    cache_dir.mkdir()
+    for year, offset in {2000: 0, 2001: 1, 2002: 2}.items():
+        shifted = base.copy()
+        for col in ("init_date", "valid_date"):
+            shifted[col] = pd.to_datetime(shifted[col]) + pd.DateOffset(years=offset)
+        shifted.to_parquet(cache_dir / f"paired_{year}.parquet", index=False)
+
+    dispatched = {}
+    real = pt._run_variable_subprocess
+
+    def spy(cached, train_years, variable, train_cycles, va_var, hbf, cdir, device, fold_of):
+        dispatched[variable] = device
+        return real(cached, train_years, variable, train_cycles, va_var, hbf, cdir, "cpu", fold_of)
+
+    monkeypatch.setattr(pt, "_cuda_available", lambda: True)
+    monkeypatch.setattr(pt, "_run_variable_subprocess", spy)
+    report = pt.full_retrain_pooled(train_years=[2000, 2001], test_year=2002, cache_dir=cache_dir)
+
+    assert report.status == "success", report.error
+    assert len(dispatched) == base["variable"].nunique()
+    assert set(dispatched.values()) == {"cuda"}
+
+
+def test_variable_checkpoint_round_trips_and_is_keyed_on_the_split(tmp_path):
+    """Shapes-only: the stored result is a hand-built dict."""
+    cycles = {pd.Timestamp("2000-01-01"), pd.Timestamp("2000-01-02")}
+    val = {pd.Timestamp("2000-02-01")}
+    p = pt._variable_checkpoint_path(tmp_path, "temperature_c", [2000], cycles, val)
+    assert pt._load_variable_checkpoint(p) is None
+    pt._save_variable_checkpoint(p, _ok_result())
+    assert pt._load_variable_checkpoint(p)["artifact"] == "ART"
+    other = pt._variable_checkpoint_path(tmp_path, "temperature_c", [2000],
+                                         cycles | {pd.Timestamp("2000-01-03")}, val)
+    assert other != p and pt._load_variable_checkpoint(other) is None
+
+
+def test_full_retrain_pooled_reuses_finished_variables_on_a_rerun(
+        tmp_path, _ingested_slice, monkeypatch):
+    """Real paired slice, relabelled years. The second run on the same pool must not
+    train any variable again - each one comes back from its checkpoint."""
+    from app.ml.train_pipeline import _build_paired_in_chunks
+
+    base, _ = _build_paired_in_chunks()
+    cache_dir = tmp_path / "pooled_cache"
+    cache_dir.mkdir()
+    for year, offset in {2000: 0, 2001: 1, 2002: 2}.items():
+        shifted = base.copy()
+        for col in ("init_date", "valid_date"):
+            shifted[col] = pd.to_datetime(shifted[col]) + pd.DateOffset(years=offset)
+        shifted.to_parquet(cache_dir / f"paired_{year}.parquet", index=False)
+
+    monkeypatch.setattr(pt, "_cuda_available", lambda: False)
+    first = pt.full_retrain_pooled(train_years=[2000, 2001], test_year=2002, cache_dir=cache_dir)
+    assert first.status == "success", first.error
+
+    calls = []
+    real = pt._run_variable_subprocess
+    monkeypatch.setattr(pt, "_run_variable_subprocess",
+                        lambda *a, **k: calls.append(a[2]) or real(*a, **k))
+    second = pt.full_retrain_pooled(train_years=[2000, 2001], test_year=2002, cache_dir=cache_dir)
+    assert second.status == "success", second.error
+    assert calls == []
+    assert second.modelled_variables == first.modelled_variables
+    assert second.regressor_metrics == first.regressor_metrics
+
+
+def test_year_data_iter_reads_only_its_own_variable_from_disk(tmp_path, monkeypatch):
+    """Shapes-only synthetic frame. Real failure 2026-09-21: the iterator read every
+    variable of a 76.5M-row year and filtered in pandas, 17 years x every QuantileDMatrix
+    pass; measured on real 2009+2010 caches, peak commit 29.87 GB and 16.58 GB left
+    resident, against 9.38 GB / 4.82 GB with the filter pushed into the read - identical
+    rows and identical abs_error sums. At 17 years the worker climbed past 43 GB of commit
+    before its first boosting round."""
+    df = _thin_synthetic_year(n=400, variables=("temperature_c", "rainfall_mm"))
+    df["abs_error"] = np.abs(np.random.default_rng(1).normal(size=len(df)))
+    df["lead_day"] = 1
+    p = tmp_path / "paired_2017.parquet"
+    df.to_parquet(p, index=False)
+
+    calls = []
+    real = pd.read_parquet
+    monkeypatch.setattr(pt.pd, "read_parquet", lambda *a, **k: calls.append(k) or real(*a, **k))
+    hbf = {(r, s): 0.1 for r in df["region_id"].unique() for s in df["season"].unique()}
+    it = pt._YearDataIter({2017: p}, [2017], "rainfall_mm", set(df["init_date"]),
+                          ["lead_day"], hbf, tmp_path)
+    got = []
+    it.next(lambda data, label: got.append(len(label)))
+    assert calls and calls[0].get("filters") == [("variable", "==", "rainfall_mm")]
+    assert got == [int((df["variable"] == "rainfall_mm").sum())]
+
+
+# --- regressor fits on a bounded, evenly spread sample of training cycles -------------
+# Measured 2026-09-21 on the real caches, one variable: XGBoost's QuantileDMatrix peaked
+# at 17.32 GB of commit for one year and 26.11 GB for two (thread count made no
+# difference: 25.89 GB at nthread=4), while the parquet iterator alone stayed flat at
+# ~8.6 GB. Seventeen years at every-day density cannot fit this machine's 83 GB commit
+# limit on any device. Every year stays in the pool; the per-variable fits see a
+# bounded sample of its days, and everything else (thresholds, validation, test,
+# classifier events) keeps every day.
+
+def _daily_cycles(years):
+    return {pd.Timestamp(d) for y in years for d in pd.date_range(f"{y}-01-01", f"{y}-12-31")}
+
+
+def test_fit_cycles_keeps_a_small_pool_whole():
+    cycles = _daily_cycles([2000])
+    assert pt.fit_cycles(cycles, cap=2000) == cycles
+
+
+def test_fit_cycles_caps_a_large_pool_and_spans_every_year_and_season():
+    cycles = _daily_cycles(range(2000, 2017))
+    got = pt.fit_cycles(cycles, cap=2000)
+    assert len(got) == 2000 and got <= cycles
+    assert got == pt.fit_cycles(cycles, cap=2000)  # deterministic
+    assert {c.year for c in got} == set(range(2000, 2017))
+    assert {c.month for c in got} == set(range(1, 13))
+    per_year = pd.Series([c.year for c in got]).value_counts()
+    assert per_year.min() >= 0.7 * per_year.mean()
+
+
+def test_fit_cycles_leaves_every_oof_fold_with_training_cycles():
+    """assign_folds numbers sorted cycles i % 3 - an every-third-day sample would put
+    every kept cycle in one fold and leave that fold's model nothing to train on."""
+    cycles = _daily_cycles(range(2000, 2017))
+    fold_of = pt.assign_folds(cycles)
+    got = pt.fit_cycles(cycles, cap=2000)
+    per_fold = pd.Series([fold_of[c] for c in got]).value_counts()
+    assert set(per_fold.index) == {0, 1, 2}
+    assert per_fold.min() >= 0.25 * len(got)
+
+
+def test_full_retrain_pooled_fits_regressors_on_the_capped_sample(
+        tmp_path, _ingested_slice, monkeypatch):
+    """Real paired slice, relabelled years. The cap is forced below the pool so the
+    sample is exercised end to end; the worker must receive the sample, not the pool."""
+    from app.ml.train_pipeline import _build_paired_in_chunks
+
+    base, _ = _build_paired_in_chunks()
+    cache_dir = tmp_path / "pooled_cache"
+    cache_dir.mkdir()
+    for year, offset in {2000: 0, 2001: 1, 2002: 2}.items():
+        shifted = base.copy()
+        for col in ("init_date", "valid_date"):
+            shifted[col] = pd.to_datetime(shifted[col]) + pd.DateOffset(years=offset)
+        shifted.to_parquet(cache_dir / f"paired_{year}.parquet", index=False)
+
+    n_train = len(pt.pooled_split({y: cache_dir / f"paired_{y}.parquet" for y in (2000, 2001, 2002)},
+                                  2002)[0])
+    cap = max(2, n_train - 1)
+    monkeypatch.setattr(pt, "MAX_FIT_CYCLES", cap)
+    monkeypatch.setattr(pt, "_cuda_available", lambda: False)
+    seen = []
+    real = pt._run_variable_subprocess
+    monkeypatch.setattr(pt, "_run_variable_subprocess",
+                        lambda *a, **k: seen.append(len(a[3])) or real(*a, **k))
+    report = pt.full_retrain_pooled(train_years=[2000, 2001], test_year=2002, cache_dir=cache_dir)
+    assert report.status == "success", report.error
+    assert report.split_cycles["fit"] == cap < report.split_cycles["train"]
+    assert seen and set(seen) == {cap}
+
+
+# --- cached years carry no inf ---------------------------------------------------------
+# Real failure 2026-09-21: laf_spread_ratio divided by an ensemble spread of exactly zero
+# (members agreeing - dry-day rainfall, saturated humidity), leaving 1.2-1.4 M inf values
+# per cached year, and XGBoost refused humidity_pct outright. The feature code now yields
+# NaN there; the caches built before the fix are repaired in place to exactly that output
+# (x/0 with x > 0 was the only way to get inf, and it is now NaN), rather than rebuilt.
+
+def _cache_with_inf(path, bad_col="laf_spread_ratio"):
+    """Shapes-only synthetic frame, labelled as such."""
+    df = _thin_synthetic_year(n=300, variables=("rainfall_mm", "humidity_pct"))
+    df["laf_spread_ratio"] = np.linspace(0.5, 1.5, len(df)).astype("float32")
+    df["jump_rel_climatology"] = np.float32(1.0)
+    df.loc[df.index[::7], bad_col] = np.inf
+    df.loc[df.index[::11], bad_col] = -np.inf
+    df.to_parquet(path, index=False, row_group_size=64)
+    return df
+
+
+def test_ensure_finite_cache_turns_ratio_inf_into_missing_and_keeps_everything_else(tmp_path):
+    p = tmp_path / "paired_2000.parquet"
+    before = _cache_with_inf(p)
+    n_fixed = pt._ensure_finite_cache(p)
+    after = pd.read_parquet(p)
+    assert n_fixed == int(np.isinf(before["laf_spread_ratio"]).sum())
+    assert not np.isinf(after["laf_spread_ratio"]).any()
+    was_inf = np.isinf(before["laf_spread_ratio"]).to_numpy()
+    assert after["laf_spread_ratio"][was_inf].isna().all()
+    np.testing.assert_array_equal(after["laf_spread_ratio"][~was_inf].to_numpy(),
+                                  before["laf_spread_ratio"][~was_inf].to_numpy())
+    pd.testing.assert_frame_equal(after.drop(columns="laf_spread_ratio"),
+                                  before.drop(columns="laf_spread_ratio"))
+
+
+def test_ensure_finite_cache_is_a_footer_read_once_a_file_is_checked(tmp_path):
+    p = tmp_path / "paired_2000.parquet"
+    _cache_with_inf(p)
+    pt._ensure_finite_cache(p)
+    mtime = p.stat().st_mtime_ns
+    assert pt._ensure_finite_cache(p) == 0
+    assert p.stat().st_mtime_ns == mtime
+
+
+def test_ensure_finite_cache_refuses_inf_in_a_column_it_has_no_rule_for(tmp_path):
+    p = tmp_path / "paired_2000.parquet"
+    _cache_with_inf(p, bad_col="jump_rel_climatology")
+    before = p.read_bytes()
+    with pytest.raises(ValueError, match="jump_rel_climatology"):
+        pt._ensure_finite_cache(p)
+    assert p.read_bytes() == before
+
+
+def test_cache_year_repairs_inf_in_a_cache_it_reuses(tmp_path):
+    p = tmp_path / "paired_2000.parquet"
+    _cache_with_inf(p)
+    assert pt.cache_year(2000, tmp_path) == p
+    assert not np.isinf(pd.read_parquet(p)["laf_spread_ratio"]).any()
+# --- staged fit: every training day, in chunks that each fit in memory --------------
+# MAX_FIT_CYCLES bounds what one QuantileDMatrix holds. The staged mode covers the whole
+# pool anyway: disjoint chunks of at most the cap, boosted one after another into the
+# same booster (xgb.train's xgb_model=), n_estimators split across them. One model per
+# variable, so the registry, inference and SHAP need nothing new.
+
+def test_fit_chunks_partition_the_pool_into_capped_disjoint_chunks():
+    cycles = _daily_cycles(range(2000, 2017))
+    chunks = pt.fit_chunks(cycles, cap=2000)
+    assert len(chunks) == 4  # 6,210 days / 2,000, rounded up
+    assert all(len(c) <= 2000 for c in chunks)
+    assert set().union(*chunks) == cycles
+    assert sum(len(c) for c in chunks) == len(cycles)
+    assert chunks == pt.fit_chunks(cycles, cap=2000)
+    fold_of = pt.assign_folds(cycles)
+    for c in chunks:
+        assert {d.year for d in c} == set(range(2000, 2017))
+        assert {fold_of[d] for d in c} == {0, 1, 2}
+
+
+def test_fit_chunks_keeps_a_small_pool_as_one_chunk():
+    cycles = _daily_cycles([2000])
+    assert pt.fit_chunks(cycles, cap=2000) == [cycles]
+
+
+def test_split_rounds_sums_to_the_total():
+    assert pt._split_rounds(300, 4) == [75, 75, 75, 75]
+    assert pt._split_rounds(300, 7) == [43, 43, 43, 43, 43, 43, 42]
+    assert sum(pt._split_rounds(300, 7)) == 300
+
+
+def test_staged_fit_boosts_every_chunk_into_one_booster(tmp_path):
+    """Shapes-only synthetic frames: two chunks must yield one booster carrying the full
+    n_estimators, trained on every row of both chunks."""
+    df = _thin_synthetic_year(n=600, variables=("rainfall_mm",))
+    df["abs_error"] = np.abs(np.random.default_rng(3).normal(size=len(df)))
+    df["lead_day"] = np.random.default_rng(4).integers(1, 11, size=len(df))
+    p = tmp_path / "paired_2017.parquet"
+    df.to_parquet(p, index=False)
+    hbf = {(r, s): 0.1 for r in df["region_id"].unique() for s in df["season"].unique()}
+    cycles = sorted(set(df["init_date"]))
+    chunks = [set(cycles[: len(cycles) // 2]), set(cycles[len(cycles) // 2:])]
+    booster, n_rows = pt._fit_booster({2017: p}, [2017], "rainfall_mm", chunks,
+                                      ["lead_day"], hbf, tmp_path, "cpu", n_estimators=10)
+    assert n_rows == len(df)
+    assert booster.num_boosted_rounds() == 10
+
+
+def test_full_retrain_pooled_staged_fits_every_training_cycle_in_chunks(
+        tmp_path, _ingested_slice, monkeypatch):
+    """Real paired slice, relabelled years. With the cap forced below the pool, the staged
+    mode must hand the worker chunks covering every training cycle, and still succeed."""
+    from app.ml.train_pipeline import _build_paired_in_chunks
+
+    base, _ = _build_paired_in_chunks()
+    cache_dir = tmp_path / "pooled_cache"
+    cache_dir.mkdir()
+    for year, offset in {2000: 0, 2001: 1, 2002: 2}.items():
+        shifted = base.copy()
+        for col in ("init_date", "valid_date"):
+            shifted[col] = pd.to_datetime(shifted[col]) + pd.DateOffset(years=offset)
+        shifted.to_parquet(cache_dir / f"paired_{year}.parquet", index=False)
+
+    n_train = len(pt.pooled_split({y: cache_dir / f"paired_{y}.parquet" for y in (2000, 2001, 2002)},
+                                  2002)[0])
+    monkeypatch.setattr(pt, "MAX_FIT_CYCLES", max(1, n_train // 2))
+    monkeypatch.setattr(pt, "_cuda_available", lambda: False)
+    seen = []
+    real = pt._run_variable_subprocess
+    monkeypatch.setattr(pt, "_run_variable_subprocess",
+                        lambda *a, **k: seen.append(a[3]) or real(*a, **k))
+    report = pt.full_retrain_pooled(train_years=[2000, 2001], test_year=2002,
+                                    cache_dir=cache_dir, fit_mode="staged")
+    assert report.status == "success", report.error
+    assert report.split_cycles["fit"] == report.split_cycles["train"] == n_train
+    assert report.split_cycles["fit_chunks"] >= 2
+    assert seen and all(isinstance(c, list) and len(set().union(*c)) == n_train for c in seen)
+
+
+def test_staged_and_sample_checkpoints_never_collide(tmp_path):
+    cycles = _daily_cycles([2000])
+    val = {pd.Timestamp("2001-01-01")}
+    one = pt._variable_checkpoint_path(tmp_path, "rainfall_mm", [2000], cycles, val)
+    staged = pt._variable_checkpoint_path(tmp_path, "rainfall_mm", [2000], [cycles], val)
+    assert one != staged
+
+
+def test_full_retrain_pooled_rejects_an_unknown_fit_mode(tmp_path):
+    with pytest.raises(ValueError):
+        pt.full_retrain_pooled([2000], 2001, tmp_path, fit_mode="everything")
+
+
+def test_staged_fit_skips_a_chunk_with_no_rows_and_keeps_every_round(tmp_path):
+    """Shapes-only synthetic frame. A chunk of cycles that holds no rows for the variable
+    (XGBoost raises on an iterator that never yields a batch) is skipped, and the
+    booster still carries the full n_estimators."""
+    df = _thin_synthetic_year(n=600, variables=("rainfall_mm",))
+    df["abs_error"] = np.abs(np.random.default_rng(3).normal(size=len(df)))
+    df["lead_day"] = np.random.default_rng(4).integers(1, 11, size=len(df))
+    p = tmp_path / "paired_2017.parquet"
+    df.to_parquet(p, index=False)
+    hbf = {(r, s): 0.1 for r in df["region_id"].unique() for s in df["season"].unique()}
+    empty = {pd.Timestamp("1990-01-01")}
+    booster, n_rows = pt._fit_booster({2017: p}, [2017], "rainfall_mm",
+                                      [empty, set(df["init_date"])], ["lead_day"], hbf,
+                                      tmp_path, "cpu", n_estimators=10)
+    assert n_rows == len(df)
+    assert booster.num_boosted_rounds() == 10
+
+
+# --- the per-year event frame is built one batch of forecast dates at a time --------
+# Real crash 2026-09-22, 17-year pool: the year-events worker read a whole 76.5M-row
+# year (41.6 GB peak commit measured on real 2015) and died on a 1.14 GiB allocation on
+# both attempts. EVENT_KEYS include init_date and build_event_frame only groups within
+# an event, so building it batch by batch and concatenating is exactly the whole-year
+# frame - the same argument the per-year split already rests on.
+
+def test_year_event_frame_is_identical_whether_built_whole_or_one_cycle_at_a_time(
+        tmp_path, _ingested_slice):
+    """Real paired slice (GEFS + ERA5 samples), real fold models trained on it."""
+    from app.ml.train_pipeline import _build_paired_in_chunks
+
+    base, _ = _build_paired_in_chunks()
+    p = tmp_path / "paired_2019.parquet"
+    base.to_parquet(p, index=False)
+    cached = {2019: p}
+    cycles = set(pd.to_datetime(base["init_date"]).dt.normalize().unique())
+    assert len(cycles) >= 3
+    hbf, p90_error, bust_threshold = pt.pooled_stats(cached, [2019], cycles)
+    fold_of = pt.assign_folds(cycles)
+    fold_models = {v: pt.oof_fold_models(cached, [2019], v, cycles, hbf, fold_of, tmp_path)
+                   for v in sorted(base["variable"].unique())}
+    columns = set(base.columns) - {"historical_bust_frequency_region_season"}
+
+    whole = pt.year_event_frame(p, cycles, hbf, p90_error, bust_threshold, fold_models,
+                                fold_of, columns, max_cycles_per_batch=10**6)
+    batched = pt.year_event_frame(p, cycles, hbf, p90_error, bust_threshold, fold_models,
+                                  fold_of, columns, max_cycles_per_batch=1)
+
+    def norm(df):
+        df = df.copy()
+        df["region_id"] = df["region_id"].astype(str)
+        df["season"] = df["season"].astype(str)
+        return df.sort_values(list(fe.EVENT_KEYS)).reset_index(drop=True)[sorted(df.columns)]
+
+    assert len(whole) > 0
+    pd.testing.assert_frame_equal(norm(whole), norm(batched), check_dtype=False)
+
+
+def test_cycle_batches_cover_every_cycle_once_in_order():
+    cycles = [pd.Timestamp("2015-01-01") + pd.Timedelta(days=i) for i in range(365)]
+    batches = pt._cycle_batches(set(cycles), 100)
+    assert [len(b) for b in batches] == [100, 100, 100, 65]
+    assert [c for b in batches for c in b] == cycles
+
+
+def test_test_event_frame_and_metrics_are_identical_whole_or_batched(tmp_path, _ingested_slice):
+    """Real paired slice, real regressors trained on it. The held-out year is scored the
+    same way: batched by forecast date, with each variable's metrics computed once over
+    every row, so they equal the whole-year computation exactly."""
+    from app.ml.train_pipeline import _build_paired_in_chunks
+
+    base, _ = _build_paired_in_chunks()
+    p = tmp_path / "paired_2019.parquet"
+    base.to_parquet(p, index=False)
+    cached = {2019: p}
+    cycles = set(pd.to_datetime(base["init_date"]).dt.normalize().unique())
+    hbf, p90_error, bust_threshold = pt.pooled_stats(cached, [2019], cycles)
+    artifacts = {}
+    for v in sorted(base["variable"].unique()):
+        art = pt.train_variable_regressor_pooled(cached, [2019], v, cycles, pd.DataFrame(
+            columns=base.columns), hbf, tmp_path)
+        if art is not None:
+            artifacts[v] = art
+    assert artifacts
+    columns = set(base.columns) - {"historical_bust_frequency_region_season"}
+
+    whole, m_whole = pt.test_event_frame(p, cycles, hbf, p90_error, bust_threshold,
+                                         artifacts, columns, max_cycles_per_batch=10**6)
+    batched, m_batched = pt.test_event_frame(p, cycles, hbf, p90_error, bust_threshold,
+                                             artifacts, columns, max_cycles_per_batch=1)
+
+    def norm(df):
+        df = df.copy()
+        df["region_id"] = df["region_id"].astype(str)
+        df["season"] = df["season"].astype(str)
+        return df.sort_values(list(fe.EVENT_KEYS)).reset_index(drop=True)[sorted(df.columns)]
+
+    pd.testing.assert_frame_equal(norm(whole), norm(batched), check_dtype=False)
+    assert m_whole.keys() == m_batched.keys() and m_whole
+    for v in m_whole:
+        assert m_batched[v] == pytest.approx(m_whole[v], rel=1e-9, nan_ok=True)
+
+
+# --- validation events off the parent, and bounded classifier training events --------
+# Real crash 2026-09-22 (04:26 UTC): with every training cycle's events resident (float64,
+# ~39 M rows at seventeen years), the parent read the whole validation spill back to build
+# event_va and failed a 306 MB malloc. Validation events are now built in a worker, one
+# batch of forecast dates at a time; the classifier's training events come from the same
+# bounded cycle sample the regressors fit on; event frames are float32 - the precision
+# XGBoost trains in anyway.
+
+def _spill_like_the_worker(base, spill_dir):
+    """Real slice, laid out exactly as _build_val_frame_worker writes it."""
+    df = base.reset_index(drop=True).copy()
+    df["_va_row"] = range(len(df))
+    df.to_parquet(spill_dir, partition_cols=["variable"], index=False)
+    return len(df)
+
+
+def test_val_event_frame_matches_the_old_whole_frame_path(tmp_path, _ingested_slice):
+    from app.features import pivot as pv
+    from app.ml.train_pipeline import _build_paired_in_chunks
+
+    base, _ = _build_paired_in_chunks()
+    p = tmp_path / "paired_2019.parquet"
+    base.to_parquet(p, index=False)
+    cycles = set(pd.to_datetime(base["init_date"]).dt.normalize().unique())
+    hbf, p90_error, bust_threshold = pt.pooled_stats({2019: p}, [2019], cycles)
+    spill = tmp_path / "_va"
+    n = _spill_like_the_worker(pt.attach_hbf_column(base.copy(), hbf), spill)
+    val_pred = np.random.default_rng(0).random(n)  # stand-in predictions, shapes only
+
+    old = pv.build_event_frame(pd.read_parquet(spill).set_index("_va_row").sort_index(),
+                               pd.Series(val_pred), p90_error, bust_threshold, hbf,
+                               copy_input=False)
+    new = pt.val_event_frame(spill, val_pred, hbf, p90_error, bust_threshold,
+                             max_cycles_per_batch=1)
+
+    def norm(df):
+        df = df.copy()
+        for c in ("region_id", "season"):
+            df[c] = df[c].astype(str)
+        return df.sort_values(list(fe.EVENT_KEYS)).reset_index(drop=True)[sorted(df.columns)]
+
+    assert len(old) > 0
+    pd.testing.assert_frame_equal(norm(old), norm(new), check_dtype=False, rtol=1e-6)
+
+
+def test_event_frames_come_back_as_float32():
+    df = pd.DataFrame({"a": np.array([1.5, 2.5]), "y_bust": [0, 1],
+                       "region_id": pd.Categorical(["r1", "r2"])})
+    out = pt._events_float32(df)
+    assert out["a"].dtype == np.float32
+    assert out["y_bust"].dtype == df["y_bust"].dtype
+    assert isinstance(out["region_id"].dtype, pd.CategoricalDtype)
+
+
+def test_classifier_training_events_come_from_the_fit_sample(tmp_path, _ingested_slice,
+                                                             monkeypatch):
+    """Real paired slice, relabelled years. With the cap below the pool, the events the
+    classifier trains on must cover only the sampled cycles."""
+    from app.ml.train_pipeline import _build_paired_in_chunks
+
+    base, _ = _build_paired_in_chunks()
+    cache_dir = tmp_path / "pooled_cache"
+    cache_dir.mkdir()
+    for year, offset in {2000: 0, 2001: 1, 2002: 2}.items():
+        shifted = base.copy()
+        for col in ("init_date", "valid_date"):
+            shifted[col] = pd.to_datetime(shifted[col]) + pd.DateOffset(years=offset)
+        shifted.to_parquet(cache_dir / f"paired_{year}.parquet", index=False)
+    n_train = len(pt.pooled_split({y: cache_dir / f"paired_{y}.parquet" for y in (2000, 2001, 2002)},
+                                  2002)[0])
+    cap = max(2, n_train - 2)
+    monkeypatch.setattr(pt, "MAX_FIT_CYCLES", cap)
+    monkeypatch.setattr(pt, "_cuda_available", lambda: False)
+    seen = []
+    real = pt.build_pooled_train_events
+    monkeypatch.setattr(pt, "build_pooled_train_events",
+                        lambda *a, **k: seen.append(len(a[2])) or real(*a, **k))
+    report = pt.full_retrain_pooled(train_years=[2000, 2001], test_year=2002, cache_dir=cache_dir)
+    assert report.status == "success", report.error
+    assert seen == [cap]
+    assert report.split_cycles["classifier"] == cap
+
+
+# --- a pooled run is made servable: SHAP summary and manifest, from the same code -----
+# Real gap 2026-09-22: full_retrain_pooled saved models, thresholds and metrics but not
+# shap_summary.parquet or the manifest's shap_method, both of which full_retrain writes.
+# The region panel's "what drove this prediction" reads that summary, so serving a pooled
+# run would have silently served no explanation. finalize_for_serving rebuilds the
+# validation events from the caches in batches, refuses unless they reproduce the saved
+# validation ROC-AUC exactly, and explains the models the way full_retrain does.
+
+def _pooled_run_on_slice(tmp_path, monkeypatch):
+    from app.ml.train_pipeline import _build_paired_in_chunks
+
+    base, _ = _build_paired_in_chunks()
+    cache_dir = tmp_path / "pooled_cache"
+    cache_dir.mkdir()
+    for year, offset in {2000: 0, 2001: 1, 2002: 2}.items():
+        shifted = base.copy()
+        for col in ("init_date", "valid_date"):
+            shifted[col] = pd.to_datetime(shifted[col]) + pd.DateOffset(years=offset)
+        shifted.to_parquet(cache_dir / f"paired_{year}.parquet", index=False)
+    monkeypatch.setattr(pt, "_cuda_available", lambda: False)
+    report = pt.full_retrain_pooled(train_years=[2000, 2001], test_year=2002, cache_dir=cache_dir)
+    assert report.status == "success", report.error
+    return report, cache_dir
+
+
+def test_a_pooled_run_ships_with_a_shap_summary_and_manifest(tmp_path, _ingested_slice,
+                                                             monkeypatch):
+    from app.ml import registry
+
+    report, _ = _pooled_run_on_slice(tmp_path, monkeypatch)
+    rd = registry.run_dir(report.run_id)
+    shap = pd.read_parquet(rd / "shap_summary.parquet")
+    assert "classifier" in set(shap["model"])
+    assert any(m.startswith("regressor::") for m in set(shap["model"]))
+    manifest = json.loads((rd / "manifest.json").read_text())
+    assert manifest["shap_method"] == "shap"
+    assert manifest["paired_rows"] > 0
+
+
+def test_finalize_refuses_a_run_whose_classifier_does_not_reproduce_its_metrics(
+        tmp_path, _ingested_slice, monkeypatch):
+    from app.ml import registry
+
+    report, cache_dir = _pooled_run_on_slice(tmp_path, monkeypatch)
+    metrics_path = registry.run_dir(report.run_id) / "metrics.json"
+    metrics = json.loads(metrics_path.read_text())
+    metrics["classifier"]["val"]["roc_auc"] = 0.123  # no longer what the model scores
+    metrics_path.write_text(json.dumps(metrics))
+    with pytest.raises(ValueError, match="validation ROC-AUC"):
+        pt.finalize_for_serving(report.run_id, cache_dir)
