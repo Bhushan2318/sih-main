@@ -130,3 +130,23 @@ def test_rail_ceiling_is_a_ceiling(share):
 def test_iqr_floor_only_catches_a_flat_line():
     """The floor must sit well below what a real quiet day serves."""
     assert MIN_SERVED_IQR < 0.119
+
+
+def test_a_model_broken_before_training_is_not_this_check_s_job():
+    """The documented blind spot, asserted so nobody assumes more than this catches.
+
+    run_20260922T100055Z has a temperature regressor predicting absolute errors from
+    -2218.9 to +438.99 where the true range is 0 to 2.69, held-out r2 -682,626. Scored on a
+    real cycle it produced median 0.279 / IQR 0.401 / bust band 13.1%, against the good
+    model's 0.287 / 0.407 / 13.4% - measured 2026-09-23, 6,660 events each.
+
+    It passes, and should: the classifier was trained on those broken values, so the model
+    is internally consistent and its distribution is not degenerate. Catching it belongs at
+    the regressor stage. If someone later widens this check until this test fails, they have
+    turned a distribution check into something else, and should delete this test knowingly
+    rather than discover it.
+    """
+    broken = np.concatenate([RNG.uniform(0.02, 0.16, 1665), RNG.uniform(0.16, 0.56, 3330),
+                             RNG.uniform(0.56, 0.99, 1665)])
+    ok, reason = degeneracy_verdict(broken, _bands(broken))
+    assert ok is True, reason

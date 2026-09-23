@@ -42,6 +42,36 @@ produce: the cuts are the 50th and 80th percentiles of the validation prediction
 roughly a fifth of events should land in the top band by construction. Three times that
 is damage, not weather.
 
+WHAT THIS CANNOT CATCH, and why that is not a hole to widen
+-----------------------------------------------------------
+Measured 2026-09-23 on run_20260922T100055Z, whose temperature regressor is broken: it
+predicts absolute temperature errors from -2218.9 to +438.99 where the true range is 0 to
+2.69, held-out r2 -682,626. Scored through this same path on a real cycle it PASSES, and
+its served distribution is nearly identical to the good model's - median 0.279 against
+0.287, IQR 0.401 against 0.407, bust band 13.1% against 13.4%.
+
+It passes because the classifier was TRAINED on those broken values. Its split thresholds
+sit wherever that distribution put them, and at serving time the same values land in the
+same leaves. The model is internally consistent and externally nonsense, so the
+distribution it produces is not degenerate and there is nothing here to see.
+
+Note the mechanism precisely, because a plausible wrong version of it circulated first.
+`conf` does saturate - `(1.0 - pred_err/p90).clip(0.0, 1.0)` is 0.0 for every pred_err at
+or above p90, so 4.7 and 2218.9 are indistinguishable through that feature - but the
+classifier reads `pred_err_*` directly as well as `conf_*`, so the magnitude does reach
+it. Saturation absorbs part of it; having been trained on it absorbs the rest.
+
+That draws the line this check actually sits on:
+  - broken BEFORE training, so the model learned the broken values: internally consistent,
+    invisible here. It belongs at the regressor stage, where a held-out r2 worse than
+    predicting the mean should refuse the artifact outright - one comparison, no store, no
+    scoring, and it would have caught this at training time.
+  - broken AFTER training, because the store changed underneath it: inconsistent, and this
+    is what catches it. run_20260910T064804Z was that case.
+
+Widening this to cover the first would turn a distribution check into a second gate with a
+second set of thresholds, policing a cause it cannot observe.
+
 WHAT IT COSTS
 -------------
 Measured on the real store, 666 districts x 10 lead days, scoring one cycle end to end:
