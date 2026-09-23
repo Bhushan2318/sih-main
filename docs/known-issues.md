@@ -25,15 +25,17 @@ here rather than discovered live.
   file, not a resample.
 - **Replay offers the 10 most recent cycles**, not every cycle in the store
   (`replay_service._MAX_CYCLES`). Each candidate costs one scoring pass on first call.
-- **Feature and variable names render raw, in snake_case.** The SHAP panel lists
-  `spread_rainfall_mm`, `conf_pressure_hpa` and
-  `historical_bust_frequency_region_season`; the variable tabs and the bust-threshold
-  list show `atmospheric_moisture_kgm2` and its peers. Everything around them was put
-  into plain language on 2026-09-02, so these are now the densest text on the page for a
-  reader without a meteorology background. Fixing it needs a display-name map rather than
-  a text edit — the names arrive from the model's own feature list, not from a string in
-  the component — which is why it was left rather than rushed. Worth doing Friday morning
-  if there is time before the freeze; it is cosmetic and nothing depends on it.
+- **RESOLVED — feature and variable names used to render raw, in snake_case.**
+  `frontend/src/lib/displayNames.ts` now maps every modelled variable and every engineered
+  feature prefix (`pred_err_`, `spread_`, `conf_`, `fc_`) to plain English, with a
+  `prettify` fallback for anything added later. `ShapFactorsList`, the variable tabs in
+  `RegionDetailPanel`, `MissesCard` and `AlertsPage`'s "most common cause" all route
+  through it. Verified by audit 2026-09-23: two rollout gaps found and fixed in the same
+  pass — `RegionDetailPanel`'s "not modelled" list and `VariableTrajectoryChart`'s
+  "no model for X" message were still interpolating the raw column name directly rather
+  than calling `variableLabel`. Both now do. The raw name is still shown deliberately as a
+  `title` tooltip on the SHAP factor list, for anyone checking the feature list against the
+  model artifact.
 
 ## Operational
 
@@ -431,8 +433,14 @@ here rather than discovered live.
   boundary *lines* against SoI's own data, and no such comparison is recorded anywhere.
   Full writeup, sources, and a Datameet alternative comparison: `docs/boundary-geometry-licensing.md`.
 
-- **The live operational feed does not go through the district weight table.** Training
-  and reforecast ingestion aggregate every 0.25° cell a district polygon overlaps, via
+- **RESOLVED 2026-09-23 — the live operational feed did not go through the district
+  weight table.** Fixed the same day this was found; see the full RESOLVED entry under
+  "Serving a pooled model" near the end of this file for what shipped and how it was
+  verified live. Kept here, like that entry, because the reasoning below on why the
+  obvious fix (packaging CDS observations alone) would not have moved the map is the
+  record of how this was decided — not because the problem is still open.
+  Training and reforecast ingestion aggregate every 0.25° cell a district polygon
+  overlaps, via
   `india_districts.DistrictGrid.aggregate` (`fetch_gefs_reforecast_sample.py`,
   `fetch_era5_cds_district_observations.py`). The live path does not: `app/live/gefs.py`
   reads `scripts/india_cities.json` - **36 city points, one per state/UT** - and samples
