@@ -39,8 +39,14 @@ from app.ml import baselines as bl               # noqa: E402
 from app.ml import classifier as clf_mod         # noqa: E402
 from app.ml import verification as ver           # noqa: E402
 from app.ml import misses as miss_mod          # noqa: E402
+from app.config import settings                 # noqa: E402
+from app.db.base import resolve_path            # noqa: E402
 
-EVAL_DIR = BACKEND_DIR / "data" / "analysis" / "eval_events"
+# Resolved the same way the writer resolves it (`train_pipeline._emit_eval_events`), not
+# as a second hardcoded path. They agree whenever `data_dir` is the default, and diverge
+# silently the moment DATA_DIR is set - this script then reports "not found" for a file
+# that was written seconds earlier, somewhere else.
+EVAL_DIR = resolve_path(settings.data_dir) / "analysis" / "eval_events"
 RESULTS_MD = BACKEND_DIR.parent / "docs" / "results.md"
 HEADING = "## Baselines"
 MODEL_ROW = "Sanket bust classifier"
