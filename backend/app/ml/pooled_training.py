@@ -616,7 +616,49 @@ def train_variable_regressor_pooled(cached_paths: dict, train_years: list, varia
         Xva = reg_mod._prep_X(va, cols)
         if len(va) >= 5:
             metrics["val"] = reg_mod._evaluate(va["abs_error"], model.predict(Xva))
+    # Refused here or never - see regressor_is_unusable. Downstream cannot tell: the
+    # classifier trains on whatever this produces and learns to read it, so a regressor
+    # serving absurd values still yields a healthy-looking bust distribution.
+    if regressor_is_unusable(metrics.get("val") or {}):
+        m = metrics["val"]
+        print(f"[pooled] {variable} REFUSED: held-out r2 {m['r2']:.4g}, MAE {m['mae']:.4g} "
+              f"against {m['baseline_mae_predict_mean']:.4g} for predicting the mean - "
+              f"worse than the trivial predictor on both, so there is nothing to serve",
+              file=sys.stderr, flush=True)
+        return None
     return reg_mod.RegressorArtifact(variable, model, cols, metrics, n_train, len(va))
+
+
+def regressor_is_unusable(metrics: dict) -> bool:
+    """Whether a regressor's held-out metrics say it is worse than predicting the mean.
+
+    Real failure, run_20260922T100055Z on 2026-09-22: temperature_c trained without
+    raising and produced held-out r2 -254107, serving absolute-error predictions from
+    -80,235 to +270 degrees against a bust threshold of 2.861. Nothing downstream caught
+    it. The promotion gate reads the classifier's ROC-AUC, and the classifier had been
+    trained on those same values, so it had learned to read them - the served bust
+    distribution sat 0.008 from the good model's median and a degeneracy check passed it
+    (see serving_sanity: broken before training is internally consistent and invisible to
+    a distribution check; broken after training is what that check catches). A regressor
+    this bad can only be refused where it is made.
+
+    Both tests must fail, not either. Squared error alone is dominated by a few outliers,
+    so a negative r2 on a hard variable is not by itself damning - wind_direction_deg
+    legitimately serves r2 0.41 - and a variable can be weak and still be worth having.
+    Worse on squared error AND worse on absolute error than the trivial predictor is not
+    ambiguous: there is nothing in it to serve.
+
+    Missing or non-finite metrics return False. This refuses on evidence, not on its
+    absence; a variable with too few validation rows to score is already handled.
+    """
+    r2 = metrics.get("r2")
+    mae = metrics.get("mae")
+    baseline = metrics.get("baseline_mae_predict_mean")
+    if r2 is None or mae is None or baseline is None:
+        return False
+    if not (np.isfinite(r2) and np.isfinite(mae) and np.isfinite(baseline)):
+        return False
+    return bool(r2 < 0.0 and mae > baseline)
 
 
 def assign_folds(train_cycles: set, n_splits: int = 3) -> dict:
