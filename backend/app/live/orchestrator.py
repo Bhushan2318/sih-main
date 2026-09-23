@@ -194,10 +194,10 @@ def run_observation_refresh(
             result = ingest_upload(session, path, path.name,
                                    confirmed_mappings=OBSERVATION_MAPPINGS,
                                    verification_status=tier)
-            detail = (f"tier={tier} cities={report.cities} rows={result.row_count_ingested} "
+            detail = (f"tier={tier} cells={report.cells} rows={result.row_count_ingested} "
                       f"in {report.seconds:.0f}s")
             if report.failures:
-                detail += f"; failed_cities={','.join(report.failures)}"
+                detail += f"; failed_batches={'; '.join(report.failures)}"
             _finish_run(session, session.get(IngestRun, run_id), "complete",
                         upload_batch_id=result.batch_id,
                         rows_ingested=result.row_count_ingested,
