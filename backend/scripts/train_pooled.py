@@ -43,6 +43,12 @@ def main() -> int:
                     help="do not train: rebuild the held-out events a finished pooled run "
                          "was scored on and write data/analysis/eval_events/<RUN_ID>.parquet, "
                          "which scripts/ppt_figures.py and scripts/run_baselines read")
+    ap.add_argument("--emit-baseline-fit", metavar="RUN_ID",
+                    help="do not train: rebuild the training rows the baseline ladder is "
+                         "fitted on for a finished pooled run and write "
+                         "data/analysis/eval_events/<RUN_ID>_baselinefit.parquet, which "
+                         "scripts/run_baselines picks up. Carries only the columns the "
+                         "ladder fits on, so no regressor is run")
     ap.add_argument("--finalize", metavar="RUN_ID",
                     help="do not train: write the SHAP summary and manifest entries a "
                          "finished pooled run needs before it can be served, and exit")
@@ -61,6 +67,16 @@ def main() -> int:
                          indent=2, default=str))
         return 0
 
+    if args.emit_baseline_fit:
+        # Publishes training rows for the ladder, trains nothing, so the retrain guard
+        # does not apply.
+        from app.ml.pooled_training import emit_baseline_fit_events_for_run
+
+        print(json.dumps(emit_baseline_fit_events_for_run(args.emit_baseline_fit,
+                                                          args.cache_dir),
+                         indent=2, default=str))
+        return 0
+
     if args.finalize:
         # Makes an already-trained run servable; trains nothing, so the retrain guard
         # does not apply. See pooled_training.finalize_for_serving.
@@ -71,8 +87,8 @@ def main() -> int:
         return 0
 
     if not args.train_years or args.test_year is None:
-        ap.error("--train-years and --test-year are required unless --finalize or "
-                 "--emit-eval is given")
+        ap.error("--train-years and --test-year are required unless --finalize, "
+                 "--emit-eval or --emit-baseline-fit is given")
 
     from app.config import settings
     if not settings.allow_local_retrain:

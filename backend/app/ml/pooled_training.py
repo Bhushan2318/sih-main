@@ -1253,6 +1253,148 @@ def finalize_for_serving(run_id: str, cache_dir: Path,
 FIT_MODES = ("sample", "staged")
 
 
+# The event columns the baseline ladder fits on, and the whole of them. Measured
+# 2026-09-23 by fitting every baseline in `app.ml.baselines.ALL_BASELINES` twice on the
+# same 1,048,576 real held-out rows - once on the full 110-column event frame, once on a
+# frame stripped to these - and comparing predictions: identical for all seven, maximum
+# absolute difference 0.000e+00.
+#
+# The point of writing it down is what is NOT here. No `pred_err_*` and no `conf_*`: not
+# one baseline reads a regressor's output, because a baseline that did would no longer be
+# a baseline - it would be the model wearing a simpler design matrix. So the expensive
+# half of building a train split (running eight XGBoost regressors over 13.3M rows) buys
+# the ladder nothing, and `baseline_fit_events` skips it.
+#
+# Treat this as a contract, not a cache. `test_the_ladder_fits_from_these_columns_alone`
+# fails if a baseline starts reading anything else, which is the only thing standing
+# between a new baseline and a silently half-fitted ladder.
+BASELINE_FIT_BASE_COLUMNS = ("y_bust", "lead_time_days", "season",
+                             "spread_mean", "spread_max")
+BASELINE_FIT_PER_VARIABLE = ("actual_err", "spread")
+
+
+def baseline_fit_columns(events) -> list:
+    """The subset of `events` the baseline ladder fits on, event keys included.
+
+    Event keys come along because `run_baselines` counts training cycles and correlates
+    lead day against the label per split, both of which need `init_date`.
+    """
+    have = set(events.columns)
+    want = set(BASELINE_FIT_BASE_COLUMNS) | set(fe.EVENT_KEYS)
+    variables = sorted({c[len("actual_err_"):] for c in have
+                        if c.startswith("actual_err_")})
+    for var in variables:
+        want |= {f"{prefix}_{var}" for prefix in BASELINE_FIT_PER_VARIABLE}
+    return sorted(want & have)
+
+
+def baseline_fit_events(cached_paths: dict, years: list, cycles: set,
+                        hbf: dict, p90_error: dict, bust_threshold: dict,
+                        max_cycles_per_batch: int = EVENTS_BATCH_CYCLES):
+    """Training-split events carrying only what the baseline ladder fits on.
+
+    Built with the shipped builder (`pv.build_event_frame`) driven by an all-NaN
+    prediction vector, rather than a second reduction written here. That matters more
+    than it looks: `run_baselines`' own docstring says a baseline comparison is worth
+    nothing unless both sides see the same rows, the same labels and the same split
+    boundary, and a parallel implementation is exactly how those drift apart - silently,
+    and in the model's favour. The same builder producing both sides is the guarantee.
+
+    An all-NaN `pred_err` leaves `pred_err_*` and `conf_*` NaN or absent and changes
+    nothing else, which is checked against real rows rather than argued:
+    `test_a_nan_prediction_changes_nothing_the_ladder_reads`, and on the live run's own
+    caches - 79,920 real held-out events, all twenty baseline-fit columns bit-identical
+    to the file built the expensive way with all eight regressors run.
+
+    Streamed a batch of forecast dates at a time and reduced to event grain before
+    anything is held: the paired rows behind 2,000 cycles are ~420 million, the events
+    they reduce to are 13.3 million, and only the second number is ever in memory.
+    Measured on the 17-year caches: ~4 minutes, 1.08 GB.
+    """
+    import pyarrow.parquet as pq
+
+    read_cols = sorted(set(fe.EVENT_KEYS) | {
+        "variable", "forecast_value", "observed_value", "ensemble_spread",
+        "abs_error", "region_id", "season"})
+    frames = []
+    for year in years:
+        path = cached_paths[year]
+        present = pd.to_datetime(pq.read_table(path, columns=["init_date"])
+                                 .column("init_date").unique().to_pandas())
+        mine = set(present) & {pd.Timestamp(c) for c in cycles}
+        for batch in _cycle_batches(mine, max_cycles_per_batch):
+            df = pd.read_parquet(path, columns=read_cols,
+                                 filters=[("init_date", "in", list(batch))])
+            if df.empty:
+                continue
+            df = attach_hbf_column(df, hbf)
+            ev = _events_float32(pv.build_event_frame(
+                df, pd.Series(np.nan, index=df.index, dtype=float),
+                p90_error, bust_threshold, hbf, copy_input=False))
+            frames.append(ev[baseline_fit_columns(ev)])
+            del df, ev
+            gc.collect()
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+
+def emit_baseline_fit_events_for_run(run_id: str, cache_dir: Path,
+                                     max_cycles_per_batch: int = EVENTS_BATCH_CYCLES) -> dict:
+    """Backfill the train-split rows the baseline ladder needs, for a pooled run.
+
+    Rebuilds the exact cycles the run's classifier was fitted on - `fit_cycles` is a
+    fixed-seed sample, so they are reproducible from the manifest alone - and refuses
+    unless the rebuilt row count equals the run's own recorded `n_train`. A ladder whose
+    baselines saw different training rows than the model did is not a comparison, and
+    nothing downstream could tell from the file that they had.
+
+    Writes beside the eval events, under its own name. It is deliberately NOT folded into
+    `<run_id>.parquet` as a `train` split: these rows carry no `pred_err_*` or `conf_*`,
+    and a frame where some rows are whole events and others are not is the kind of thing
+    that reads as complete until someone trusts it.
+    """
+    import json as _json
+
+    from app.config import settings
+    from app.db.base import resolve_path
+    from app.ml import registry
+
+    rd = registry.run_dir(run_id)
+    manifest = _json.loads((rd / "manifest.json").read_text())
+    train_years = list(manifest["pooled_train_years"])
+    test_year = int(manifest["test_year"])
+    cached = {y: Path(cache_dir) / f"paired_{y}.parquet" for y in train_years + [test_year]}
+    missing = [str(p) for p in cached.values() if not p.exists()]
+    if missing:
+        raise FileNotFoundError(f"cached years this run was trained on are missing: {missing}")
+
+    thr = registry.load_thresholds(run_id)
+    hbf = registry.load_historical_bust_freq(run_id)
+    saved = registry.load_metrics(run_id) or {}
+    n_train = (((saved.get("classifier") or {}).get("train")) or {}).get("n")
+    if thr is None or n_train is None:
+        raise ValueError(f"{run_id} lacks thresholds or a recorded n_train - nothing to "
+                         f"rebuild the ladder's training rows against")
+
+    train_c, _, _ = pooled_split(cached, test_year)
+    events = baseline_fit_events(cached, train_years, fit_cycles(train_c), hbf,
+                                 thr.p90_error, thr.bust_threshold,
+                                 max_cycles_per_batch=max_cycles_per_batch)
+    if len(events) != int(n_train):
+        raise ValueError(
+            f"{run_id}: rebuilt {len(events):,} training events, but the run recorded "
+            f"{int(n_train):,} - refusing to fit a ladder on rows the model did not see")
+
+    # Same directory `train_pipeline._emit_eval_events` writes to; it computes it inline
+    # rather than exposing a constant, so this repeats the expression rather than
+    # inventing a second location for the ladder's inputs.
+    out = (resolve_path(settings.data_dir) / "analysis" / "eval_events"
+           / f"{run_id}_baselinefit.parquet")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    events.to_parquet(out, index=False, compression="zstd")
+    return {"run_id": run_id, "train_events": len(events),
+            "train_cycles": int(events["init_date"].nunique()), "path": str(out)}
+
+
 def emit_eval_events_for_run(run_id: str, cache_dir: Path,
                              max_cycles_per_batch: int = EVENTS_BATCH_CYCLES) -> dict:
     """Backfill the eval events for a pooled run that finished without them.
@@ -1379,14 +1521,13 @@ def _publish_eval_events(run_id: str, clf_art, event_va, event_te):
     per-lead-day POD/FAR table, the confusion counts or the bust case study - the deck had
     to be built from a model that was not the one serving the site.
 
-    This does NOT make the baseline ladder work. `scripts/run_baselines` needs a `train`
-    split too - it exits rather than degrading, and `bl.fit_all(train)` is where the
-    climatology baseline is fitted - and the pooled train split is 13,320,000 rows against
-    the test split's 2,430,900. `_emit_eval_events` copies each split and concatenates, so
-    carrying it would mean a multi-gigabyte copy and a larger concat in the parent process
-    at the end of a seventeen-hour run - the same parent that has already died on a 306 MB
-    allocation. The ladder limitation stays in docs/known-issues.md, deliberately, rather
-    than being half-fixed here.
+    This does not carry a `train` split, and `scripts/run_baselines` needs one -
+    `bl.fit_all(train)` is where the climatology baseline is fitted. Carrying it here is
+    still the wrong move: the pooled train split is 13,320,000 rows against the test
+    split's 2,430,900, `_emit_eval_events` copies each split and concatenates, and the
+    parent process this runs in has already died on a 306 MB allocation at the end of a
+    seventeen-hour run. The ladder is served instead by `baseline_fit_events`, which
+    rebuilds only the columns the ladder fits on and never enters this file - see there.
 
     Returns None rather than writing when there is no test split: an empty file would let
     ppt_figures report zeros as if they were measurements.
