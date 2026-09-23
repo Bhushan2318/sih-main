@@ -39,8 +39,14 @@ from app.ml import baselines as bl               # noqa: E402
 from app.ml import classifier as clf_mod         # noqa: E402
 from app.ml import verification as ver           # noqa: E402
 from app.ml import misses as miss_mod          # noqa: E402
+from app.config import settings                 # noqa: E402
+from app.db.base import resolve_path            # noqa: E402
 
-EVAL_DIR = BACKEND_DIR / "data" / "analysis" / "eval_events"
+# Resolved the same way the writer resolves it (`train_pipeline._emit_eval_events`), not
+# as a second hardcoded path. They agree whenever `data_dir` is the default, and diverge
+# silently the moment DATA_DIR is set - this script then reports "not found" for a file
+# that was written seconds earlier, somewhere else.
+EVAL_DIR = resolve_path(settings.data_dir) / "analysis" / "eval_events"
 RESULTS_MD = BACKEND_DIR.parent / "docs" / "results.md"
 HEADING = "## Baselines"
 MODEL_ROW = "Sanket bust classifier"
@@ -149,10 +155,30 @@ def main() -> int:
     train = ev[ev["split"] == "train"]
     val = ev[ev["split"] == "val"]
     test = ev[ev["split"] == "test"]
+
+    # A pooled run's eval events carry no train split on purpose - it is 13,320,000 rows,
+    # and the process that would have written them has already died once on a 306 MB
+    # allocation at the end of a seventeen-hour run.
+    # `pooled_training.emit_baseline_fit_events_for_run` rebuilds those training rows into
+    # their own file, carrying only the columns the ladder fits on, and refuses unless
+    # they are the same rows the classifier was fitted on. Picked up here by name, so a
+    # pooled run gets a real ladder instead of this script exiting - and kept in a
+    # separate file rather than merged into the events above, because those rows are not
+    # whole events and a frame where only some rows are would read as complete.
+    fit_path = path.with_name(f"{run_id}_baselinefit.parquet")
+    ladder_train_source = None
+    if train.empty and fit_path.exists():
+        train = pd.read_parquet(fit_path)
+        ladder_train_source = fit_path.name
+        print(f"ladder training rows from {fit_path.name}: {len(train):,} rows, "
+              f"{train['init_date'].nunique()} cycles")
+
     if train.empty or test.empty:
         raise SystemExit(
             f"need both splits; got train={len(train):,} test={len(test):,}. "
-            "A store with too few cycles produces no held-out split.")
+            "A store with too few cycles produces no held-out split. For a pooled run, "
+            "write the ladder's training rows first:\n"
+            f"  python -m scripts.train_pooled --emit-baseline-fit {run_id}")
     if bl.LABEL not in ev.columns:
         raise SystemExit(f"no {bl.LABEL} column - these events were built without labels")
     if val.empty:
@@ -297,6 +323,12 @@ def main() -> int:
                 "git_sha": _git_sha(),
                 "test_events": int(len(test)),
                 "test_cycles": int(n_test_cycles),
+                "train_events": int(len(train)),
+                "train_cycles": int(n_train_cycles),
+                # Names the file the baselines were fitted from when it was not the eval
+                # events themselves, so a ladder can always be traced to its training
+                # rows rather than assumed to share the model's.
+                "ladder_train_source": ladder_train_source,
                 "bust_rate": float(y_test.mean()),
                 "lead_bust_correlation": {"train": corr["train"], "test": corr["test"]},
                 "models": [
