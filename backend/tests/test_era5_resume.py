@@ -54,5 +54,17 @@ def test_rate_limit_is_not_a_fatal_error():
 
 
 def test_seconds_until_the_next_hour_is_bounded():
+    """The wait targets :00:30, not :00:00, so the bound is 3630 and not 3600.
+
+    seconds_until_next_hour aims 30 seconds PAST the hour on purpose - the limit resets
+    on the hour and waking exactly on it races the reset. So when this runs in the first
+    30 seconds of an hour the answer is legitimately over 3600: at HH:00:00 it is 3630.
+
+    The old bound of 3600 was therefore wrong for 30 seconds in every 3600, and CI hit
+    it on 2026-09-23 with `assert 3610 <= 3600` - 3610 being the value at 20 seconds
+    past the hour, from a suite that ran 07:57:11Z to 08:10:37Z and so crossed 08:00:20Z.
+    A 0.83% chance per run, which is frequent enough to be read as infrastructure and
+    rare enough never to be chased.
+    """
     s = obs.seconds_until_next_hour()
-    assert 0 < s <= 3600
+    assert 0 < s <= 3630
