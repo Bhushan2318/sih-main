@@ -1297,3 +1297,84 @@ def test_the_refusal_is_wired_into_the_function_that_makes_the_artifact(tmp_path
         {2000: tmp_path / "x.parquet"}, [2000], "temperature_c",
         {pd.Timestamp("2000-01-01")}, va, {}, tmp_path)
     assert art is not None and art.variable == "temperature_c"
+
+
+# ------------------------------------------------------- the baseline ladder's train rows
+
+
+def test_the_ladder_fits_from_these_columns_alone(_ingested_slice):
+    """`BASELINE_FIT_*` is a contract, and this is what enforces it.
+
+    Fits every baseline twice on identical real rows - once on the whole event frame,
+    once on nothing but the declared columns - and requires the predictions to be equal.
+    If a new baseline starts reading a column outside the set (a `pred_err_*`, say, which
+    would quietly make it a second model rather than a baseline), this fails here instead
+    of producing a ladder fitted on a frame missing what it needed.
+
+    Same comparison as the measurement behind the constant, which ran on 1,048,576 real
+    held-out rows and found every baseline identical to 0.000e+00.
+    """
+    import numpy as np
+    from app.features import pivot as pv
+    from app.ml import baselines as bl
+    from app.storage.parquet_store import read_dataset
+
+    paired = fe.build_training_frame(read_dataset())
+    cycles = sorted(paired["init_date"].dropna().unique())
+    pred = pd.Series(np.random.default_rng(3).random(len(paired)), index=paired.index)
+    p90 = {v: 5.0 for v in paired["variable"].unique()}
+    thr = {v: 3.0 for v in paired["variable"].unique()}
+    ev = pv.build_event_frame(paired, pred, p90, thr)
+    assert len(ev) > 4 and len(cycles) >= 2
+
+    keep = pt.baseline_fit_columns(ev)
+    assert bl.LABEL in keep and "lead_time_days" in keep
+    assert not [c for c in keep if c.startswith("pred_err_") or c.startswith("conf_")]
+
+    half = max(2, len(ev) // 2)
+    tr_full, te_full = ev.iloc[:half], ev.iloc[half:]
+    full = bl.fit_all(tr_full)
+    thin = bl.fit_all(tr_full[keep])
+    for name, model in full.items():
+        np.testing.assert_array_equal(
+            model.predict_proba(te_full), thin[name].predict_proba(te_full[keep]),
+            err_msg=f"{name} reads an event column outside BASELINE_FIT_*")
+
+
+def test_a_nan_prediction_changes_nothing_the_ladder_reads(_ingested_slice):
+    """The whole saving depends on this: driving the shipped event builder with an
+    all-NaN prediction vector must leave every baseline-fit column untouched.
+
+    If it did not, `baseline_fit_events` would be fitting the ladder on rows that differ
+    from the ones the model was scored against - which is the exact failure
+    `run_baselines`' docstring warns about, and which nothing downstream could detect.
+
+    Verified here on real-derived rows, and separately against the live 17-year run: all
+    twenty baseline-fit columns bit-identical across 79,920 real held-out events built
+    the expensive way with all eight regressors run.
+    """
+    import numpy as np
+    from app.features import pivot as pv
+    from app.storage.parquet_store import read_dataset
+
+    paired = fe.build_training_frame(read_dataset())
+    p90 = {v: 5.0 for v in paired["variable"].unique()}
+    thr = {v: 3.0 for v in paired["variable"].unique()}
+
+    real = pv.build_event_frame(paired.copy(),
+                                pd.Series(np.random.default_rng(5).random(len(paired)),
+                                          index=paired.index), p90, thr)
+    blank = pv.build_event_frame(paired.copy(),
+                                 pd.Series(np.nan, index=paired.index, dtype=float),
+                                 p90, thr)
+
+    keep = pt.baseline_fit_columns(real)
+    assert len(keep) > len(fe.EVENT_KEYS), "no baseline-fit columns were built at all"
+    assert set(keep) <= set(blank.columns)
+    pd.testing.assert_frame_equal(real[keep].reset_index(drop=True),
+                                  blank[keep].reset_index(drop=True))
+
+    # And the prediction really was dropped, so this is not passing by accident.
+    assert real["pred_err_temperature_c"].notna().any()
+    assert ("pred_err_temperature_c" not in blank.columns
+            or blank["pred_err_temperature_c"].isna().all())

@@ -936,19 +936,30 @@ here rather than discovered live.
   round-trip does not restore the sklearn wrapper's `enable_categorical`, so SHAP refused
   a reloaded model ("Invalid columns: season: cat") and silently degraded to feature
   importance. Restored on load; the SHAP values then equal the in-memory model's exactly.
-- **Pooled runs have no baseline ladder yet, and the eval-events work did not change
-  that.** The pooled path now writes `data/analysis/eval_events/<run_id>.parquet` with the
-  validation and held-out splits, which is enough for `scripts/ppt_figures.py` - it filters
-  `split == "test"`. It is not enough for `scripts/run_baselines`, which needs a `train`
-  split as well: it raises `SystemExit` rather than degrading, and `bl.fit_all(train)` is
-  where the climatology baseline is fitted, so the two baseline figures on the deck come
-  from that path. The pooled train split is 13,320,000 rows against the held-out split's
-  2,430,900, and `_emit_eval_events` copies each split before concatenating them, so
-  carrying it would put a multi-gigabyte copy and a larger concat in the parent at the end
-  of a seventeen-hour run - the parent that has already died on a 306 MB allocation.
-  Writing the splits incrementally rather than concatenating would fix it; until someone
-  does, the Model page reports no baseline table for a pooled model rather than a stale
-  one, and the baseline figures must come from the non-pooled path.
+- **A pooled run's baseline ladder is a separate step, and a run that skips it silently
+  loses three Model-page cards.** `scripts/run_baselines` needs a `train` split, which the
+  pooled eval events do not carry: that split is 13,320,000 rows against the held-out
+  2,430,900, `_emit_eval_events` copies each split before concatenating, and the parent
+  process has already died on a 306 MB allocation at the end of a seventeen-hour run. So
+  the ladder's training rows are rebuilt separately -
+  `train_pooled.py --emit-baseline-fit <run_id>`, then `run_baselines --run-id <run_id>
+  --write-run-artifact`. **Run both, or `baselines.json` and `misses.json` are absent from
+  the run directory and the packaged artifact.** That is how `run_20260922T043925Z` went
+  live with the economic-value card, the "where it was wrong" card and the reliability
+  plot all rendering nothing: `EconomicValueCard` returns `null` when
+  `baselines.models` has no `is_model` row, so it vanishes without so much as an empty
+  state. The rebuild is cheap because the ladder reads no regressor output - see
+  `pooled_training.BASELINE_FIT_BASE_COLUMNS` - so no regressor runs: ~4 minutes and
+  1.08 GB for 2,000 cycles, measured 2026-09-23. Conformal `q_hat` is still `nan` for a
+  pooled run, because that needs a `val` split carrying `model_proba`, which does require
+  the regressors.
+- **Three things the pooled path dropped that the non-pooled path produces, found one at
+  a time by a person noticing.** Eval events (fixed), the baseline ladder and
+  `misses.json` (fixed here), and before either, the deck's figures. Each was found
+  because a deliverable was missing, not because anything failed. `full_retrain_pooled`
+  and `full_retrain` have no test asserting they produce the same set of run-directory
+  artifacts, and until they do, assume the next pooled run is missing something nobody has
+  looked for yet.
 - **`jump_rel_climatology` is always missing for pooled models.** The pooled cache builder
   fits no jump climatology, so the column is entirely NaN in every cached year: the models
   never learned from it, and serving leaves it missing too, which is consistent but means
