@@ -616,7 +616,49 @@ def train_variable_regressor_pooled(cached_paths: dict, train_years: list, varia
         Xva = reg_mod._prep_X(va, cols)
         if len(va) >= 5:
             metrics["val"] = reg_mod._evaluate(va["abs_error"], model.predict(Xva))
+    # Refused here or never - see regressor_is_unusable. Downstream cannot tell: the
+    # classifier trains on whatever this produces and learns to read it, so a regressor
+    # serving absurd values still yields a healthy-looking bust distribution.
+    if regressor_is_unusable(metrics.get("val") or {}):
+        m = metrics["val"]
+        print(f"[pooled] {variable} REFUSED: held-out r2 {m['r2']:.4g}, MAE {m['mae']:.4g} "
+              f"against {m['baseline_mae_predict_mean']:.4g} for predicting the mean - "
+              f"worse than the trivial predictor on both, so there is nothing to serve",
+              file=sys.stderr, flush=True)
+        return None
     return reg_mod.RegressorArtifact(variable, model, cols, metrics, n_train, len(va))
+
+
+def regressor_is_unusable(metrics: dict) -> bool:
+    """Whether a regressor's held-out metrics say it is worse than predicting the mean.
+
+    Real failure, run_20260922T100055Z on 2026-09-22: temperature_c trained without
+    raising and produced held-out r2 -254107, serving absolute-error predictions from
+    -80,235 to +270 degrees against a bust threshold of 2.861. Nothing downstream caught
+    it. The promotion gate reads the classifier's ROC-AUC, and the classifier had been
+    trained on those same values, so it had learned to read them - the served bust
+    distribution sat 0.008 from the good model's median and a degeneracy check passed it
+    (see serving_sanity: broken before training is internally consistent and invisible to
+    a distribution check; broken after training is what that check catches). A regressor
+    this bad can only be refused where it is made.
+
+    Both tests must fail, not either. Squared error alone is dominated by a few outliers,
+    so a negative r2 on a hard variable is not by itself damning - wind_direction_deg
+    legitimately serves r2 0.41 - and a variable can be weak and still be worth having.
+    Worse on squared error AND worse on absolute error than the trivial predictor is not
+    ambiguous: there is nothing in it to serve.
+
+    Missing or non-finite metrics return False. This refuses on evidence, not on its
+    absence; a variable with too few validation rows to score is already handled.
+    """
+    r2 = metrics.get("r2")
+    mae = metrics.get("mae")
+    baseline = metrics.get("baseline_mae_predict_mean")
+    if r2 is None or mae is None or baseline is None:
+        return False
+    if not (np.isfinite(r2) and np.isfinite(mae) and np.isfinite(baseline)):
+        return False
+    return bool(r2 < 0.0 and mae > baseline)
 
 
 def assign_folds(train_cycles: set, n_splits: int = 3) -> dict:
@@ -1211,6 +1253,160 @@ def finalize_for_serving(run_id: str, cache_dir: Path,
 FIT_MODES = ("sample", "staged")
 
 
+def emit_eval_events_for_run(run_id: str, cache_dir: Path,
+                             max_cycles_per_batch: int = EVENTS_BATCH_CYCLES) -> dict:
+    """Backfill the eval events for a pooled run that finished without them.
+
+    Rebuilds the held-out test year's events from the caches with the run's own saved
+    regressors and thresholds - the same batched path the run used - scores them with its
+    own classifier, and writes the file the deck and the baseline ladder read.
+
+    Refuses unless those rebuilt events reproduce the run's recorded held-out ROC-AUC. A
+    figure on a slide has to be of the rows the model was actually scored on, and there is
+    no way to tell from the file itself that it is not.
+    """
+    import json as _json
+
+    from app.ml import registry
+
+    rd = registry.run_dir(run_id)
+    manifest = _json.loads((rd / "manifest.json").read_text())
+    train_years = list(manifest["pooled_train_years"])
+    test_year = int(manifest["test_year"])
+    cached = {y: Path(cache_dir) / f"paired_{y}.parquet" for y in train_years + [test_year]}
+    missing = [str(p) for p in cached.values() if not p.exists()]
+    if missing:
+        raise FileNotFoundError(f"cached years this run was trained on are missing: {missing}")
+
+    regs = registry.load_regressors(run_id)
+    clf, clf_cols = registry.load_classifier(run_id)
+    thr = registry.load_thresholds(run_id)
+    hbf = registry.load_historical_bust_freq(run_id)
+    saved = registry.load_metrics(run_id) or {}
+    saved_auc = (((saved.get("classifier") or {}).get("test")) or {}).get("roc_auc")
+    if clf is None or thr is None or not regs or saved_auc is None:
+        raise ValueError(f"{run_id} lacks a classifier, thresholds, regressors or a saved "
+                         f"held-out ROC-AUC - nothing to emit eval events against")
+
+    _, _, test_c = pooled_split(cached, test_year)
+    needed = set(_feature_columns_for(cached, train_years)) | set(fe.EVENT_KEYS) | {
+        "variable", "forecast_value", "observed_value", "ensemble_spread",
+        "abs_error", "region_id", "season"}
+    needed.discard("historical_bust_frequency_region_season")
+
+    artifacts = {var: reg_mod.RegressorArtifact(variable=var, model=model,
+                                                feature_columns=cols, metrics={},
+                                                n_train=0, n_val=0)
+                 for var, (model, cols) in regs.items()}
+    event_te, _ = test_event_frame(cached[test_year], test_c, hbf, thr.p90_error,
+                                   thr.bust_threshold, artifacts, sorted(needed),
+                                   max_cycles_per_batch=max_cycles_per_batch)
+    if event_te.empty:
+        raise ValueError(f"{run_id}: rebuilt no test events from {cached[test_year]}")
+
+    clf_art = clf_mod.ClassifierArtifact(model=clf, feature_columns=clf_cols, metrics={},
+                                         n_train=0, n_val=len(event_te),
+                                         train_bust_rate=float("nan"))
+    got = clf_mod._evaluate(event_te["y_bust"],
+                            clf_mod.predict_bust_probability(clf_art, event_te))
+    if abs(got["roc_auc"] - float(saved_auc)) > 1e-6:
+        raise ValueError(f"{run_id}: rebuilt test events score held-out ROC-AUC "
+                         f"{got['roc_auc']:.6f}, but the run recorded {float(saved_auc):.6f} "
+                         f"- refusing to publish figures of events it was not scored on")
+
+    path = _publish_eval_events(run_id, clf_art, None, event_te)
+    return {"run_id": run_id, "test_events": len(event_te),
+            "held_out_roc_auc": got["roc_auc"], "path": str(path)}
+
+
+# What an eval-events frame must carry. This is deliberately WIDER than what the readers
+# touch - conf_*, bust_ratio, month, region_id and historical_bust_frequency_region_season
+# are required here and read by neither - so do not treat it as the definitive read-set.
+# It is the shape of a complete event frame, and being stricter than necessary is the
+# right default for a file nothing else validates.
+#
+# The part that is read: the headline metrics, confusion counts and per-lead-day POD/FAR
+# need only y_bust, model_proba, split and lead_time_days; the bust case study reads the
+# per-variable columns through `getattr(row, f"pred_err_{var}", float("nan"))`. That
+# default is why any of this is written down - a missing column raises nothing there, it
+# leaves the case study empty and still produces a deck. Contract measured against a
+# known-good non-pooled eval-events file, 2026-09-23. `split` and `model_proba` are added
+# by the writer, so they are not required of the frame handed to it.
+_PPT_EVENT_COLUMNS = ("region_id", "init_date", "valid_date", "lead_time_days",
+                      "month", "season", "spread_mean", "spread_max",
+                      "historical_bust_frequency_region_season", "bust_ratio", "y_bust")
+_PPT_EVENT_PER_VARIABLE = ("actual_err", "conf", "pred_err", "spread")
+
+
+def eval_event_contract_gaps(events) -> list:
+    """Columns ppt_figures reads that this frame does not carry, per variable it holds.
+
+    The per-variable requirement is derived from the `pred_err_*` columns present rather
+    than hard-coded, because `skipped_variables` legitimately shrinks the set. It can
+    shrink it; it cannot empty it. Without the floor below, a frame carrying no
+    per-variable columns at all would require only the base eleven and pass - which is
+    the same false green as deriving a test fixture from the code it tests.
+    """
+    have = set(events.columns)
+    variables = sorted({c[len("pred_err_"):] for c in have if c.startswith("pred_err_")})
+    if not variables:
+        return ["pred_err_<variable> (the frame carries no per-variable columns at all)"]
+    want = set(_PPT_EVENT_COLUMNS)
+    for var in variables:
+        want |= {f"{prefix}_{var}" for prefix in _PPT_EVENT_PER_VARIABLE}
+    return sorted(want - have)
+
+
+def _emit_eval_events_for_pooled(run_id: str, clf_art, splits: dict) -> Path:
+    """Indirection so the pooled path writes the same file `--emit-eval` writes.
+
+    Kept as a one-line wrapper rather than importing train_pipeline at the call site,
+    because the schema those readers depend on is train_pipeline's and must stay its to
+    change - two writers of one file drift, and the drift shows up as a wrong number on a
+    slide rather than as an error.
+    """
+    from app.ml.train_pipeline import _emit_eval_events
+
+    return _emit_eval_events(run_id, clf_art, splits)
+
+
+def _publish_eval_events(run_id: str, clf_art, event_va, event_te):
+    """The scored held-out rows, written where the deck and the baseline ladder read them.
+
+    `scripts/ppt_figures.py` reads data/analysis/eval_events/<run_id>.parquet and filters
+    `split == "test"`. The pooled path scored exactly those rows to report its held-out
+    metrics and then dropped them, so a pooled model could produce a ROC-AUC but not the
+    per-lead-day POD/FAR table, the confusion counts or the bust case study - the deck had
+    to be built from a model that was not the one serving the site.
+
+    This does NOT make the baseline ladder work. `scripts/run_baselines` needs a `train`
+    split too - it exits rather than degrading, and `bl.fit_all(train)` is where the
+    climatology baseline is fitted - and the pooled train split is 13,320,000 rows against
+    the test split's 2,430,900. `_emit_eval_events` copies each split and concatenates, so
+    carrying it would mean a multi-gigabyte copy and a larger concat in the parent process
+    at the end of a seventeen-hour run - the same parent that has already died on a 306 MB
+    allocation. The ladder limitation stays in docs/known-issues.md, deliberately, rather
+    than being half-fixed here.
+
+    Returns None rather than writing when there is no test split: an empty file would let
+    ppt_figures report zeros as if they were measurements.
+    """
+    if event_te is None or len(event_te) == 0:
+        return None
+    gaps = eval_event_contract_gaps(event_te)
+    if gaps:
+        raise ValueError(
+            f"{run_id}: the held-out events lack {gaps}, which ppt_figures reads. It reads "
+            f"the per-variable ones through getattr(row, ..., float('nan')), so a missing "
+            f"column raises nothing there - it empties the bust case study and still emits "
+            f"a deck. Refusing here, where it is still visible.")
+    splits = {}
+    if event_va is not None and len(event_va):
+        splits["val"] = event_va
+    splits["test"] = event_te
+    return _emit_eval_events_for_pooled(run_id, clf_art, splits)
+
+
 def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
                         run_id: str | None = None, fit_mode: str = "sample") -> "TrainReport":
     """The pooled-training equivalent of `train_pipeline.full_retrain`: any number of
@@ -1439,6 +1635,13 @@ def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
         "split_cycles": report.split_cycles, "modelled_variables": report.modelled_variables,
         "skipped_variables": report.skipped_variables,
     })
+
+    # The rows this run was just scored on, kept rather than dropped - see
+    # _publish_eval_events. Written before finalize so that a run whose SHAP step fails
+    # still leaves the deck and the baseline ladder something to read.
+    eval_path = _publish_eval_events(rid, clf_art, event_va, event_te)
+    if eval_path is not None:
+        print(f"[pooled] eval events -> {eval_path}", file=sys.stderr, flush=True)
 
     # Servable, not just saved - see finalize_for_serving. In its own process: it reads the
     # validation year again, and this parent has held a seventeen-year job's worth of arena.

@@ -1110,3 +1110,190 @@ def test_finalize_refuses_a_run_whose_classifier_does_not_reproduce_its_metrics(
     metrics_path.write_text(json.dumps(metrics))
     with pytest.raises(ValueError, match="validation ROC-AUC"):
         pt.finalize_for_serving(report.run_id, cache_dir)
+
+
+# --- eval events for a pooled run ----------------------------------------------------
+
+def test_a_pooled_run_emits_the_eval_events_the_deck_and_ladder_read(tmp_path, monkeypatch):
+    """scripts/ppt_figures.py and scripts/run_baselines both read one file.
+
+    They read data/analysis/eval_events/<run_id>.parquet, filter split == "test", and need
+    y_bust, model_proba and lead_time_days. full_retrain_pooled scored exactly those rows
+    and then threw them away, so a pooled model could not produce the per-lead-day POD/FAR
+    table, the confusion counts or the baseline ladder - which meant the deck had to be
+    built from a model that was not the one serving the site.
+    """
+    import pandas as pd
+
+    from app.ml import pooled_training as pt
+
+    written = {}
+
+    def fake_emit(run_id, clf_art, splits):
+        written["run_id"] = run_id
+        written["splits"] = {k: len(v) for k, v in splits.items() if v is not None}
+        return tmp_path / f"{run_id}.parquet"
+
+    monkeypatch.setattr(pt, "_emit_eval_events_for_pooled", fake_emit)
+
+    ev = pd.DataFrame({c: [0, 1] for c in pt._PPT_EVENT_COLUMNS})
+    for prefix in pt._PPT_EVENT_PER_VARIABLE:
+        ev[f"{prefix}_rainfall_mm"] = [0.0, 1.0]
+    out = pt._publish_eval_events("run_z", object(), ev, ev.iloc[:1])
+    assert written["run_id"] == "run_z"
+    # Test is what the deck reads; validation is kept because the ladder compares splits.
+    assert written["splits"] == {"val": 2, "test": 1}
+    assert out is not None
+
+
+def test_eval_events_are_never_published_from_an_empty_test_split():
+    """An empty file is worse than none: ppt_figures would report zeros as measurements."""
+    import pandas as pd
+
+    from app.ml import pooled_training as pt
+
+    assert pt._publish_eval_events("run_z", object(), pd.DataFrame(), pd.DataFrame()) is None
+
+
+def test_the_case_study_columns_are_required_on_write_not_discovered_on_a_blank_slide():
+    """ppt_figures reads the per-variable columns with a NaN default, so absence is silent.
+
+    `getattr(row, f"pred_err_{var}", float("nan"))` turns a missing column into NaN, the
+    case-study ranking then has nothing to rank on, and the script emits a deck with an
+    empty bust case study and no error. Measured on a known-good non-pooled eval-events
+    file 2026-09-23: the full frame produced a case study (Khordha, rainfall_mm, actual
+    error 97.6 against a 13.58 threshold); the same rows cut to the headline columns
+    produced region None, variable None and zero exceedances, silently.
+    """
+    import pandas as pd
+
+    from app.ml import pooled_training as pt
+
+    full = pd.DataFrame({c: [0] for c in pt._PPT_EVENT_COLUMNS})
+    for prefix in pt._PPT_EVENT_PER_VARIABLE:
+        full[f"{prefix}_rainfall_mm"] = [0]
+    assert pt.eval_event_contract_gaps(full) == []
+
+    # The headline columns alone are the seven-column file that produced a blank case
+    # study, so they must come back as a gap - and as the per-variable gap specifically.
+    # See test_a_frame_with_no_per_variable_columns_is_a_gap_not_a_pass for why that
+    # floor has to be explicit rather than derived.
+    gaps = pt.eval_event_contract_gaps(full[["y_bust", "lead_time_days"]])
+    assert gaps and any("per-variable" in g for g in gaps)
+
+    dropped = full.drop(columns=["actual_err_rainfall_mm"])
+    assert pt.eval_event_contract_gaps(dropped) == ["actual_err_rainfall_mm"]
+    with pytest.raises(ValueError, match="case study"):
+        pt._publish_eval_events("run_z", object(), None, dropped)
+
+
+def test_a_frame_with_no_per_variable_columns_is_a_gap_not_a_pass():
+    """Deriving the requirement from the data means an absent requirement cannot fail.
+
+    The per-variable requirement is read off the `pred_err_*` columns present, because
+    `skipped_variables` legitimately shrinks the set. With no floor, a frame carrying none
+    of them requires only the base columns and passes - the same frame shape that empties
+    the bust case study. skipped_variables can shrink the set; it cannot empty it.
+    """
+    import pandas as pd
+
+    from app.ml import pooled_training as pt
+
+    base_only = pd.DataFrame({c: [0] for c in pt._PPT_EVENT_COLUMNS})
+    assert pt.eval_event_contract_gaps(base_only) != []
+
+    one_variable = base_only.copy()
+    for prefix in pt._PPT_EVENT_PER_VARIABLE:
+        one_variable[f"{prefix}_temperature_c"] = [0.0]
+    assert pt.eval_event_contract_gaps(one_variable) == []
+    # A run that skipped seven of eight variables is still publishable.
+    assert pt.eval_event_contract_gaps(
+        one_variable.drop(columns=["spread_temperature_c"])) == ["spread_temperature_c"]
+
+
+# --- a regressor that is worse than useless must not become an artifact -------------
+
+def test_a_regressor_worse_than_predicting_the_mean_is_refused():
+    """run_20260922T100055Z saved a temperature regressor with held-out r2 -254107.
+
+    It predicted absolute temperature errors from -80,235 to +270 degrees. The promotion
+    gate did not see it, because the gate reads the classifier's ROC-AUC and the
+    classifier had been TRAINED on those values, so it had learned to read them - the
+    served bust distribution was 0.008 from the good model's median and a degeneracy
+    check passed it. Nothing downstream can catch this; it has to be refused where it is
+    made. Rule 3: a model that got worse does not ship.
+
+    Both conditions must fail, not either: a genuinely hard variable can have a weak r2
+    while still beating the trivial predictor, and wind_direction_deg legitimately sits
+    at r2 0.41. Worse on squared error AND worse on absolute error is not ambiguous.
+    """
+    from app.ml import pooled_training as pt
+
+    # The real numbers from that run's temperature_c, and from the run that is serving.
+    assert pt.regressor_is_unusable({"r2": -254107.19, "mae": 5.746,
+                                     "baseline_mae_predict_mean": 0.92})
+    assert not pt.regressor_is_unusable({"r2": 0.5783, "mae": 0.6497,
+                                         "baseline_mae_predict_mean": 0.92})
+    # Weak but genuinely useful: beats the mean on both. wind_direction_deg's shape.
+    assert not pt.regressor_is_unusable({"r2": 0.41, "mae": 38.0,
+                                         "baseline_mae_predict_mean": 55.3})
+    # Negative r2 but still beating the mean on absolute error - not refused, because
+    # squared error alone is dominated by a handful of outliers.
+    assert not pt.regressor_is_unusable({"r2": -0.2, "mae": 0.8,
+                                         "baseline_mae_predict_mean": 0.92})
+    # No metrics at all cannot be judged, and must not be refused on a guess.
+    assert not pt.regressor_is_unusable({})
+    assert not pt.regressor_is_unusable({"r2": float("nan"), "mae": 1.0,
+                                         "baseline_mae_predict_mean": 0.9})
+
+
+def test_the_refusal_is_wired_into_the_function_that_makes_the_artifact(tmp_path, monkeypatch):
+    """The predicate being right is not the same as it being reached.
+
+    CI installs requirements.txt and requirements-dev.txt only, so torch is absent and
+    every end-to-end pooled test skips - which means a green CI run says nothing about
+    whether the refusal actually fires. This test calls train_variable_regressor_pooled
+    directly. It needs no torch: torch is imported only inside _cuda_available, which
+    full_retrain_pooled calls and this function does not. So the wiring is covered
+    wherever the suite runs, not only where a GPU stack happens to be installed.
+
+    The fit itself is stubbed - this is a plumbing test and no number in it is a metric.
+    """
+    import numpy as np
+    import pandas as pd
+
+    from app.ml import pooled_training as pt
+
+    class _Stub:
+        """Returns a constant far from the target, so it loses to predicting the mean."""
+        def __init__(self, value):
+            self.value = value
+
+        def predict(self, X):
+            return np.full(len(X), self.value, dtype=float)
+
+    cols = ["ensemble_spread"]
+    monkeypatch.setattr(pt, "_feature_columns_for", lambda *a, **k: cols)
+    monkeypatch.setattr(pt, "_fit_booster", lambda *a, **k: (object(), 1000))
+    monkeypatch.setattr(pt, "attach_hbf_column", lambda df, hbf: df)
+
+    rng = np.random.default_rng(0)
+    va = pd.DataFrame({"variable": "temperature_c",
+                       "ensemble_spread": rng.random(200),
+                       "abs_error": rng.random(200)})
+
+    # A model predicting 500 where the target is in [0, 1): worse than the mean on both
+    # squared and absolute error, which is the shape run_20260922T100055Z shipped.
+    monkeypatch.setattr(pt, "_booster_to_sklearn", lambda *a, **k: _Stub(500.0))
+    assert pt.train_variable_regressor_pooled(
+        {2000: tmp_path / "x.parquet"}, [2000], "temperature_c",
+        {pd.Timestamp("2000-01-01")}, va, {}, tmp_path) is None
+
+    # A model predicting near the mean of the target is weak, not unusable, and must
+    # still produce an artifact - the floor exists to catch damage, not mediocrity.
+    monkeypatch.setattr(pt, "_booster_to_sklearn",
+                        lambda *a, **k: _Stub(float(va["abs_error"].mean())))
+    art = pt.train_variable_regressor_pooled(
+        {2000: tmp_path / "x.parquet"}, [2000], "temperature_c",
+        {pd.Timestamp("2000-01-01")}, va, {}, tmp_path)
+    assert art is not None and art.variable == "temperature_c"

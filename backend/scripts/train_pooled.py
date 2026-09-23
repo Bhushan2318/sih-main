@@ -39,6 +39,10 @@ def main() -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--train-years", help="2016-2018, or 2016,2017,2018")
     ap.add_argument("--test-year", type=int)
+    ap.add_argument("--emit-eval", metavar="RUN_ID",
+                    help="do not train: rebuild the held-out events a finished pooled run "
+                         "was scored on and write data/analysis/eval_events/<RUN_ID>.parquet, "
+                         "which scripts/ppt_figures.py and scripts/run_baselines read")
     ap.add_argument("--finalize", metavar="RUN_ID",
                     help="do not train: write the SHAP summary and manifest entries a "
                          "finished pooled run needs before it can be served, and exit")
@@ -48,6 +52,14 @@ def main() -> int:
                     help="sample: regressors fit on MAX_FIT_CYCLES cycles; staged: on every "
                          "training cycle, boosted chunk by chunk")
     args = ap.parse_args()
+
+    if args.emit_eval:
+        # Publishes scored rows, trains nothing, so the retrain guard does not apply.
+        from app.ml.pooled_training import emit_eval_events_for_run
+
+        print(json.dumps(emit_eval_events_for_run(args.emit_eval, args.cache_dir),
+                         indent=2, default=str))
+        return 0
 
     if args.finalize:
         # Makes an already-trained run servable; trains nothing, so the retrain guard
@@ -59,7 +71,8 @@ def main() -> int:
         return 0
 
     if not args.train_years or args.test_year is None:
-        ap.error("--train-years and --test-year are required unless --finalize is given")
+        ap.error("--train-years and --test-year are required unless --finalize or "
+                 "--emit-eval is given")
 
     from app.config import settings
     if not settings.allow_local_retrain:
