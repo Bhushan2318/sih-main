@@ -446,7 +446,7 @@ def test_the_example_is_honest_when_the_truncated_list_holds_none():
 # --------------------------------------------------- filling NOMADS gaps from S3
 # NOMADS answers a burst it dislikes with a 302 to its throttle page, and the window
 # outlasts the retry ladder - so a mid-pull throttle leaves contiguous holes that only a
-# second transport can fill. These stay offline: `_fetch_step_s3` and `_extract_points`
+# second transport can fill. These stay offline: `_fetch_step_s3` and `_extract_districts`
 # are stubbed, because what is being protected is the bookkeeping, not the download.
 
 def _stub_s3(monkeypatch, recoverable):
@@ -457,8 +457,8 @@ def _stub_s3(monkeypatch, recoverable):
         return b"GRIB-stub"
 
     monkeypatch.setattr(gefs, "_fetch_step_s3", fake_fetch)
-    monkeypatch.setattr(gefs, "_extract_points",
-                        lambda blob, cities, scratch: {"t2m_c": [1.0]})
+    monkeypatch.setattr(gefs, "_extract_districts",
+                        lambda blob, scratch: {"t2m_c": [1.0]})
 
 
 def _recover(monkeypatch, failed, recoverable):
@@ -467,7 +467,7 @@ def _recover(monkeypatch, failed, recoverable):
     _stub_s3(monkeypatch, recoverable)
     step_values: dict = {}
     got = gefs._recover_steps_from_s3(
-        date(2026, 8, 31), "00", failed, cities=pd.DataFrame(), scratch=None,
+        date(2026, 8, 31), "00", failed, scratch=None,
         step_values=step_values, report=report, workers=4,
     )
     return report, step_values, got
@@ -522,10 +522,14 @@ def test_fetch_cycle_repairs_gaps_before_the_daily_reduction(monkeypatch, tmp_pa
     # The wiring, not the helper: a NOMADS pull that loses steps must hand the reduction a
     # repaired set, because `_reduce_to_daily` is where a short day becomes a short mean.
     steps_lost = {("gec00", 12), ("gec00", 15)}
-    monkeypatch.setattr(gefs, "load_cities",
-                        lambda: pd.DataFrame({"city": ["Pune"], "state": ["MH"],
-                                              "region": ["West"], "lat": [18.5],
-                                              "lon": [73.9]}))
+    # One district stands in for the registry: this protects the fetch bookkeeping, not
+    # the aggregation, which tests/test_live_district_grid.py covers.
+    monkeypatch.setattr(gefs, "_districts",
+                        lambda: pd.DataFrame({"region_id": ["IN-MH-PUNE"],
+                                              "region_name": ["Pune"],
+                                              "state_id": ["IN-MH"],
+                                              "state_name": ["Maharashtra"],
+                                              "latitude": [18.5], "longitude": [73.9]}))
 
     def fake_step(init, hh, member, fh, transport):
         if (member, fh) in steps_lost:
@@ -534,8 +538,8 @@ def test_fetch_cycle_repairs_gaps_before_the_daily_reduction(monkeypatch, tmp_pa
 
     monkeypatch.setattr(gefs, "_fetch_step", fake_step)
     monkeypatch.setattr(gefs, "_fetch_step_s3", lambda i, h, m, f: b"GRIB-stub")
-    monkeypatch.setattr(gefs, "_extract_points",
-                        lambda blob, cities, scratch: {"t2m_c": [1.0]})
+    monkeypatch.setattr(gefs, "_extract_districts",
+                        lambda blob, scratch: {"t2m_c": [1.0]})
 
     seen: dict = {}
     real = gefs._recover_steps_from_s3
@@ -563,10 +567,14 @@ def test_fetch_cycle_repairs_gaps_before_the_daily_reduction(monkeypatch, tmp_pa
 def test_an_s3_pull_does_not_try_to_repair_itself(monkeypatch, tmp_path):
     # On S3 there is no second transport to fall back to: a failure there means the step
     # genuinely is not published, and re-requesting it just doubles the wait.
-    monkeypatch.setattr(gefs, "load_cities",
-                        lambda: pd.DataFrame({"city": ["Pune"], "state": ["MH"],
-                                              "region": ["West"], "lat": [18.5],
-                                              "lon": [73.9]}))
+    # One district stands in for the registry: this protects the fetch bookkeeping, not
+    # the aggregation, which tests/test_live_district_grid.py covers.
+    monkeypatch.setattr(gefs, "_districts",
+                        lambda: pd.DataFrame({"region_id": ["IN-MH-PUNE"],
+                                              "region_name": ["Pune"],
+                                              "state_id": ["IN-MH"],
+                                              "state_name": ["Maharashtra"],
+                                              "latitude": [18.5], "longitude": [73.9]}))
 
     def fake_step(init, hh, member, fh, transport):
         if fh == 12:
@@ -574,8 +582,8 @@ def test_an_s3_pull_does_not_try_to_repair_itself(monkeypatch, tmp_path):
         return b"GRIB-stub"
 
     monkeypatch.setattr(gefs, "_fetch_step", fake_step)
-    monkeypatch.setattr(gefs, "_extract_points",
-                        lambda blob, cities, scratch: {"t2m_c": [1.0]})
+    monkeypatch.setattr(gefs, "_extract_districts",
+                        lambda blob, scratch: {"t2m_c": [1.0]})
     monkeypatch.setattr(gefs, "_reduce_to_daily",
                         lambda step_values, *a, **kw: pd.DataFrame({"n": [1]}))
 

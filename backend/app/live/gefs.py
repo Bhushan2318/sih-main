@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import functools
 import logging
+import threading
 import time
 import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -15,13 +17,14 @@ import numpy as np
 import pandas as pd
 import requests
 
+from app.utils.india_districts import get_aggregator, load_registry
+
 log = logging.getLogger("forecastguard.live.gefs")
 
 S3_BUCKET = "https://noaa-gefs-pds.s3.amazonaws.com"
 NOMADS_URL = "https://nomads.ncep.noaa.gov/cgi-bin/filter_gefs_atmos_0p25s.pl"
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
-CITIES_JSON = BACKEND_DIR / "scripts" / "india_cities.json"
 
 BBOX = {"toplat": 38, "bottomlat": 6, "leftlon": 68, "rightlon": 98}
 
@@ -194,27 +197,100 @@ def choose_transport(init: date, hh: str, member: str = "gec00") -> str:
         raise CycleUnavailable(f"cycle {init} {hh}Z not published at NOMADS or S3: {exc}") from exc
 
 
-def _extract_points(blob: bytes, cities: pd.DataFrame, scratch: Path) -> dict:
+@functools.lru_cache(maxsize=1)
+def _districts() -> pd.DataFrame:
+    """The district registry as a frame, in one fixed order.
+
+    Every step's values are stacked positionally in `_reduce_to_daily`, so the order has
+    to be the same on every step and the same as the identity columns written beside them.
+    """
+    recs = load_registry()
+    return pd.DataFrame({
+        "region_id": [r.region_id for r in recs],
+        "region_name": [r.region_name for r in recs],
+        "state_id": [r.state_id for r in recs],
+        "state_name": [r.state_name for r in recs],
+        "latitude": [r.centroid_lat for r in recs],
+        "longitude": [r.centroid_lon for r in recs],
+    }).sort_values("region_id", ignore_index=True)
+
+
+def district_ids() -> list:
+    return _districts()["region_id"].tolist()
+
+
+_index_cache: dict = {}
+_index_lock = threading.Lock()
+
+
+def _prepared_index_for(lats, lons) -> np.ndarray:
+    """The aggregator's cell index for this grid, built once and shared across steps.
+
+    A cycle aggregates ~400 fields (eight variables x five members x ten lead days) and
+    every one arrives on the same grid. `prepare` resolves each weight-table cell through
+    a dict, so doing it per field is roughly eight million Python-level lookups per cycle;
+    prepared once, each aggregation is a gather and two bincounts. The fetch runs those
+    fields across a thread pool, hence the lock - two workers arriving on a cold cache
+    would otherwise each build the same index.
+
+    Keyed on the grid's extent and size rather than the full coordinate arrays: NOMADS and
+    S3 hand back the same 0.25 degree subregion, and hashing 15,600 floats per step to
+    discover that is the cost this cache exists to avoid.
+    """
+    lats = np.asarray(lats, dtype=np.float64).ravel()
+    lons = np.asarray(lons, dtype=np.float64).ravel()
+    key = (lats.size, round(float(lats.min()), 4), round(float(lats.max()), 4),
+           round(float(lons.min()), 4), round(float(lons.max()), 4))
+    hit = _index_cache.get(key)
+    if hit is not None:
+        return hit
+    with _index_lock:
+        hit = _index_cache.get(key)
+        if hit is None:
+            hit = get_aggregator().prepare(lats, lons)
+            _index_cache[key] = hit
+    return hit
+
+
+def _extract_districts(blob: bytes, scratch: Path) -> dict:
+    """Area-weighted district means of every variable in one GRIB step.
+
+    This used to select 36 city points out of the field with `sel(..., method="nearest")`.
+    The field itself has not changed: the fetch already asks NOMADS for `subregion` over
+    BBOX at 0.25 degrees and always carried every cell of India. The point sampling threw
+    them away, which is why the live store held 71 regions resolved by point-in-polygon
+    while CLAUDE.md described an area-weighted mean over each district's polygon.
+
+    The weight table is the one in `app.utils.india_districts` - the same table the
+    reforecast path and the observations use. There is exactly one, deliberately.
+    """
     import cfgrib
 
     tmp = scratch / f".step_{time.time_ns()}_{id(blob) & 0xffff}.grib2"
     tmp.write_bytes(blob)
     try:
         datasets = cfgrib.open_datasets(str(tmp), backend_kwargs={"indexpath": ""})
-        lats = cities["lat"].to_numpy()
-        lons = cities["lon"].to_numpy()
+        agg = get_aggregator()
 
         out: dict = {}
         for ds in datasets:
-            import xarray as xr
-            sel_lat = xr.DataArray(lats, dims="city")
-            sel_lon = xr.DataArray(lons % 360, dims="city")
             for col, spec in VAR_SPEC.items():
                 sn = spec["short_name"]
                 if sn not in ds.data_vars or col in out:
                     continue
-                vals = ds[sn].sel(latitude=sel_lat, longitude=sel_lon, method="nearest")
-                out[col] = np.asarray(vals.values, dtype=float).reshape(-1)
+                da = ds[sn]
+                glat, glon = np.meshgrid(
+                    np.asarray(da["latitude"].values, dtype=np.float64),
+                    np.asarray(da["longitude"].values, dtype=np.float64),
+                    indexing="ij",
+                )
+                index = _prepared_index_for(glat, glon)
+                series = agg.aggregate_prepared(
+                    index, np.asarray(da.values, dtype=np.float64))
+                # Reindexed to the registry order, not the weight table's, so every step
+                # returns the same districts in the same positions - `_reduce_to_daily`
+                # stacks these arrays and would otherwise be aligning by luck.
+                out[col] = series.reindex(district_ids()).to_numpy(dtype=float)
         return out
     finally:
         tmp.unlink(missing_ok=True)
@@ -244,17 +320,12 @@ def _wind_speed_dir(u: np.ndarray, v: np.ndarray):
     return spd, direction
 
 
-def load_cities() -> pd.DataFrame:
-    if not CITIES_JSON.exists():
-        raise FileNotFoundError(f"missing city table: {CITIES_JSON}")
-    return pd.DataFrame(pd.read_json(CITIES_JSON))
 
 
 def _recover_steps_from_s3(
     init: date,
     cycle_hour: str,
     failed: list,
-    cities: pd.DataFrame,
     scratch: Path,
     step_values: dict,
     report: FetchReport,
@@ -262,7 +333,7 @@ def _recover_steps_from_s3(
 ) -> list:
     def job(member: str, fh: int):
         blob = _fetch_step_s3(init, cycle_hour, member, fh)
-        return member, fh, len(blob), _extract_points(blob, cities, scratch)
+        return member, fh, len(blob), _extract_districts(blob, scratch)
 
     recovered = []
     with ThreadPoolExecutor(max_workers=max(1, min(workers, len(failed)))) as pool:
@@ -296,7 +367,6 @@ def fetch_cycle(
     scratch: Optional[Path] = None,
     transport: Optional[str] = None,
 ) -> tuple:
-    cities = load_cities()
     scratch = scratch or Path(BACKEND_DIR / "data" / "_live_scratch")
     scratch.mkdir(parents=True, exist_ok=True)
 
@@ -313,7 +383,7 @@ def fetch_cycle(
 
     def job(member: str, fh: int):
         blob = _fetch_step(init, cycle_hour, member, fh, transport)
-        return member, fh, len(blob), _extract_points(blob, cities, scratch)
+        return member, fh, len(blob), _extract_districts(blob, scratch)
 
     failed: list = []
     with ThreadPoolExecutor(max_workers=workers) as pool:
@@ -333,23 +403,24 @@ def fetch_cycle(
             report.steps_fetched += 1
 
     if transport == "nomads" and failed:
-        _recover_steps_from_s3(init, cycle_hour, failed, cities, scratch, step_values,
+        _recover_steps_from_s3(init, cycle_hour, failed, scratch, step_values,
                                report, requested_workers)
 
     report.seconds = time.time() - t0
     if not step_values:
         raise CycleUnavailable(f"no steps could be fetched for {init} {cycle_hour}Z")
 
-    frame = _reduce_to_daily(step_values, cities, init, cycle_hour, members, transport,
+    frame = _reduce_to_daily(step_values, init, cycle_hour, members, transport,
                              report)
     return frame, report
 
 
-def _reduce_to_daily(step_values: dict, cities: pd.DataFrame, init: date,
+def _reduce_to_daily(step_values: dict, init: date,
                      cycle_hour: str, members: list, transport: str,
                      report: Optional[FetchReport] = None) -> pd.DataFrame:
     rows = []
-    n_city = len(cities)
+    districts = _districts()
+    n_region = len(districts)
     init_dt = datetime(init.year, init.month, init.day, int(cycle_hour), tzinfo=timezone.utc)
 
     by_cadence = {m: _steps_by_day(init_dt, m) for m in {STEP_HOURS, 6}}
@@ -380,18 +451,14 @@ def _reduce_to_daily(step_values: dict, cities: pd.DataFrame, init: date,
             if not record:
                 continue
 
-            block = pd.DataFrame({"city": cities["city"].to_numpy()})
-            block["state"] = cities["state"].to_numpy()
-            block["region"] = cities["region"].to_numpy()
-            block["latitude"] = cities["lat"].to_numpy()
-            block["longitude"] = cities["lon"].to_numpy()
+            block = districts.copy()
             block["init_date"] = init_dt.date()
             block["valid_date"] = init_dt.date() + timedelta(days=lead - 1)
             block["lead_day"] = lead
             block["member"] = member.replace("ge", "", 1)
 
             for col, values in record.items():
-                block[col] = values[:n_city]
+                block[col] = values[:n_region]
 
             if "t2m_c" in block:
                 block["t2m_c"] = block["t2m_c"] - 273.15
@@ -422,14 +489,15 @@ def _reduce_to_daily(step_values: dict, cities: pd.DataFrame, init: date,
         raise CycleUnavailable("no lead days could be reduced from the fetched steps")
 
     out = pd.concat(rows, ignore_index=True)
-    lead_col = ["city", "state", "region", "latitude", "longitude",
+    lead_col = ["region_id", "region_name", "state_id", "state_name",
+                "latitude", "longitude",
                 "init_date", "valid_date", "lead_day", "member"]
     value_cols = [c for c in ["t2m_c", "rh2m_pct", "apcp_mm", "mslp_hpa", "psfc_hpa",
                               "pwat_kgm2", "wspd10m_ms", "wdir10m_deg", "soilw_vol_pct"]
                   if c in out.columns]
     src_cols = sorted(c for c in out.columns if c.startswith(("src_", "srcmsg_")))
     return out[lead_col + value_cols + src_cols].sort_values(
-        ["city", "member", "lead_day"]
+        ["region_id", "member", "lead_day"]
     ).reset_index(drop=True)
 
 
