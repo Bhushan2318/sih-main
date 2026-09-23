@@ -943,3 +943,51 @@ here rather than discovered live.
   fits no jump climatology, so the column is entirely NaN in every cached year: the models
   never learned from it, and serving leaves it missing too, which is consistent but means
   one C1 feature is dead weight in this family.
+- **A model can pass the promotion gate and still serve one number for the whole country.**
+  `run_20260910T064804Z` held out at ROC-AUC 0.8411 and Brier 0.1656, with its held-out
+  probabilities spread evenly over the five calibration bins (11.3 / 23.2 / 16.5 / 20.9 /
+  28.1 per cent). It was promoted on those numbers and then served 642 of 666 districts in
+  the bust band, median served probability 0.977, 46.2% of events above 0.99. Both facts
+  are true at once because ROC-AUC is rank-based: it is invariant under any monotone
+  transform of the scores, so crushing every probability toward 1 leaves it untouched. The
+  held-out histogram missed it too, because the held-out rows were the 34 districts that
+  had observations when the model was trained, scored against the observation set that
+  existed then. The cause was not code drift - `git diff` on the feature module since the
+  training commit is 386 insertions and zero deletions - but that the store's observation
+  side was replaced underneath the model: it was fitted against 34-district city-point
+  ERA5 and is now asked to score 666-district ERA5-CDS. The data it learned from no longer
+  exists. `app/ml/serving_sanity.py` now scores a real cycle from the store after the
+  held-out gate has said yes, and refuses a run whose bust band swallows more than 60% of
+  events, whose probabilities pin against either rail for more than 10%, or whose
+  interquartile range collapses below 0.02. Note the two criteria that do **not** work and
+  should not be reintroduced: "too much of the map in one band" and "interquartile range
+  too narrow" both refuse the healthy 17-year model, which serves 90.4% in the `low` band
+  at an IQR of 0.119 - tighter than one of the broken runs. A quiet day is genuinely
+  quiet; what distinguishes damage is which rail the mass is pinned against.
+- **The live feed was never migrated to districts; it still samples 36 city points.**
+  CLAUDE.md describes each district's value as the area-weighted mean of every 0.25 degree
+  cell its polygon overlaps. That is true of the archive/reforecast path. It is not true of
+  the live NOMADS path: `app/live/gefs.py` reads `scripts/india_cities.json`, which holds
+  **36 points**, samples the grid at each one, and resolves the point to whatever district
+  contains it. `grep -riE 'district|weight_table|area_weight' app/live/` returns nothing.
+  The published bundle shows the consequence - 1,520,552 rows, of which forecasts are
+  1,077,896 over **71 regions** and observations 442,656 over the same 71, with
+  `region_resolution_method` on every forecast row being a point resolver
+  (point_in_polygon 47, name 23, nearest_polygon 1). 71 is the union of districts those 36
+  points have fallen in over time.
+  This is worth stating precisely because the obvious fix is the wrong one. Packaging the
+  666-district ERA5-CDS observations into the bundle does **not** move the map: the
+  classifier needs a forecast row to score a district, and the forecast side would still be
+  36 points. The observations are not the narrow side - both sides are 71. The real fix is
+  to call the existing district weight table from `app/live/gefs.py` instead of sampling
+  points, which is a change to one call site and not new geography (there is exactly one
+  weight table and rule "do not write a second one" stands). It needs neither CDS nor the
+  17-year model.
+  It is not a change to make casually. Going from 71 to 666 regions multiplies served
+  forecast rows by ~9.4x - roughly 14 M rows for the same cycles - and serving already uses
+  388 MB of the 512 MB at which the box is killed rather than throttled. Rule 5 applies:
+  `.github/workflows/measure-serving-memory.yml` exists for this, and the honest sequence is
+  migrate on a branch, run that workflow, read the real RSS, then decide.
+  Meanwhile the model itself is not the limitation. Scored against a store that does have
+  full district observations, `run_20260922T043925Z` returns 6,660 events across 666
+  districts and all ten lead days.
