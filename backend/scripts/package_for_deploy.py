@@ -21,7 +21,8 @@ from pathlib import Path
 
 # What the box needs to answer a request, and nothing else: the canonical store it scores
 # against, the geo index for region resolution, the metadata db, and one model.
-EXTRA_PATHS = ("data/canonical", "data/geo", "data/summary.json", "metadata.db")
+EXTRA_PATHS = ("data/canonical", "data/geo", "data/summary.json", "metadata.db",
+               "data/analysis/scored_cycles")
 
 
 def main() -> int:
@@ -30,6 +31,9 @@ def main() -> int:
     ap.add_argument("--root", type=Path, default=Path("."), help="backend directory")
     ap.add_argument("--no-compact", action="store_true",
                     help="skip removing superseded rows (they are dropped by default)")
+    ap.add_argument("--no-precompute", action="store_true",
+                    help="skip scoring the latest cycle into the package; the serving box "
+                         "will then score it itself, which does not fit at 666 districts")
     args = ap.parse_args()
 
     root: Path = args.root.resolve()
@@ -67,6 +71,25 @@ def main() -> int:
     # on a 512 MB instance that also has to score a cycle.
     summary = parquet_store.write_summary_cache()
     print(f"summary cached: {summary['total_rows']:,} rows, {summary['regions']} regions")
+
+    # Score the cycle here too, for the same reason and with more of it at stake. At 666
+    # districts scoring one cycle peaks at 1,406 MB; the box is killed at 512 with ~388
+    # already in use. The answer is 3.96 MB, so it travels in this tarball and the box
+    # never scores. See app/ml/precomputed.py.
+    if not args.no_precompute:
+        from app.ml import inference, precomputed
+        state = inference.load_model_state(run_id)
+        if state is None:
+            print(f"note: {run_id} would not load, no cycle precomputed", file=sys.stderr)
+        else:
+            scored = inference.score_cycle(state, init_date=None)
+            if scored is None:
+                print("note: no scoreable cycle in the store", file=sys.stderr)
+            else:
+                out = precomputed.write_scored_cycle(scored)
+                n = sum(f.stat().st_size for f in out.glob("*"))
+                print(f"precomputed {scored.init_date.date()}: {len(scored.events):,} events, "
+                      f"{n / 1_048_576:.2f} MB -> {out}")
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     with tarfile.open(args.out, "w:gz") as tar:
