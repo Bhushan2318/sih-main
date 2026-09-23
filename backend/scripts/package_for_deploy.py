@@ -25,6 +25,70 @@ EXTRA_PATHS = ("data/canonical", "data/geo", "data/summary.json", "metadata.db",
                "data/analysis/scored_cycles")
 
 
+def _replay_window() -> int:
+    """How many cycles Replay offers, read from Replay rather than restated here.
+
+    Two constants that must agree and are written down twice eventually disagree, and this
+    pair fails silently: Replay would offer a cycle nothing had precomputed, and the box
+    would score it - which at 666 districts is the 1,406 MB path this whole mechanism
+    exists to avoid, reached by a click instead of a page load.
+    """
+    from app.services.replay_service import _MAX_CYCLES
+
+    return _MAX_CYCLES
+
+
+PRECOMPUTE_CYCLES = _replay_window()
+
+
+def _available_cycles():
+    from app.ml import inference
+
+    return inference.available_cycles()
+
+
+def _score_and_write(state, init) -> int:
+    """Score one cycle and write it; returns bytes written. Raises if it cannot score."""
+    from app.ml import inference, precomputed
+
+    scored = inference.score_cycle(state, init_date=init)
+    if scored is None:
+        raise RuntimeError("no scoreable rows")
+    out = precomputed.write_scored_cycle(scored)
+    return sum(f.stat().st_size for f in out.glob("*"))
+
+
+def precompute_cycles(state) -> tuple:
+    """Score the cycles the box must not score itself: the national map's latest, and
+    every cycle Replay can offer.
+
+    Sequential and with the score cache cleared between cycles. `inference._score_cache`
+    holds up to 24, so without clearing, the whole window accumulates in the packaging
+    process - ten frames of 6,660 events. The runner has 16 GB and would survive it; the
+    point is that this loop is the one that runs against a larger window later.
+
+    A cycle that cannot be scored is skipped, not fatal. It simply has no artifact and is
+    scored live, which is the behaviour that existed before any of this.
+    """
+    from app.ml import inference
+
+    written, total = 0, 0
+    for init in _available_cycles()[:PRECOMPUTE_CYCLES]:
+        inference.invalidate_caches()
+        try:
+            total += _score_and_write(state, init)
+        except Exception as exc:  # noqa: BLE001 - one bad cycle must not lose the rest
+            print(f"note: {pd_date(init)} not precomputed ({exc})", file=sys.stderr)
+            continue
+        written += 1
+    inference.invalidate_caches()
+    return written, total
+
+
+def pd_date(init) -> str:
+    return str(getattr(init, "date", lambda: init)())
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("out", type=Path, help="tarball to write")
@@ -77,19 +141,14 @@ def main() -> int:
     # already in use. The answer is 3.96 MB, so it travels in this tarball and the box
     # never scores. See app/ml/precomputed.py.
     if not args.no_precompute:
-        from app.ml import inference, precomputed
+        from app.ml import inference
         state = inference.load_model_state(run_id)
         if state is None:
             print(f"note: {run_id} would not load, no cycle precomputed", file=sys.stderr)
         else:
-            scored = inference.score_cycle(state, init_date=None)
-            if scored is None:
-                print("note: no scoreable cycle in the store", file=sys.stderr)
-            else:
-                out = precomputed.write_scored_cycle(scored)
-                n = sum(f.stat().st_size for f in out.glob("*"))
-                print(f"precomputed {scored.init_date.date()}: {len(scored.events):,} events, "
-                      f"{n / 1_048_576:.2f} MB -> {out}")
+            n, nbytes = precompute_cycles(state)
+            print(f"precomputed {n} cycle(s) - the national map's latest and Replay's "
+                  f"window of {PRECOMPUTE_CYCLES} - {nbytes / 1_048_576:.2f} MB")
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     with tarfile.open(args.out, "w:gz") as tar:
