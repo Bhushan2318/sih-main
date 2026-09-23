@@ -1174,12 +1174,38 @@ def test_the_case_study_columns_are_required_on_write_not_discovered_on_a_blank_
         full[f"{prefix}_rainfall_mm"] = [0]
     assert pt.eval_event_contract_gaps(full) == []
 
-    # The headline metrics alone are exactly the case that used to pass.
-    headline = full[["y_bust", "lead_time_days"]]
-    assert "actual_err_rainfall_mm" not in pt.eval_event_contract_gaps(headline)  # no vars
-    assert "region_id" in pt.eval_event_contract_gaps(headline)
+    # The headline columns alone are the seven-column file that produced a blank case
+    # study, so they must come back as a gap - and as the per-variable gap specifically.
+    # See test_a_frame_with_no_per_variable_columns_is_a_gap_not_a_pass for why that
+    # floor has to be explicit rather than derived.
+    gaps = pt.eval_event_contract_gaps(full[["y_bust", "lead_time_days"]])
+    assert gaps and any("per-variable" in g for g in gaps)
 
     dropped = full.drop(columns=["actual_err_rainfall_mm"])
     assert pt.eval_event_contract_gaps(dropped) == ["actual_err_rainfall_mm"]
     with pytest.raises(ValueError, match="case study"):
         pt._publish_eval_events("run_z", object(), None, dropped)
+
+
+def test_a_frame_with_no_per_variable_columns_is_a_gap_not_a_pass():
+    """Deriving the requirement from the data means an absent requirement cannot fail.
+
+    The per-variable requirement is read off the `pred_err_*` columns present, because
+    `skipped_variables` legitimately shrinks the set. With no floor, a frame carrying none
+    of them requires only the base columns and passes - the same frame shape that empties
+    the bust case study. skipped_variables can shrink the set; it cannot empty it.
+    """
+    import pandas as pd
+
+    from app.ml import pooled_training as pt
+
+    base_only = pd.DataFrame({c: [0] for c in pt._PPT_EVENT_COLUMNS})
+    assert pt.eval_event_contract_gaps(base_only) != []
+
+    one_variable = base_only.copy()
+    for prefix in pt._PPT_EVENT_PER_VARIABLE:
+        one_variable[f"{prefix}_temperature_c"] = [0.0]
+    assert pt.eval_event_contract_gaps(one_variable) == []
+    # A run that skipped seven of eight variables is still publishable.
+    assert pt.eval_event_contract_gaps(
+        one_variable.drop(columns=["spread_temperature_c"])) == ["spread_temperature_c"]

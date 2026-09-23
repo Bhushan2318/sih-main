@@ -936,9 +936,19 @@ here rather than discovered live.
   round-trip does not restore the sklearn wrapper's `enable_categorical`, so SHAP refused
   a reloaded model ("Invalid columns: season: cat") and silently degraded to feature
   importance. Restored on load; the SHAP values then equal the in-memory model's exactly.
-- **Pooled runs have no baseline ladder yet.** `scripts/run_baselines` scores the eval
-  events `--emit-eval` writes, which the pooled path does not produce, so the Model page
-  reports no baseline table for a pooled model rather than a stale one.
+- **Pooled runs have no baseline ladder yet, and the eval-events work did not change
+  that.** The pooled path now writes `data/analysis/eval_events/<run_id>.parquet` with the
+  validation and held-out splits, which is enough for `scripts/ppt_figures.py` - it filters
+  `split == "test"`. It is not enough for `scripts/run_baselines`, which needs a `train`
+  split as well: it raises `SystemExit` rather than degrading, and `bl.fit_all(train)` is
+  where the climatology baseline is fitted, so the two baseline figures on the deck come
+  from that path. The pooled train split is 13,320,000 rows against the held-out split's
+  2,430,900, and `_emit_eval_events` copies each split before concatenating them, so
+  carrying it would put a multi-gigabyte copy and a larger concat in the parent at the end
+  of a seventeen-hour run - the parent that has already died on a 306 MB allocation.
+  Writing the splits incrementally rather than concatenating would fix it; until someone
+  does, the Model page reports no baseline table for a pooled model rather than a stale
+  one, and the baseline figures must come from the non-pooled path.
 - **`jump_rel_climatology` is always missing for pooled models.** The pooled cache builder
   fits no jump climatology, so the column is entirely NaN in every cached year: the models
   never learned from it, and serving leaves it missing too, which is consistent but means

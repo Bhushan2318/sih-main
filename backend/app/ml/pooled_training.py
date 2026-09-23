@@ -1277,14 +1277,19 @@ def emit_eval_events_for_run(run_id: str, cache_dir: Path,
             "held_out_roc_auc": got["roc_auc"], "path": str(path)}
 
 
-# Every column `scripts/ppt_figures.py` reads off an eval-events row. The headline
-# metrics, the confusion counts and the per-lead-day POD/FAR need only y_bust,
-# model_proba, split and lead_time_days; the rest are the bust case study, which reads the
+# What an eval-events frame must carry. This is deliberately WIDER than what the readers
+# touch - conf_*, bust_ratio, month, region_id and historical_bust_frequency_region_season
+# are required here and read by neither - so do not treat it as the definitive read-set.
+# It is the shape of a complete event frame, and being stricter than necessary is the
+# right default for a file nothing else validates.
+#
+# The part that is read: the headline metrics, confusion counts and per-lead-day POD/FAR
+# need only y_bust, model_proba, split and lead_time_days; the bust case study reads the
 # per-variable columns through `getattr(row, f"pred_err_{var}", float("nan"))`. That
-# default is why this list is written down: a missing column raises nothing there, it just
-# leaves the case study empty and still produces a deck. Measured against a known-good
-# non-pooled eval-events file, 2026-09-23. `split` and `model_proba` are added by the
-# writer, so they are not required of the frame handed to it.
+# default is why any of this is written down - a missing column raises nothing there, it
+# leaves the case study empty and still produces a deck. Contract measured against a
+# known-good non-pooled eval-events file, 2026-09-23. `split` and `model_proba` are added
+# by the writer, so they are not required of the frame handed to it.
 _PPT_EVENT_COLUMNS = ("region_id", "init_date", "valid_date", "lead_time_days",
                       "month", "season", "spread_mean", "spread_max",
                       "historical_bust_frequency_region_season", "bust_ratio", "y_bust")
@@ -1292,9 +1297,18 @@ _PPT_EVENT_PER_VARIABLE = ("actual_err", "conf", "pred_err", "spread")
 
 
 def eval_event_contract_gaps(events) -> list:
-    """Columns ppt_figures reads that this frame does not carry, per variable it holds."""
+    """Columns ppt_figures reads that this frame does not carry, per variable it holds.
+
+    The per-variable requirement is derived from the `pred_err_*` columns present rather
+    than hard-coded, because `skipped_variables` legitimately shrinks the set. It can
+    shrink it; it cannot empty it. Without the floor below, a frame carrying no
+    per-variable columns at all would require only the base eleven and pass - which is
+    the same false green as deriving a test fixture from the code it tests.
+    """
     have = set(events.columns)
     variables = sorted({c[len("pred_err_"):] for c in have if c.startswith("pred_err_")})
+    if not variables:
+        return ["pred_err_<variable> (the frame carries no per-variable columns at all)"]
     want = set(_PPT_EVENT_COLUMNS)
     for var in variables:
         want |= {f"{prefix}_{var}" for prefix in _PPT_EVENT_PER_VARIABLE}
@@ -1317,12 +1331,20 @@ def _emit_eval_events_for_pooled(run_id: str, clf_art, splits: dict) -> Path:
 def _publish_eval_events(run_id: str, clf_art, event_va, event_te):
     """The scored held-out rows, written where the deck and the baseline ladder read them.
 
-    `scripts/ppt_figures.py` and `scripts/run_baselines` both read
-    data/analysis/eval_events/<run_id>.parquet and filter `split == "test"`. The pooled
-    path scored exactly those rows to report its held-out metrics and then dropped them,
-    so a pooled model could produce a ROC-AUC but not the per-lead-day POD/FAR table, the
-    confusion counts, or a baseline comparison - the deck had to be built from a model
-    that was not the one serving the site.
+    `scripts/ppt_figures.py` reads data/analysis/eval_events/<run_id>.parquet and filters
+    `split == "test"`. The pooled path scored exactly those rows to report its held-out
+    metrics and then dropped them, so a pooled model could produce a ROC-AUC but not the
+    per-lead-day POD/FAR table, the confusion counts or the bust case study - the deck had
+    to be built from a model that was not the one serving the site.
+
+    This does NOT make the baseline ladder work. `scripts/run_baselines` needs a `train`
+    split too - it exits rather than degrading, and `bl.fit_all(train)` is where the
+    climatology baseline is fitted - and the pooled train split is 13,320,000 rows against
+    the test split's 2,430,900. `_emit_eval_events` copies each split and concatenates, so
+    carrying it would mean a multi-gigabyte copy and a larger concat in the parent process
+    at the end of a seventeen-hour run - the same parent that has already died on a 306 MB
+    allocation. The ladder limitation stays in docs/known-issues.md, deliberately, rather
+    than being half-fixed here.
 
     Returns None rather than writing when there is no test split: an empty file would let
     ppt_figures report zeros as if they were measurements.
