@@ -48,17 +48,40 @@ precisely the silent, in-our-favour drift `run_baselines`' own docstring warns a
 it must be subsampled, the artifact has to say so and Bhushan has to be told. The other
 six baselines are cheap; the expensive one is isolated and can be deferred.
 
-## What cannot be rescued
+## The pooled cache — and a correction
 
-`backend/data/_pooled_cache` — 64 GB, 18 years, 1,375,496,949 paired rows. A GitHub free
-release asset caps at 2 GB and rule 6 forbids paid infrastructure, so there is nowhere to
-put it. While that disk survives it is fine. If it is wiped, **no pooled retrain is
-possible anywhere** without re-fetching from the NOAA bucket, which rule 7 says not to do
-casually and which cost weeks.
+`backend/data/_pooled_cache` is **68,648,583,555 bytes (63.9 GiB)**, 18 years,
+1,375,496,949 paired rows.
 
-Treat `run_20260922T043925Z` as the last pooled model this project can produce. Before
-scoping any retrain, check that the cache still exists, and stop if it does not rather
-than proposing a re-fetch.
+**An earlier version of this document said it could not be rescued. That was wrong.** The
+reasoning checked GitHub's 2 GB release-asset cap, concluded "nowhere to put it", and
+never considered the obvious free option: copying it directly to the Mac the work is
+moving to. Recorded here rather than quietly edited out, because the failure mode is worth
+more than the fact — an absolute claim ("nowhere", "not possible") was written from a
+single transport having been checked, and it would have become unchallengeable the moment
+the machine was powered off.
+
+Measured on the laptop, 2026-09-23:
+
+| | |
+|---|---|
+| Cache | 63.9 GiB |
+| Mac free space | 145 GiB — fits with ~81 GiB spare |
+| Laptop link | 1 Gbps Ethernet, `192.168.0.27` |
+| Mac | `192.168.0.147` → `MACBOOKPRO-BCF9`, SMB(445) open, SSH(22) closed |
+
+At gigabit, wired both ends, that is roughly 15–25 minutes. `rsync` over SSH is preferable
+to a plain SMB copy because it resumes — an interrupted 64 GiB SMB copy restarts from
+zero. SSH needs Remote Login enabled on the Mac.
+
+**If the copy did not happen**, then and only then does the original consequence hold: no
+pooled retrain is possible anywhere without re-fetching from the NOAA bucket, which rule 7
+says not to do casually and which cost weeks. In that case treat `run_20260922T043925Z` as
+the last pooled model this project can produce, and before scoping any retrain, check
+whether the cache exists on either machine and stop if it does not.
+
+Note there is no cheap subset for *this* run: its train window is 2000–2016 with 2017 held
+out, which is all 18 cached years. A partial copy only helps some future, narrower run.
 
 ## Why three Model-page cards were blank
 
