@@ -11,6 +11,7 @@ import xgboost as xgb
 from app.features import engineering as fe
 from app.features import pivot as pv
 from app.features.history import forecast_history
+from app.ml import precomputed
 from app.ml import registry
 from app.ml.thresholds import Thresholds
 from app.storage import parquet_store
@@ -155,6 +156,17 @@ def score_cycle(
         hit = _score_cache.get(cache_key)
         if hit is not None:
             return hit
+
+    # Scored in CI, read here. At 666 districts scoring a cycle peaks at 1,406 MB against a
+    # box killed at 512; reading the answer is 38 MB. Checked before any store read, because
+    # the point is not to touch the forecast rows at all. A cycle with no artifact - Replay
+    # asks for arbitrary historical ones - falls through and scores as before. See
+    # app/ml/precomputed.py.
+    ready = precomputed.read_scored_cycle(state.run_id, target_init)
+    if ready is not None:
+        with _lock:
+            _score_cache[cache_key] = ready
+        return ready
 
     fc_rows = parquet_store.read_dataset(
         value_types=["forecast"], init_dates=[target_init.date()], columns=_SCORING_COLUMNS,
