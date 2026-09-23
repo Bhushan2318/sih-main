@@ -1211,6 +1211,107 @@ def finalize_for_serving(run_id: str, cache_dir: Path,
 FIT_MODES = ("sample", "staged")
 
 
+def emit_eval_events_for_run(run_id: str, cache_dir: Path,
+                             max_cycles_per_batch: int = EVENTS_BATCH_CYCLES) -> dict:
+    """Backfill the eval events for a pooled run that finished without them.
+
+    Rebuilds the held-out test year's events from the caches with the run's own saved
+    regressors and thresholds - the same batched path the run used - scores them with its
+    own classifier, and writes the file the deck and the baseline ladder read.
+
+    Refuses unless those rebuilt events reproduce the run's recorded held-out ROC-AUC. A
+    figure on a slide has to be of the rows the model was actually scored on, and there is
+    no way to tell from the file itself that it is not.
+    """
+    import json as _json
+
+    from app.ml import registry
+
+    rd = registry.run_dir(run_id)
+    manifest = _json.loads((rd / "manifest.json").read_text())
+    train_years = list(manifest["pooled_train_years"])
+    test_year = int(manifest["test_year"])
+    cached = {y: Path(cache_dir) / f"paired_{y}.parquet" for y in train_years + [test_year]}
+    missing = [str(p) for p in cached.values() if not p.exists()]
+    if missing:
+        raise FileNotFoundError(f"cached years this run was trained on are missing: {missing}")
+
+    regs = registry.load_regressors(run_id)
+    clf, clf_cols = registry.load_classifier(run_id)
+    thr = registry.load_thresholds(run_id)
+    hbf = registry.load_historical_bust_freq(run_id)
+    saved = registry.load_metrics(run_id) or {}
+    saved_auc = (((saved.get("classifier") or {}).get("test")) or {}).get("roc_auc")
+    if clf is None or thr is None or not regs or saved_auc is None:
+        raise ValueError(f"{run_id} lacks a classifier, thresholds, regressors or a saved "
+                         f"held-out ROC-AUC - nothing to emit eval events against")
+
+    _, _, test_c = pooled_split(cached, test_year)
+    needed = set(_feature_columns_for(cached, train_years)) | set(fe.EVENT_KEYS) | {
+        "variable", "forecast_value", "observed_value", "ensemble_spread",
+        "abs_error", "region_id", "season"}
+    needed.discard("historical_bust_frequency_region_season")
+
+    artifacts = {var: reg_mod.RegressorArtifact(variable=var, model=model,
+                                                feature_columns=cols, metrics={},
+                                                n_train=0, n_val=0)
+                 for var, (model, cols) in regs.items()}
+    event_te, _ = test_event_frame(cached[test_year], test_c, hbf, thr.p90_error,
+                                   thr.bust_threshold, artifacts, sorted(needed),
+                                   max_cycles_per_batch=max_cycles_per_batch)
+    if event_te.empty:
+        raise ValueError(f"{run_id}: rebuilt no test events from {cached[test_year]}")
+
+    clf_art = clf_mod.ClassifierArtifact(model=clf, feature_columns=clf_cols, metrics={},
+                                         n_train=0, n_val=len(event_te),
+                                         train_bust_rate=float("nan"))
+    got = clf_mod._evaluate(event_te["y_bust"],
+                            clf_mod.predict_bust_probability(clf_art, event_te))
+    if abs(got["roc_auc"] - float(saved_auc)) > 1e-6:
+        raise ValueError(f"{run_id}: rebuilt test events score held-out ROC-AUC "
+                         f"{got['roc_auc']:.6f}, but the run recorded {float(saved_auc):.6f} "
+                         f"- refusing to publish figures of events it was not scored on")
+
+    path = _publish_eval_events(run_id, clf_art, None, event_te)
+    return {"run_id": run_id, "test_events": len(event_te),
+            "held_out_roc_auc": got["roc_auc"], "path": str(path)}
+
+
+def _emit_eval_events_for_pooled(run_id: str, clf_art, splits: dict) -> Path:
+    """Indirection so the pooled path writes the same file `--emit-eval` writes.
+
+    Kept as a one-line wrapper rather than importing train_pipeline at the call site,
+    because the schema those readers depend on is train_pipeline's and must stay its to
+    change - two writers of one file drift, and the drift shows up as a wrong number on a
+    slide rather than as an error.
+    """
+    from app.ml.train_pipeline import _emit_eval_events
+
+    return _emit_eval_events(run_id, clf_art, splits)
+
+
+def _publish_eval_events(run_id: str, clf_art, event_va, event_te):
+    """The scored held-out rows, written where the deck and the baseline ladder read them.
+
+    `scripts/ppt_figures.py` and `scripts/run_baselines` both read
+    data/analysis/eval_events/<run_id>.parquet and filter `split == "test"`. The pooled
+    path scored exactly those rows to report its held-out metrics and then dropped them,
+    so a pooled model could produce a ROC-AUC but not the per-lead-day POD/FAR table, the
+    confusion counts, or a baseline comparison - the deck had to be built from a model
+    that was not the one serving the site.
+
+    Returns None rather than writing when there is no test split: an empty file would let
+    ppt_figures report zeros as if they were measurements.
+    """
+    if event_te is None or len(event_te) == 0:
+        return None
+    splits = {}
+    if event_va is not None and len(event_va):
+        splits["val"] = event_va
+    splits["test"] = event_te
+    return _emit_eval_events_for_pooled(run_id, clf_art, splits)
+
+
 def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
                         run_id: str | None = None, fit_mode: str = "sample") -> "TrainReport":
     """The pooled-training equivalent of `train_pipeline.full_retrain`: any number of
@@ -1439,6 +1540,13 @@ def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
         "split_cycles": report.split_cycles, "modelled_variables": report.modelled_variables,
         "skipped_variables": report.skipped_variables,
     })
+
+    # The rows this run was just scored on, kept rather than dropped - see
+    # _publish_eval_events. Written before finalize so that a run whose SHAP step fails
+    # still leaves the deck and the baseline ladder something to read.
+    eval_path = _publish_eval_events(rid, clf_art, event_va, event_te)
+    if eval_path is not None:
+        print(f"[pooled] eval events -> {eval_path}", file=sys.stderr, flush=True)
 
     # Servable, not just saved - see finalize_for_serving. In its own process: it reads the
     # validation year again, and this parent has held a seventeen-year job's worth of arena.

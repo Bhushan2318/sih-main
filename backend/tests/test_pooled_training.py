@@ -1110,3 +1110,44 @@ def test_finalize_refuses_a_run_whose_classifier_does_not_reproduce_its_metrics(
     metrics_path.write_text(json.dumps(metrics))
     with pytest.raises(ValueError, match="validation ROC-AUC"):
         pt.finalize_for_serving(report.run_id, cache_dir)
+
+
+# --- eval events for a pooled run ----------------------------------------------------
+
+def test_a_pooled_run_emits_the_eval_events_the_deck_and_ladder_read(tmp_path, monkeypatch):
+    """scripts/ppt_figures.py and scripts/run_baselines both read one file.
+
+    They read data/analysis/eval_events/<run_id>.parquet, filter split == "test", and need
+    y_bust, model_proba and lead_time_days. full_retrain_pooled scored exactly those rows
+    and then threw them away, so a pooled model could not produce the per-lead-day POD/FAR
+    table, the confusion counts or the baseline ladder - which meant the deck had to be
+    built from a model that was not the one serving the site.
+    """
+    import pandas as pd
+
+    from app.ml import pooled_training as pt
+
+    written = {}
+
+    def fake_emit(run_id, clf_art, splits):
+        written["run_id"] = run_id
+        written["splits"] = {k: len(v) for k, v in splits.items() if v is not None}
+        return tmp_path / f"{run_id}.parquet"
+
+    monkeypatch.setattr(pt, "_emit_eval_events_for_pooled", fake_emit)
+
+    ev = pd.DataFrame({"y_bust": [0, 1], "lead_time_days": [1, 2]})
+    out = pt._publish_eval_events("run_z", object(), ev, ev.iloc[:1])
+    assert written["run_id"] == "run_z"
+    # Test is what the deck reads; validation is kept because the ladder compares splits.
+    assert written["splits"] == {"val": 2, "test": 1}
+    assert out is not None
+
+
+def test_eval_events_are_never_published_from_an_empty_test_split():
+    """An empty file is worse than none: ppt_figures would report zeros as measurements."""
+    import pandas as pd
+
+    from app.ml import pooled_training as pt
+
+    assert pt._publish_eval_events("run_z", object(), pd.DataFrame(), pd.DataFrame()) is None
