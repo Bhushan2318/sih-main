@@ -1277,6 +1277,30 @@ def emit_eval_events_for_run(run_id: str, cache_dir: Path,
             "held_out_roc_auc": got["roc_auc"], "path": str(path)}
 
 
+# Every column `scripts/ppt_figures.py` reads off an eval-events row. The headline
+# metrics, the confusion counts and the per-lead-day POD/FAR need only y_bust,
+# model_proba, split and lead_time_days; the rest are the bust case study, which reads the
+# per-variable columns through `getattr(row, f"pred_err_{var}", float("nan"))`. That
+# default is why this list is written down: a missing column raises nothing there, it just
+# leaves the case study empty and still produces a deck. Measured against a known-good
+# non-pooled eval-events file, 2026-09-23. `split` and `model_proba` are added by the
+# writer, so they are not required of the frame handed to it.
+_PPT_EVENT_COLUMNS = ("region_id", "init_date", "valid_date", "lead_time_days",
+                      "month", "season", "spread_mean", "spread_max",
+                      "historical_bust_frequency_region_season", "bust_ratio", "y_bust")
+_PPT_EVENT_PER_VARIABLE = ("actual_err", "conf", "pred_err", "spread")
+
+
+def eval_event_contract_gaps(events) -> list:
+    """Columns ppt_figures reads that this frame does not carry, per variable it holds."""
+    have = set(events.columns)
+    variables = sorted({c[len("pred_err_"):] for c in have if c.startswith("pred_err_")})
+    want = set(_PPT_EVENT_COLUMNS)
+    for var in variables:
+        want |= {f"{prefix}_{var}" for prefix in _PPT_EVENT_PER_VARIABLE}
+    return sorted(want - have)
+
+
 def _emit_eval_events_for_pooled(run_id: str, clf_art, splits: dict) -> Path:
     """Indirection so the pooled path writes the same file `--emit-eval` writes.
 
@@ -1305,6 +1329,13 @@ def _publish_eval_events(run_id: str, clf_art, event_va, event_te):
     """
     if event_te is None or len(event_te) == 0:
         return None
+    gaps = eval_event_contract_gaps(event_te)
+    if gaps:
+        raise ValueError(
+            f"{run_id}: the held-out events lack {gaps}, which ppt_figures reads. It reads "
+            f"the per-variable ones through getattr(row, ..., float('nan')), so a missing "
+            f"column raises nothing there - it empties the bust case study and still emits "
+            f"a deck. Refusing here, where it is still visible.")
     splits = {}
     if event_va is not None and len(event_va):
         splits["val"] = event_va

@@ -1136,7 +1136,9 @@ def test_a_pooled_run_emits_the_eval_events_the_deck_and_ladder_read(tmp_path, m
 
     monkeypatch.setattr(pt, "_emit_eval_events_for_pooled", fake_emit)
 
-    ev = pd.DataFrame({"y_bust": [0, 1], "lead_time_days": [1, 2]})
+    ev = pd.DataFrame({c: [0, 1] for c in pt._PPT_EVENT_COLUMNS})
+    for prefix in pt._PPT_EVENT_PER_VARIABLE:
+        ev[f"{prefix}_rainfall_mm"] = [0.0, 1.0]
     out = pt._publish_eval_events("run_z", object(), ev, ev.iloc[:1])
     assert written["run_id"] == "run_z"
     # Test is what the deck reads; validation is kept because the ladder compares splits.
@@ -1151,3 +1153,33 @@ def test_eval_events_are_never_published_from_an_empty_test_split():
     from app.ml import pooled_training as pt
 
     assert pt._publish_eval_events("run_z", object(), pd.DataFrame(), pd.DataFrame()) is None
+
+
+def test_the_case_study_columns_are_required_on_write_not_discovered_on_a_blank_slide():
+    """ppt_figures reads the per-variable columns with a NaN default, so absence is silent.
+
+    `getattr(row, f"pred_err_{var}", float("nan"))` turns a missing column into NaN, the
+    case-study ranking then has nothing to rank on, and the script emits a deck with an
+    empty bust case study and no error. Measured on a known-good non-pooled eval-events
+    file 2026-09-23: the full frame produced a case study (Khordha, rainfall_mm, actual
+    error 97.6 against a 13.58 threshold); the same rows cut to the headline columns
+    produced region None, variable None and zero exceedances, silently.
+    """
+    import pandas as pd
+
+    from app.ml import pooled_training as pt
+
+    full = pd.DataFrame({c: [0] for c in pt._PPT_EVENT_COLUMNS})
+    for prefix in pt._PPT_EVENT_PER_VARIABLE:
+        full[f"{prefix}_rainfall_mm"] = [0]
+    assert pt.eval_event_contract_gaps(full) == []
+
+    # The headline metrics alone are exactly the case that used to pass.
+    headline = full[["y_bust", "lead_time_days"]]
+    assert "actual_err_rainfall_mm" not in pt.eval_event_contract_gaps(headline)  # no vars
+    assert "region_id" in pt.eval_event_contract_gaps(headline)
+
+    dropped = full.drop(columns=["actual_err_rainfall_mm"])
+    assert pt.eval_event_contract_gaps(dropped) == ["actual_err_rainfall_mm"]
+    with pytest.raises(ValueError, match="case study"):
+        pt._publish_eval_events("run_z", object(), None, dropped)
