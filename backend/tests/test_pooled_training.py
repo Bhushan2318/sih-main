@@ -1245,3 +1245,55 @@ def test_a_regressor_worse_than_predicting_the_mean_is_refused():
     assert not pt.regressor_is_unusable({})
     assert not pt.regressor_is_unusable({"r2": float("nan"), "mae": 1.0,
                                          "baseline_mae_predict_mean": 0.9})
+
+
+def test_the_refusal_is_wired_into_the_function_that_makes_the_artifact(tmp_path, monkeypatch):
+    """The predicate being right is not the same as it being reached.
+
+    CI installs requirements.txt and requirements-dev.txt only, so torch is absent and
+    every end-to-end pooled test skips - which means a green CI run says nothing about
+    whether the refusal actually fires. This test calls train_variable_regressor_pooled
+    directly. It needs no torch: torch is imported only inside _cuda_available, which
+    full_retrain_pooled calls and this function does not. So the wiring is covered
+    wherever the suite runs, not only where a GPU stack happens to be installed.
+
+    The fit itself is stubbed - this is a plumbing test and no number in it is a metric.
+    """
+    import numpy as np
+    import pandas as pd
+
+    from app.ml import pooled_training as pt
+
+    class _Stub:
+        """Returns a constant far from the target, so it loses to predicting the mean."""
+        def __init__(self, value):
+            self.value = value
+
+        def predict(self, X):
+            return np.full(len(X), self.value, dtype=float)
+
+    cols = ["ensemble_spread"]
+    monkeypatch.setattr(pt, "_feature_columns_for", lambda *a, **k: cols)
+    monkeypatch.setattr(pt, "_fit_booster", lambda *a, **k: (object(), 1000))
+    monkeypatch.setattr(pt, "attach_hbf_column", lambda df, hbf: df)
+
+    rng = np.random.default_rng(0)
+    va = pd.DataFrame({"variable": "temperature_c",
+                       "ensemble_spread": rng.random(200),
+                       "abs_error": rng.random(200)})
+
+    # A model predicting 500 where the target is in [0, 1): worse than the mean on both
+    # squared and absolute error, which is the shape run_20260922T100055Z shipped.
+    monkeypatch.setattr(pt, "_booster_to_sklearn", lambda *a, **k: _Stub(500.0))
+    assert pt.train_variable_regressor_pooled(
+        {2000: tmp_path / "x.parquet"}, [2000], "temperature_c",
+        {pd.Timestamp("2000-01-01")}, va, {}, tmp_path) is None
+
+    # A model predicting near the mean of the target is weak, not unusable, and must
+    # still produce an artifact - the floor exists to catch damage, not mediocrity.
+    monkeypatch.setattr(pt, "_booster_to_sklearn",
+                        lambda *a, **k: _Stub(float(va["abs_error"].mean())))
+    art = pt.train_variable_regressor_pooled(
+        {2000: tmp_path / "x.parquet"}, [2000], "temperature_c",
+        {pd.Timestamp("2000-01-01")}, va, {}, tmp_path)
+    assert art is not None and art.variable == "temperature_c"
