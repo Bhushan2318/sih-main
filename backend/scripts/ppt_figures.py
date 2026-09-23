@@ -240,10 +240,18 @@ def _case_study(test: pd.DataFrame, thresholds: dict) -> dict:
     }
 
 
-def collect() -> dict:
-    run_id = registry.current_run_id()
+def collect(run_id: str | None = None) -> dict:
+    """Every deck figure for one run, read from that run's own artifacts.
+
+    `run_id` names the run to describe; without it the served model is used. It exists
+    because the only previous way to report on a run was to point current.json at it and
+    put it back afterwards - on the training machine current.json is what the site serves,
+    so anything failing in between leaves a model nobody chose being served. Reporting is
+    read-only and has no business writing that file.
+    """
+    run_id = run_id or registry.current_run_id()
     if not run_id:
-        raise SystemExit("no current model - nothing to report")
+        raise SystemExit("no current model and no --run-id - nothing to report")
 
     metrics = registry.load_metrics(run_id) or {}
     baselines = registry.load_baselines(run_id) or {}
@@ -345,15 +353,27 @@ def to_markdown(d: dict) -> str:
 
     a("## Baseline ladder")
     a("")
-    m = d["baseline_meta"]
-    a(f"All scored on the identical held-out rows — {m.get('test_events'):,} events over "
-      f"{m.get('test_cycles')} forecast cycles, base rate {_f(m.get('bust_rate'), 4)}.")
-    a("")
-    a("| Model | Brier ↓ | Skill vs climatology ↑ | ROC-AUC ↑ |")
-    a("|---|---|---|---|")
-    for b in d["baselines"]:
-        star = " **(ours)**" if b.get("is_model") else ""
-        a(f"| {b.get('name')}{star} | {_f(b.get('brier'))} | {_f(b.get('bss'))} | {_f(b.get('roc_auc'))} |")
+    m = d["baseline_meta"] or {}
+    if not d["baselines"]:
+        # A pooled run has no ladder by design: scripts/run_baselines needs a `train` split
+        # to fit climatology, and the pooled path writes only validation and held-out rows.
+        # Saying so is the point - an empty table reads as "the baselines said nothing",
+        # and this used to raise TypeError here instead, from `None:,`.
+        a("Not available for this run. `scripts/run_baselines` fits the climatology rung on "
+          "the `train` split, and a pooled run's eval events carry only the validation and "
+          "held-out splits, so there is nothing to fit against. The figures above are "
+          "unaffected. See the baseline-ladder entry in docs/known-issues.md.")
+    else:
+        events = m.get("test_events")
+        count = f"{events:,}" if isinstance(events, (int, float)) else "an unrecorded number of"
+        a(f"All scored on the identical held-out rows — {count} events over "
+          f"{m.get('test_cycles')} forecast cycles, base rate {_f(m.get('bust_rate'), 4)}.")
+        a("")
+        a("| Model | Brier ↓ | Skill vs climatology ↑ | ROC-AUC ↑ |")
+        a("|---|---|---|---|")
+        for b in d["baselines"]:
+            star = " **(ours)**" if b.get("is_model") else ""
+            a(f"| {b.get('name')}{star} | {_f(b.get('brier'))} | {_f(b.get('bss'))} | {_f(b.get('roc_auc'))} |")
     a("")
     a("*Skill is the Brier skill score against climatology — guessing the long-run bust "
       "rate every time. 0.000 means no better than that guess; negative means worse.*")
@@ -410,9 +430,12 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--out", type=Path, help="write markdown here instead of stdout")
     ap.add_argument("--json", action="store_true", help="emit JSON instead of markdown")
+    ap.add_argument("--run-id", default=None, metavar="RUN_ID",
+                    help="describe this run instead of the currently served one; "
+                         "reporting never changes which model is served")
     args = ap.parse_args()
 
-    data = collect()
+    data = collect(run_id=args.run_id)
     text = json.dumps(data, indent=2, default=str) if args.json else to_markdown(data)
     if args.out:
         args.out.write_text(text)
