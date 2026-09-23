@@ -87,8 +87,42 @@ def list_cycles() -> list[schemas.ReplayCycleSummary]:
         s = _cycle_summary(state, init)
         if s is not None:
             out.append(s)
-    out.sort(
+    out = order_cycles(out)
+    _cycles_memo = (state.run_id, out)
+    return out
+
+
+# Cycles within this fraction of the best coverage are treated as equally complete, so a
+# cycle missing a handful of districts is not demoted below one with six more.
+_COVERAGE_TIER = 0.1
+
+
+def order_cycles(cycles: list) -> list:
+    """Best cycle first, coverage before everything else.
+
+    The store is cumulative, so after the live feed moved from 36 city points to all 666
+    districts it holds both kinds at once. Sorting on `verified` first put the old sparse
+    cycles on top - they are the ones whose outcome is known, because the full-coverage
+    ones are recent - and Replay opened on a map of India with 36 districts drawn on it.
+    Measured on the live site 2026-09-23: /api/replay defaulted to 2026-09-15, 36 districts
+    per lead day.
+
+    A cycle that cannot show the country cannot show a bust. "Outcome not yet known" is
+    already explained in the UI; a near-empty map is not, and reads as broken rather than
+    as young. As newer cycles age into verification this ordering converges on what the
+    old one wanted anyway.
+
+    Coverage is compared in tiers rather than exactly, so within a tier the previous
+    ordering still decides. Nothing is filtered out: the sparse cycles are real runs, and
+    right now they are the only ones whose outcome is known.
+    """
+    if not cycles:
+        return []
+    best = max((c.n_regions or 0) for c in cycles) or 1
+    return sorted(
+        cycles,
         key=lambda c: (
+            round((c.n_regions or 0) / best / _COVERAGE_TIER),
             c.verified,
             round(max(c.medium_range_growth, 0.0), 3),
             round(c.peak_bust_probability or 0.0, 3),
@@ -96,8 +130,6 @@ def list_cycles() -> list[schemas.ReplayCycleSummary]:
         ),
         reverse=True,
     )
-    _cycles_memo = (state.run_id, out)
-    return out
 
 
 def get_replay(
