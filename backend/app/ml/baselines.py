@@ -375,7 +375,36 @@ class AnalogBaseline(_Base):
         Xs = (Xn - self._feature_mean) / self._feature_std
 
         k = max(1, min(self.n_neighbors, len(y)))
-        self._knn = KNeighborsClassifier(n_neighbors=k, weights="uniform").fit(Xs, y)
+        # n_jobs=-1 parallelises the neighbour SEARCH across cores. It changes nothing
+        # about the answer - measured on 400,000 fit rows and 50,000 queries in this
+        # design's 7 dimensions, the two predict_proba outputs are array_equal - it just
+        # stops the search running on one core out of twelve.
+        #
+        # It matters here because the pooled ladder fits on 13,320,000 rows and queries
+        # 2,430,900, which is 6.6x any scale this baseline had run at before. Measured
+        # 3.3x on this machine (39.8s -> 12.0s on the 400,000-row case above).
+        #
+        # Do not extrapolate that cost linearly in the fit size. Measured single-core,
+        # holding the query set at 2,430,900 rows and growing only the fit set:
+        #
+        #     fit rows      query time
+        #      200,000        21.0 min
+        #      500,000        29.2 min
+        #    1,000,000        34.5 min
+        #    2,000,000        36.1 min
+        #
+        # Doubling 1M -> 2M costs 1.6 minutes. The kd-tree makes the per-query cost
+        # logarithmic in the fit size, so total runtime is set by the number of QUERIES,
+        # not by how much was fitted. An earlier linear extrapolation from these numbers
+        # predicted ~18 hours single-threaded and was wrong by an order of magnitude.
+        #
+        # This is the only acceptable way to make the analog affordable. Subsampling the
+        # fit set is not: fewer neighbours to draw on makes a k-NN analog WORSE, so a
+        # subsampled analog row understates the baseline and flatters the classifier it is
+        # meant to be judged against - silent drift in our own favour, which is what this
+        # module's own docstring warns about.
+        self._knn = KNeighborsClassifier(
+            n_neighbors=k, weights="uniform", n_jobs=-1).fit(Xs, y)
         return self
 
     def predict_proba(self, events: pd.DataFrame) -> np.ndarray:
