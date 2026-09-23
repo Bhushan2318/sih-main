@@ -54,6 +54,56 @@ _score_cache: "dict[tuple, ScoredCycle]" = {}
 _SCORE_CACHE_MAX = 24
 
 
+# The label columns of a SHAP summary are a handful of distinct values repeated across
+# every row - one per model, region group, feature and method. Held as `object` they are
+# two million Python strings; dictionary-encoded they are two million small integers and a
+# short lookup. run_20260922T043925Z is 11.2 MB on disk, 2,101,395 rows, and 604 MB
+# resident once read the obvious way, on a box that is killed at 512 MB.
+#
+# DO NOT "simplify" this to pd.read_parquet followed by astype("category"). That is WORSE
+# than doing nothing at all: it builds every string and then throws them away, so the peak
+# - which is what kills a container - goes UP while the steady-state number goes down and
+# the diff reads as a tidy-up. Measured 2026-09-23 in separate processes on two machines:
+#
+#                                     peak        resident
+#   pd.read_parquet                +410 / +462 MB   604 MB
+#   read_parquet then astype       +461 / +524 MB    42 MB   <- worse at the peak
+#   read_table(read_dictionary=)   +319 / +232 MB    42 MB
+#
+# Two figures because two machines disagree on the magnitude and agree on the direction;
+# one number invites someone to re-measure once, get something between them, and conclude
+# the comment is wrong. Separate processes are not optional either: measuring both in one
+# process gave +374 for the fix against +197 for the bare read - backwards - because the
+# second read reused the first's freed pages.
+#
+# This changes representation only. It deliberately does NOT filter to the classifier's
+# rows, though that would be smaller again: top_factors_for takes a `model` argument, so
+# a caller may legitimately ask for a regressor's explanation, and a loader that silently
+# dropped those rows would answer such a caller with nothing.
+_SHAP_LABEL_COLUMNS = ("model", "group_region_id", "feature", "method")
+
+
+def _read_shap_summary(path) -> pd.DataFrame:
+    """The run's SHAP summary, in the smallest representation that loses nothing."""
+    if not path.exists():
+        return pd.DataFrame()
+    # read_dictionary, not astype("category") afterwards: converting after the fact
+    # materialises every string first and then throws them away, so the PEAK is worse
+    # than doing nothing even though the resident frame is smaller - measured +461 MB
+    # against the bare read's +408. Asking Arrow for dictionary-encoded columns means the
+    # strings are never built. Measured +257 MB peak, 42 MB resident.
+    import pyarrow.parquet as pq
+
+    present = [c for c in _SHAP_LABEL_COLUMNS
+               if c in pq.ParquetFile(path).schema_arrow.names]
+    df = pq.read_table(path, read_dictionary=present).to_pandas()
+    if "mean_abs_shap" in df.columns:
+        df["mean_abs_shap"] = df["mean_abs_shap"].astype("float32")
+    if "group_lead_time_days" in df.columns:
+        df["group_lead_time_days"] = df["group_lead_time_days"].astype("int16")
+    return df
+
+
 def load_model_state(run_id: Optional[str] = None) -> Optional[ModelState]:
     global _state_cache
     rid = run_id or registry.current_run_id()
@@ -70,8 +120,7 @@ def load_model_state(run_id: Optional[str] = None) -> Optional[ModelState]:
     if not regressors or clf is None or thr is None:
         return None
 
-    shap_path = registry.run_dir(rid) / "shap_summary.parquet"
-    shap_summary = pd.read_parquet(shap_path) if shap_path.exists() else pd.DataFrame()
+    shap_summary = _read_shap_summary(registry.run_dir(rid) / "shap_summary.parquet")
 
     import json
     def _read(name):
