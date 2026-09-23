@@ -1209,3 +1209,39 @@ def test_a_frame_with_no_per_variable_columns_is_a_gap_not_a_pass():
     # A run that skipped seven of eight variables is still publishable.
     assert pt.eval_event_contract_gaps(
         one_variable.drop(columns=["spread_temperature_c"])) == ["spread_temperature_c"]
+
+
+# --- a regressor that is worse than useless must not become an artifact -------------
+
+def test_a_regressor_worse_than_predicting_the_mean_is_refused():
+    """run_20260922T100055Z saved a temperature regressor with held-out r2 -254107.
+
+    It predicted absolute temperature errors from -80,235 to +270 degrees. The promotion
+    gate did not see it, because the gate reads the classifier's ROC-AUC and the
+    classifier had been TRAINED on those values, so it had learned to read them - the
+    served bust distribution was 0.008 from the good model's median and a degeneracy
+    check passed it. Nothing downstream can catch this; it has to be refused where it is
+    made. Rule 3: a model that got worse does not ship.
+
+    Both conditions must fail, not either: a genuinely hard variable can have a weak r2
+    while still beating the trivial predictor, and wind_direction_deg legitimately sits
+    at r2 0.41. Worse on squared error AND worse on absolute error is not ambiguous.
+    """
+    from app.ml import pooled_training as pt
+
+    # The real numbers from that run's temperature_c, and from the run that is serving.
+    assert pt.regressor_is_unusable({"r2": -254107.19, "mae": 5.746,
+                                     "baseline_mae_predict_mean": 0.92})
+    assert not pt.regressor_is_unusable({"r2": 0.5783, "mae": 0.6497,
+                                         "baseline_mae_predict_mean": 0.92})
+    # Weak but genuinely useful: beats the mean on both. wind_direction_deg's shape.
+    assert not pt.regressor_is_unusable({"r2": 0.41, "mae": 38.0,
+                                         "baseline_mae_predict_mean": 55.3})
+    # Negative r2 but still beating the mean on absolute error - not refused, because
+    # squared error alone is dominated by a handful of outliers.
+    assert not pt.regressor_is_unusable({"r2": -0.2, "mae": 0.8,
+                                         "baseline_mae_predict_mean": 0.92})
+    # No metrics at all cannot be judged, and must not be refused on a guess.
+    assert not pt.regressor_is_unusable({})
+    assert not pt.regressor_is_unusable({"r2": float("nan"), "mae": 1.0,
+                                         "baseline_mae_predict_mean": 0.9})
