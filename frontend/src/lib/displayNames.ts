@@ -27,6 +27,14 @@ const VARIABLES: Record<string, { label: string; unit: string | null }> = {
 
 /** Engineered prefixes, longest first so `pred_err_` is tested before any `pred_`. */
 const PREFIXES: { prefix: string; phrase: (v: string) => string }[] = [
+  // C1 jumpiness and C2 time-lagged ensemble, per variable.
+  { prefix: "jump_abs_change_", phrase: (v) => `How much the ${v} forecast changed since the last run` },
+  { prefix: "jump_sign_flips_", phrase: (v) => `How often the ${v} forecast flipped direction` },
+  { prefix: "jump_std_", phrase: (v) => `How much the ${v} forecast has been changing` },
+  { prefix: "laf_spread_ratio_", phrase: (v) => `Recent runs' disagreement on ${v}, against this run's` },
+  { prefix: "laf_pool_mean_", phrase: (v) => `Recent runs' average ${v} forecast` },
+  { prefix: "laf_pool_size_", phrase: (v) => `Recent runs pooled for ${v}` },
+  { prefix: "laf_pool_std_", phrase: (v) => `Disagreement across recent runs on ${v}` },
   { prefix: "pred_err_", phrase: (v) => `Predicted ${v} error` },
   { prefix: "spread_", phrase: (v) => `Ensemble disagreement on ${v}` },
   { prefix: "conf_", phrase: (v) => `Confidence in ${v}` },
@@ -35,7 +43,8 @@ const PREFIXES: { prefix: string; phrase: (v: string) => string }[] = [
 
 /** Features that are not per-variable. Phrased as what they mean, not what they are. */
 const FEATURES: Record<string, string> = {
-  historical_bust_frequency_region_season: "How often this district busts this season",
+  // The rate of errors above the 75th percentile in training, not of p90 busts.
+  historical_bust_frequency_region_season: "How often this district's forecasts go badly wrong in this season",
   lead_time_days: "How far ahead the forecast is",
   region_id: "Which district",
   state_id: "Which state",
@@ -54,6 +63,21 @@ const FEATURES: Record<string, string> = {
   jump_std: "How much the forecast has been changing",
   jump_sign_flips: "How often the forecast has flipped direction",
   jump_rel_climatology: "Forecast churn against this district's normal",
+  // C2, time-lagged ensemble: this run pooled with recent runs for the same day.
+  laf_pool_mean: "Recent runs' average forecast",
+  laf_pool_std: "Disagreement across recent runs",
+  laf_pool_size: "Recent runs pooled",
+  laf_spread_ratio: "Recent runs' disagreement, against this run's",
+  // C3, the Madden-Julian Oscillation: the tropical pulse that modulates Indian rain.
+  mjo_amplitude: "MJO strength",
+  mjo_rmm1: "MJO index, first component",
+  mjo_rmm2: "MJO index, second component",
+  // C4, fixed facts about the district.
+  area_km2: "District area",
+  border_distance_km: "Distance to the coast or a national border",
+  centroid_lat: "District latitude",
+  centroid_lon: "District longitude",
+  elevation_mean: "District average elevation",
 };
 
 /** `some_new_variable_xyz` -> `Some new variable xyz`. */

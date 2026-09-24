@@ -34,8 +34,8 @@ describe("RegionDetailPanel opens on the leading driver", () => {
 
     const headings = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent ?? "");
     const at = (re: RegExp) => headings.findIndex((t) => re.test(t));
-    expect(at(/Leading driver/)).toBeLessThan(at(/What drove this prediction/));
-    expect(at(/What drove this prediction/)).toBeLessThan(at(/Bust probability by lead day/));
+    expect(at(/Leading driver/)).toBeLessThan(at(/What the model relies on/));
+    expect(at(/What the model relies on/)).toBeLessThan(at(/Bust probability by lead day/));
   });
 
   it("a different district opens on its own driver, not the previous tab", () => {
