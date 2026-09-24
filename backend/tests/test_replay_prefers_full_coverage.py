@@ -31,13 +31,14 @@ class _Cycle:
     """The fields of ReplayCycleSummary that the ordering reads."""
 
     def __init__(self, init_date, n_regions, verified, growth=0.0, peak=0.5,
-                 verified_lead_days=0):
+                 verified_lead_days=0, relative_error=None):
         self.init_date = init_date
         self.n_regions = n_regions
         self.verified = verified
         self.medium_range_growth = growth
         self.peak_bust_probability = peak
         self.verified_lead_days = verified_lead_days
+        self.peak_region_relative_error = relative_error
 
     def __repr__(self):
         return f"<{self.init_date} n={self.n_regions} verified={self.verified}>"
@@ -82,6 +83,38 @@ def test_ordering_survives_a_cycle_with_no_peak_probability():
     ordered = replay_service.order_cycles([a, b])
     assert ordered[0] is b
     assert set(ordered) == {a, b}
+
+
+def test_a_badly_missed_verified_cycle_outranks_a_barely_missed_one():
+    """Within the same coverage tier and both verified, actual error should decide -
+    not just how confident the model was or how much its risk grew with lead time.
+
+    Confirmed missing before this fix: order_cycles's key had no error term at all, so
+    a cycle whose forecast was nearly right could outrank one that missed badly, purely
+    on peak_bust_probability or medium_range_growth.
+    """
+    barely_missed = _Cycle("2026-09-20", 666, True, growth=0.5, peak=0.9,
+                            verified_lead_days=10, relative_error=0.1)
+    badly_missed = _Cycle("2026-09-19", 666, True, growth=0.1, peak=0.6,
+                           verified_lead_days=10, relative_error=2.4)
+    ordered = replay_service.order_cycles([barely_missed, badly_missed])
+    assert ordered[0] is badly_missed, (
+        f"Replay would open on {ordered[0]}, which missed by only "
+        f"{ordered[0].peak_region_relative_error}x its threshold, ahead of a cycle "
+        f"that missed by {badly_missed.peak_region_relative_error}x"
+    )
+
+
+def test_relative_error_only_matters_within_a_verified_tier():
+    """An unverified cycle (relative_error=None) must not be able to win on error alone -
+    'badly missed' presupposes the outcome is known."""
+    unverified_with_stale_error = _Cycle("2026-09-23", 666, False, peak=0.5,
+                                          relative_error=None)
+    verified_mild_miss = _Cycle("2026-09-22", 666, True, peak=0.5,
+                                 verified_lead_days=5, relative_error=0.2)
+    ordered = replay_service.order_cycles(
+        [unverified_with_stale_error, verified_mild_miss])
+    assert ordered[0] is verified_mild_miss
 
 
 def test_every_cycle_is_kept_not_filtered():

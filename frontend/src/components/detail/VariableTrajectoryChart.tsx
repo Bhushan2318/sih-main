@@ -2,14 +2,15 @@ import {
   CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 import type { VariableSeries } from "../../api/types";
-import { variableUnit } from "../../lib/displayNames";
+import { variableLabel, variableUnit } from "../../lib/displayNames";
 import { CHART } from "../../theme";
 
 export function VariableTrajectoryChart({ series }: { series: VariableSeries }) {
   if (!series.available || !series.points.length) {
     return (
       <p className="muted">
-        No model for {series.variable} — too few matched forecast–observation pairs in the data.
+        No model for {variableLabel(series.variable)} — too few matched forecast–observation
+        pairs in the data.
       </p>
     );
   }
