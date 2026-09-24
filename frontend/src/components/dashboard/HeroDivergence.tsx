@@ -4,16 +4,43 @@ import {
   Scatter, Tooltip, XAxis, YAxis, ZAxis,
 } from "recharts";
 import type { EnsembleDivergenceResponse } from "../../api/types";
+import { isScoredProbability, riskBandForProbability, type RiskCuts } from "../../lib/riskBands";
 import { CHART } from "../../theme";
 
 type Tab = "national" | "skill";
 
-export function HeroDivergence({ data }: { data?: EnsembleDivergenceResponse }) {
+export function HeroDivergence({ data, riskCuts }: {
+  data?: EnsembleDivergenceResponse;
+  riskCuts?: RiskCuts;
+}) {
   const [tab, setTab] = useState<Tab>("national");
 
   if (!data?.model_trained) return null;
 
   const mean = data.mean_bust_probability;
+  const hasScore = data.n_scored_regions > 0
+    && isScoredProbability(mean)
+    && (data.national?.length ?? 0) > 0;
+  if (!hasScore) {
+    return (
+      <section className="hero hero--empty" aria-live="polite">
+        <div className="hero__grid">
+          <div className="hero__lead">
+            <div className="hero__kick"><i aria-hidden="true" /><span>NO SCORE YET</span></div>
+            <h1 className="hero__head">No scored cycle <em>yet.</em></h1>
+            <p className="hero__sub">
+              {data.message ?? "The model is available, but this store has no forecast cycle it can score."}
+            </p>
+            <p className="hero__why">
+              A model response without a probability is unscored; it has no risk band. The
+              dashboard will show the map and KPIs as soon as a scoreable cycle is available.
+            </p>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
   const prior = data.prior_mean_bust_probability;
   const delta = mean != null && prior != null ? mean - prior : null;
   const apart = data.n_high_regions > 0;
@@ -44,7 +71,7 @@ export function HeroDivergence({ data }: { data?: EnsembleDivergenceResponse }) 
 
           {mean != null ? (
             <div className="hero__gauge">
-              <Ring value={mean} />
+              <Ring value={mean} cuts={riskCuts} />
               <div className="hero__gaugemeta">
                 <span className="hero__gaugelabel">Mean bust risk · 0% holds, 100% busts</span>
                 <strong className="hero__gaugebig">
@@ -226,11 +253,18 @@ function CalibrationTip({ active, payload }: {
   );
 }
 
-function Ring({ value }: { value: number }) {
+function Ring({ value, cuts }: { value: number; cuts?: RiskCuts }) {
   const r = 52;
   const c = 2 * Math.PI * r;
   const pct = Math.max(0, Math.min(1, value));
-  const colour = pct >= 0.57 ? CHART.high : pct >= 0.36 ? CHART.medium : CHART.low;
+  const band = riskBandForProbability(pct, cuts);
+  const colour = band === "high"
+    ? CHART.high
+    : band === "medium"
+      ? CHART.medium
+      : band === "low"
+        ? CHART.low
+        : CHART.forecast;
   return (
     <div className="hero__ring">
       <svg viewBox="0 0 128 128" aria-hidden="true">

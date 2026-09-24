@@ -882,6 +882,10 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 .tab:hover { border-color: var(--blue); color: var(--blue); }
 .tab--active { background: var(--ink); color: #fff; border-color: var(--ink); }
 .tab--active:hover { color: #fff; border-color: var(--ink); }
+.tab__chip {
+  margin-left: 0.3rem; padding: 0 0.3rem; border-radius: 4px;
+  background: var(--bust-wash); color: var(--bust); font-size: 0.6rem; font-weight: 600;
+}
 
 .dropzone {
   border: 2px dashed var(--rule); border-radius: var(--r);
