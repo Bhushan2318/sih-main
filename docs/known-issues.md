@@ -1088,3 +1088,75 @@ here rather than discovered live.
   in front of a model trained with it only changes what the served model sees. It does
   not remove what the model learned. An attempted serve-time NaN-fill (2026-09-25) was
   parked on `parked/opencode-nemotron` for that reason.
+
+### Found in the 2026-09-25 audit (each re-checked against data, not only read in code)
+
+- **Most busts in temperature, humidity and soil moisture are steady per-district bias.**
+  - Measured on the serving bundle (85 cycles, 71 districts with observations): the
+    ensemble-mean error barely grows from Day 1 to Day 10 for temperature and humidity.
+  - A fixed per-district/variable/lead bias is 64% of squared error for both, and 90% for
+    soil moisture. Rainfall is 6%, and its error grows with lead as a forecast failure
+    should.
+  - The live run's lead/bust correlation is ~0.02.
+  - Removing each district's bias leave-one-cycle-out (no in-sample fitting) lowers Day-1
+    event busts from 0.31 to 0.25 and raises Day 10 to 0.50.
+  - Consequence: a "bust" today is often "this district is always off", which NCMRWF's
+    own bias correction removes.
+  - Decided: the next retrain defines busts on bias-corrected error.
+- **The event bust rate (~49% on the test year) changes meaning with lead.** An event busts
+  if any available variable passes its own p90, and fewer variables exist from Day 4 and
+  Day 6 (see the next item). So the rate steps down exactly there. That confounds the
+  "lead day alone has no skill" argument. Per-variable bust heads are planned, rainfall
+  first.
+- **Variables served beyond the training archive's leads. Fixed 2026-09-25.**
+  - The reforecast archive holds 10 m wind only to 120 h and soil moisture only to 72 h.
+  - Live GEFS serves all ten days, and the map named wind the driver of 1,216 and soil
+    moisture of 167 district-days beyond those leads.
+  - `contracts.ARCHIVE_MAX_LEAD_DAYS` and `engineering.drop_beyond_archive_leads` now
+    remove those rows wherever features are read.
+  - Re-scoring the 2026-09-24 cycle: Days 1–3 unchanged, Days 6–10 mean |ΔP| ≈ 0.10.
+  - The reforecast's soil-moisture error is also about twice the live feed's at the same
+    leads (15.4 vs 8.7 points MAE). So its p90 does not transfer to live either.
+- **The live run's 2016/2017 rainfall truth is IMD-merged, not ERA5.**
+  - `metadata.db` shows `imd_merged_district_observations_india_2016/2017.parquet`
+    ingested 2026-09-12 19:35, after the ERA5 CDS files. The store keeps the latest row,
+    so IMD won.
+  - The same IMD files are documented above as one day late.
+  - So validation and test rainfall were scored against a different, shifted truth from
+    the one the model trained on.
+  - Fix before the next retrain: ERA5 last (or drop those batches), and refuse stale IMD
+    batches when caching a year.
+- **`forecast_error_lag` leaks** (entry above, added the same day). The classifier does not
+  take it directly, but takes every regressor's output, so held-out scores are inflated by
+  an unknown amount until the retrain.
+- **The MJO file stops at 2026-06-24.**
+  - `data/mjo_omi_index.parquet` was committed once and nothing refreshes it.
+  - The as-of join tolerates 5 days, so every live cycle gets NaN MJO features that
+    training always had.
+  - OMI may also be computed with future data. NOAA PSL publishes a real-time version
+    (ROMI) for this use.
+  - Next retrain: use ROMI and refresh it in CI, or drop MJO.
+- **Wind-direction error is not circular.**
+  - `engineering.py` takes a plain difference and `pivot.py` a plain mean of directions.
+    Its p90 is ~189° raw against ~98° wrapped.
+  - A northerly is a bust by construction.
+  - Next retrain: circular error and circular mean (a helper exists on the parked
+    `parked/opencode-nemotron` branch), and drop wind direction as a bust label.
+- **The serving box was at 509 MB of 512. Guarded 2026-09-25.**
+  - Replay and the ensemble endpoint accepted any `init_date` and scored non-precomputed
+    cycles on the box (1,406 MB peak).
+  - `POST /api/upload` wrote into the served store.
+  - `SERVING_READ_ONLY` (Dockerfile) now answers both with a 409.
+  - The box's steady 509 MB is itself unexplained and should be measured and cut.
+- **Smaller, still open:**
+  - The collapsed-probability check (`serving_sanity`) runs in `full_retrain` but not in
+    `publish_serving_model`, the path that shipped the live model.
+  - A partial observation pull is marked complete (`orchestrator.py`, contrary to rule 3).
+  - 00/06/12/18Z cycles collapse into one date in the store, because the store keeps no
+    cycle hour.
+  - Relative humidity is derived from mean specific humidity/temperature/pressure in
+    training but taken as GEFS RH live.
+  - The SHAP panel is a validation-year profile per district, not a per-prediction
+    explanation (the panel now says so).
+  - `scripts/ppt_figures.py` defaults to `current.json`, which on the training laptop
+    points to an older run than the live one. Pass `--run-id`, or read `/api/model/status`.
