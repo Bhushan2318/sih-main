@@ -64,8 +64,8 @@ Query, Zustand, Recharts, hand-written CSS. Hosting cost: $0.
    convention has already caused one bug. Do not change it.
 
 5. **Measure, do not estimate.** Anything added at serve time must be measured
-   with a real RSS measurement. The box is killed at 512 MB with ~388 MB already
-   in use.
+   with a real RSS measurement. The box is killed at 512 MB, and `/api/health`
+   read **509 MB** in use on 2026-09-24 - there is effectively no headroom.
 
 6. **Free tier only.** Render free, GitHub Actions, GitHub Releases (2 GB per
    asset). $0 hosting is part of the story. No paid infrastructure, ever.
@@ -135,10 +135,12 @@ plumbing rather than about correctness.
 Only needed GRIB2 messages are pulled, via HTTP Range requests keyed off each
 file's `.idx` sidecar.
 
-**Observation side.** Currently ERA5 via Open-Meteo Historical Weather API
-(CC-BY 4.0, Copernicus C3S). Being replaced: IMD gauge-based gridded rainfall at
-native 0.25° for precipitation, ERA5 read as Zarr on its native grid for
-everything else.
+**Observation side.** ERA5 (CC-BY 4.0, Copernicus C3S): from the Copernicus CDS
+for the training years, via the Open-Meteo Historical Weather API for recent/live
+days. **Trap (2026-09-25):** IMD-merged rainfall files for 2016 and 2017 were ingested
+after ERA5 and won the dedupe, so the live run's validation and test rainfall truth is
+IMD (one day late), not ERA5 - fix before the next retrain. IMD gauge-based 0.25°
+rainfall as the rainfall truth is still the goal.
 
 **Pipeline.** format-agnostic parsers → confidence-scored `SchemaMapper` → geo
 resolution → canonical store (hive-partitioned Parquet + SQLite lineage) →
@@ -226,7 +228,9 @@ Figures marked **(2026-09-10)** replaced earlier estimates after a real run.
   onnxruntime, scoring one lead at a time. Batching all ten is faster (78 ms) but
   costs +163 MB.
 - District geo index: ~4 MB resident, ~24 MB transient while parsing.
-- Serving currently uses **388 MB of 512**.
+- Serving used **509 MB of 512** per `/api/health` on 2026-09-24 (388 MB was an
+  older measurement). A cycle without a CI precompute is refused on the box
+  (`SERVING_READ_ONLY`, set in the Dockerfile) because scoring one peaks at 1,406 MB.
 - **CNN training streams from disk.** Materialising a year is 14.3 GB (X at
   [3650, 24, 145, 141] float32 is 7.2 GB, plus the mask); `FieldIndex` holds
   paths and labels only and reads one cycle per batch — **617 MB**, a 23x
@@ -243,8 +247,17 @@ Figures marked **(2026-09-10)** replaced earlier estimates after a real run.
 Stated plainly, and several are actively being beaten. Do not paper over any of
 them.
 
-- **Coverage is sampled, not continuous** — currently ~17 initialisations per
-  year. The density work fixes this.
+- **One held-out year.** The served pooled run trains on daily reforecast cycles
+  for 2000-2016 across all 666 districts and tests on 2017 only. 2018-2019 are
+  unused by it and are the next evaluation.
+- **Some variables stop early in the reforecast archive** - 10 m wind at 120 h,
+  soil moisture at 72 h (VAR_SPEC `max_lead_h`); `contracts.ARCHIVE_MAX_LEAD_DAYS`
+  keeps the live feed from being scored beyond that.
+- **Most busts in temperature, humidity and soil moisture are steady per-district
+  bias** (64-90% of squared error, measured 2026-09-25), so lead day barely
+  predicts a bust. Decided: the next retrain defines busts on bias-corrected error.
+- **`forecast_error_lag` is a leak** (previous lead's realised error of the same
+  forecast); all 8 regressors of the live run use it. Removed in the next retrain.
 - **5 of 31 GEFS ensemble members.** The reforecast archive only *has* 5 daily
   (11 on Wednesdays). 31 members exist solely in the operational feed. Being
   partly addressed via a time-lagged ensemble.
@@ -259,13 +272,6 @@ them.
 - **"Bust" is defined on surface-variable error**, not the synoptic criterion of
   Rodwell et al. (2013). Deliberate: surface error is what reaches agriculture and
   disaster response.
-- **Label coverage is 34 districts of 666 for 2017.** Only city-point ERA5
-  exists for that year, and only districts with observations can pair. The CNN
-  still reads the full 666-district geography; unlabelled districts are masked
-  to NaN and contribute nothing to the loss. Fixing this needs CDS.
-- **One year is one monsoon.** The 2017 split trains on Jan–Sep and holds out
-  Nov–Dec, so it tests generalisation *across* seasons and leaves monsoon busts
-  untested as a held-out case.
 - **The bust base rate is ~43%, not ~10%.** The 90th-percentile threshold is per
   *variable*, and an event busts if any of ~8 exceeds its own, so
   1 − 0.9⁸ ≈ 0.57 before dependence. Applying a `pos_weight` for a 10% base rate
