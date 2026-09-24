@@ -5,6 +5,7 @@ from typing import Optional
 import pandas as pd
 
 from app.api import schemas
+from app.ingestion.canonical_schema import CanonicalVariable
 from app.ingestion.canonical_schema import CIRCULAR_VARIABLES
 from app.ml import inference
 from app.services.region_service import (
@@ -222,8 +223,17 @@ def get_replay(
     )
 
 
+# Canonical names end in their unit (rainfall_mm, atmospheric_moisture_kgm2). The
+# narration reads as a sentence, so the unit token is dropped rather than spoken as
+# "kgm2"; the suffixes come from the enum itself, not a second list to keep in step.
+_UNIT_SUFFIXES = {v.value.rpartition("_")[2] for v in CanonicalVariable}
+
+
 def _pretty(var) -> str:
-    return str(var).replace("_", " ") if isinstance(var, str) and var else ""
+    if not (isinstance(var, str) and var):
+        return ""
+    head, _, tail = var.rpartition("_")
+    return (head if head and tail in _UNIT_SUFFIXES else var).replace("_", " ")
 
 
 def _narrate(lead: int, g: pd.DataFrame, prev: dict, cur: dict, hi: float, prev_dom: str) -> str:

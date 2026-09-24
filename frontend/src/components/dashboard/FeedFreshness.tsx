@@ -18,6 +18,8 @@ export function FeedFreshness() {
 
   const last = data.last_forecast;
   const failed = last?.status === "failed";
+  const ageH = cycleAgeHours(data.last_cycle_ingested);
+  const stale = ageH != null && ageH > STALE_AFTER_HOURS;
 
   return (
     <div className="feed-strip">
@@ -59,6 +61,12 @@ export function FeedFreshness() {
         ) : null}
       </div>
 
+      {stale ? (
+        <p className="warn small feed-strip__error" role="status">
+          This forecast cycle is {Math.round(ageH as number)} hours old - newer cycles have not
+          arrived, so the risk shown here may be out of date.
+        </p>
+      ) : null}
       {failed && last?.error ? (
         <p className="warn small feed-strip__error">Last pull failed: {last.error}</p>
       ) : null}
@@ -69,6 +77,21 @@ export function FeedFreshness() {
       ) : null}
     </div>
   );
+}
+
+/**
+ * A cycle is normally well under a day old: pulled every 6 h, by a cron that runs 3-5 h
+ * late, on cycles published ~5.5 h after issue. Past 30 h something has stopped - the
+ * 2026-09 outage served days-old data behind a healthy-looking strip (known-issues.md).
+ */
+export const STALE_AFTER_HOURS = 30;
+
+/** Hours since a cycle labelled "YYYY-MM-DD HH" (UTC) was issued; null if unreadable. */
+export function cycleAgeHours(label: string | null | undefined, now: number = Date.now()): number | null {
+  const m = label?.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2})/);
+  if (!m) return null;
+  const issued = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4]);
+  return (now - issued) / 3_600_000;
 }
 
 function feedState(running: boolean, failed: boolean): string {

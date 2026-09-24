@@ -155,7 +155,7 @@ export function RegionDetailPanel({
       </section>
 
       <section className="panel__section">
-        <h3>What drove this prediction (SHAP)</h3>
+        <h3>What the model relies on in this district (SHAP)</h3>
         <ShapFactorsList factors={data.top_factors} method={data.top_factors_method} />
       </section>
 
