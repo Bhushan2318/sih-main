@@ -117,6 +117,14 @@ export function RegionDetailPanel({
             {current ? (
               <>
                 <VariableTrajectoryChart series={current} />
+                {current.max_lead_day ? (
+                  <p className="muted small">
+                    Modelled for Days 1–{current.max_lead_day} only: the reforecast archive the
+                    model learned from holds no {variableLabel(current.variable).toLowerCase()}{" "}
+                    beyond Day {current.max_lead_day}, so later days are not scored rather than
+                    guessed.
+                  </p>
+                ) : null}
                 <dl className="metrics">
                   <div><dt>Average error (MAE)</dt><dd>{fmt(current.model_mae)} {current.unit ?? ""}</dd></div>
                   <div><dt>Typical error (RMSE)</dt><dd>{fmt(current.model_rmse)}</dd></div>

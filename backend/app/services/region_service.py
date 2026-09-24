@@ -5,6 +5,7 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
+from app import contracts
 from app.api import schemas
 from app.ingestion.canonical_schema import VARIABLE_UNITS, CanonicalVariable
 from app.ml import inference, registry
@@ -227,6 +228,7 @@ def get_region_detail(region_id: str) -> schemas.RegionDetailResponse:
             bust_threshold=_f(state.thresholds.bust_threshold.get(var)),
             model_mae=_f(m.get("mae")), model_rmse=_f(m.get("rmse")),
             model_r2=_f(m.get("r2")), metrics_split=m.get("split"),
+            max_lead_day=contracts.ARCHIVE_MAX_LEAD_DAYS.get(var),
             points=points,
         ))
 
