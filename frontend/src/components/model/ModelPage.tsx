@@ -27,6 +27,13 @@ export function ModelPage() {
   const cuts = data.thresholds?.risk_band_cuts;
   const vol = data.data_volume ?? {};
   const td = data.training_data ?? {};
+  // Pooled runs record years; single-year runs record dates. The API fills both shapes.
+  const firstYear = td.first_train_year
+    ?? (td.first_train_date ? Number(String(td.first_train_date).slice(0, 4)) : null);
+  const lastYear = td.last_train_year ?? firstYear;
+  const trainYears = firstYear != null && lastYear != null ? lastYear - firstYear + 1 : null;
+  const cyclesPerYear = trainYears && typeof td.train_cycles === "number"
+    ? Math.round(td.train_cycles / trainYears) : null;
 
   return (
     <main className="page page--wide">
@@ -78,6 +85,23 @@ export function ModelPage() {
           <div className="page--split">
             <section className="card">
               <header className="card__head"><h3>Training data</h3></header>
+              {firstYear != null ? (
+                <dl className="metrics">
+                  <div className="metrics__wide">
+                    <dt>Data span</dt>
+                    <dd className="mono">
+                      {firstYear} → {vol.valid_date_max ?? lastYear ?? "—"}
+                    </dd>
+                  </div>
+                  <div className="metrics__wide">
+                    <dt>Training archive</dt>
+                    <dd className="mono small">
+                      {firstYear}–{lastYear ?? firstYear}
+                      {td.test_year != null ? <> · held out {td.test_year}</> : null}
+                    </dd>
+                  </div>
+                </dl>
+              ) : null}
               <dl className="metrics metrics--compact">
                 <div>
                   <dt>Forecast cycles</dt>
@@ -96,13 +120,15 @@ export function ModelPage() {
               {typeof td.cycles === "number" && td.cycles > 0 ? (
                 <p className="muted small">
                   Trained on <b>{td.cycles.toLocaleString()}</b> forecast cycles
-                  {td.first_train_date ? <> from {String(td.first_train_date).slice(0, 10)}</> : null}
+                  {firstYear != null ? <> from {firstYear}{lastYear != null && lastYear !== firstYear ? <> to {lastYear}</> : null}</> : null}
                   {typeof td.train_cycles === "number" && typeof td.val_cycles === "number" ? (
-                    <>{" "}— {td.train_cycles} train · {td.val_cycles} validation ·{" "}
-                      {td.held_out_cycles} held out</>
+                    <>{" "}— {td.train_cycles.toLocaleString()} train · {td.val_cycles.toLocaleString()} validation ·{" "}
+                      {td.held_out_cycles?.toLocaleString()} held out</>
                   ) : null}
-                  . Sampled, not continuous: a reforecast archive of a handful of
-                  initialisations a year, plus the live cycles since deployment.
+                  {cyclesPerYear != null ? (
+                    <>. That is about <b>{cyclesPerYear}</b> initialisations per training year
+                      of the GEFSv12 reforecast (one 00 UTC cycle per day at most).</>
+                  ) : "."}
                 </p>
               ) : (
                 <p className="muted small">
@@ -133,10 +159,9 @@ export function ModelPage() {
                   The serving copy carries the cycles needed to score today and to replay
                   recent ones — not the full training archive, which lives where the model
                   is trained.
-                  {td.first_train_date ? (
+                  {firstYear != null ? (
                     <> The model itself was trained on data going back to{" "}
-                      <b>{String(td.first_train_date).slice(0, 10)}</b>; this range is only
-                      what this 512&nbsp;MB box carries.</>
+                      <b>{firstYear}</b>; this range is only what this 512&nbsp;MB box carries.</>
                   ) : null}
                 </p>
               </div>

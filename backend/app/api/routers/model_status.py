@@ -16,6 +16,13 @@ def _training_data(manifest: dict) -> dict:
     splits = manifest.get("split_cycles") or {}
     counts = {k: splits.get(k) for k in ("train", "val", "test")}
     known = [v for v in counts.values() if isinstance(v, int)]
+    # Two manifest shapes: the single-year pipeline records train_dates, a pooled run
+    # records train_years + test_year. Read whichever the run wrote.
+    train_dates = splits.get("train_dates") or []
+    train_years = sorted(int(y) for y in splits.get("train_years") or [])
+    if not train_years and train_dates:
+        train_years = sorted({int(str(d)[:4]) for d in train_dates})
+    test_year = splits.get("test_year", manifest.get("test_year"))
     return {
         "cycles": sum(known) if known else None,
         "train_cycles": counts["train"],
@@ -23,7 +30,10 @@ def _training_data(manifest: dict) -> dict:
         "held_out_cycles": counts["test"],
         "canonical_rows": manifest.get("data_rows"),
         "paired_rows": manifest.get("paired_rows"),
-        "first_train_date": (splits.get("train_dates") or [None])[0],
+        "first_train_date": train_dates[0] if train_dates else None,
+        "first_train_year": train_years[0] if train_years else None,
+        "last_train_year": train_years[-1] if train_years else None,
+        "test_year": int(test_year) if test_year is not None else None,
     }
 
 
