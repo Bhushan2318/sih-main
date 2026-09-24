@@ -25,15 +25,17 @@ here rather than discovered live.
   file, not a resample.
 - **Replay offers the 10 most recent cycles**, not every cycle in the store
   (`replay_service._MAX_CYCLES`). Each candidate costs one scoring pass on first call.
-- **Feature and variable names render raw, in snake_case.** The SHAP panel lists
-  `spread_rainfall_mm`, `conf_pressure_hpa` and
-  `historical_bust_frequency_region_season`; the variable tabs and the bust-threshold
-  list show `atmospheric_moisture_kgm2` and its peers. Everything around them was put
-  into plain language on 2026-09-02, so these are now the densest text on the page for a
-  reader without a meteorology background. Fixing it needs a display-name map rather than
-  a text edit — the names arrive from the model's own feature list, not from a string in
-  the component — which is why it was left rather than rushed. Worth doing Friday morning
-  if there is time before the freeze; it is cosmetic and nothing depends on it.
+- **RESOLVED — feature and variable names used to render raw, in snake_case.**
+  `frontend/src/lib/displayNames.ts` now maps every modelled variable and every engineered
+  feature prefix (`pred_err_`, `spread_`, `conf_`, `fc_`) to plain English, with a
+  `prettify` fallback for anything added later. `ShapFactorsList`, the variable tabs in
+  `RegionDetailPanel`, `MissesCard` and `AlertsPage`'s "most common cause" all route
+  through it. Verified by audit 2026-09-23: two rollout gaps found and fixed in the same
+  pass — `RegionDetailPanel`'s "not modelled" list and `VariableTrajectoryChart`'s
+  "no model for X" message were still interpolating the raw column name directly rather
+  than calling `variableLabel`. Both now do. The raw name is still shown deliberately as a
+  `title` tooltip on the SHAP factor list, for anyone checking the feature list against the
+  model artifact.
 
 ## Operational
 
@@ -431,8 +433,14 @@ here rather than discovered live.
   boundary *lines* against SoI's own data, and no such comparison is recorded anywhere.
   Full writeup, sources, and a Datameet alternative comparison: `docs/boundary-geometry-licensing.md`.
 
-- **The live operational feed does not go through the district weight table.** Training
-  and reforecast ingestion aggregate every 0.25° cell a district polygon overlaps, via
+- **RESOLVED 2026-09-23 — the live operational feed did not go through the district
+  weight table.** Fixed the same day this was found; see the full RESOLVED entry under
+  "Serving a pooled model" near the end of this file for what shipped and how it was
+  verified live. Kept here, like that entry, because the reasoning below on why the
+  obvious fix (packaging CDS observations alone) would not have moved the map is the
+  record of how this was decided — not because the problem is still open.
+  Training and reforecast ingestion aggregate every 0.25° cell a district polygon
+  overlaps, via
   `india_districts.DistrictGrid.aggregate` (`fetch_gefs_reforecast_sample.py`,
   `fetch_era5_cds_district_observations.py`). The live path does not: `app/live/gefs.py`
   reads `scripts/india_cities.json` - **36 city points, one per state/UT** - and samples
@@ -985,7 +993,21 @@ here rather than discovered live.
   too narrow" both refuse the healthy 17-year model, which serves 90.4% in the `low` band
   at an IQR of 0.119 - tighter than one of the broken runs. A quiet day is genuinely
   quiet; what distinguishes damage is which rail the mass is pinned against.
-- **The live feed was never migrated to districts; it still samples 36 city points.**
+- **RESOLVED 2026-09-23 - the live feed was never migrated to districts; it sampled 36
+  city points.** Kept here because the reasoning about why the obvious fix was the wrong
+  one is still the record of how this was decided. What shipped: `app/live/gefs.py` now
+  calls `DistrictGridAggregator.prepare` / `aggregate_prepared` over the full subregion
+  the NOMADS fetch was already downloading, and `app/live/observations.py` fetches the
+  weight table's 4,902 cells from Open-Meteo in batches of 300 and aggregates them the
+  same way. `CITIES_JSON`, `load_cities` and `_extract_points` are gone from the module
+  rather than left dormant. Wind is aggregated as u/v components and converted to a
+  bearing last, because averaging 350 degrees and 10 degrees as scalars gives 180.
+  Measured against the live site the same day: `/api/regions/all` returns **666 distinct
+  `region_id`s on every one of the ten lead days**, matching the topojson ids exactly with
+  none missing in either direction, and the lead-1 band split is 434 low / 192 medium /
+  40 high - the saturated all-red map that prompted this is gone. The memory question
+  below turned out to be the binding one, not the row count.
+  The original entry follows.
   CLAUDE.md describes each district's value as the area-weighted mean of every 0.25 degree
   cell its polygon overlaps. That is true of the archive/reforecast path. It is not true of
   the live NOMADS path: `app/live/gefs.py` reads `scripts/india_cities.json`, which holds
@@ -1012,6 +1034,34 @@ here rather than discovered live.
   Meanwhile the model itself is not the limitation. Scored against a store that does have
   full district observations, `run_20260922T043925Z` returns 6,660 events across 666
   districts and all ten lead days.
+- **`measure-serving-memory.yml` reports headroom that a live site contradicts.** The
+  workflow ends with `headroom=$((512 - B))` where `B` is peak RSS on the runner. After the
+  districts migration it reported a **negative** headroom - about -283 MB - for a
+  configuration that was at that moment serving 666 districts on Render without being
+  killed. Both numbers are real; the subtraction is not meaningful. `B` is a high-water
+  mark taken over every endpoint hit back to back in one process on a 16 GB runner under
+  no memory pressure, so neither pymalloc nor glibc ever has a reason to return arenas to
+  the OS, and transient peaks from different endpoints accumulate into one figure that no
+  single moment of the process ever occupied. The container is killed on *instantaneous*
+  RSS, and under real pressure the allocator does release. So read `B` as a **comparison
+  between two branches measured the same way** - which is what the `published` vs
+  `backfilled` delta line is for, and that delta is trustworthy - and never as an absolute
+  verdict on whether something fits. Do not "fix" this by relaxing the 512 constant: the
+  limit is real, it is the measurement that does not transfer. Rule 5 still applies, it
+  just means the delta and a real deploy, not the headroom line.
+- **Replay can be asked for a cycle outside the window it precomputes.** `replay_service`
+  exposes `_MAX_CYCLES = 10`, and `package_for_deploy.precompute_cycles` scores exactly
+  that window into `data/analysis/scored_cycles` so the box reads an answer instead of
+  computing one (+125 MB to read, versus 1,406 MB to score - the difference between
+  fitting and dying). The two are tied together deliberately: the packaging step reads
+  `_MAX_CYCLES` rather than hardcoding 10. But nothing *refuses* a request for an older
+  init date. `inference.score_cycle` checks the precomputed directory first, misses, and
+  falls through to scoring from the store on the serving box - the exact 1,406 MB path the
+  precompute exists to avoid. It has not been seen in the wild because the UI only offers
+  cycles from the same window, so reaching it needs a hand-made API call. The honest fix
+  is for `score_cycle` to refuse a cycle it has no precomputed answer for when it is
+  running on the serving box, per rule 3 - refuse rather than patch - rather than to widen
+  the window, which just moves the edge and costs artifact size. Not yet done.
 
 ### `forecast_error_lag` reads an observation from after the forecast was issued, added 2026-09-25
 
