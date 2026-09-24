@@ -308,6 +308,7 @@ export interface ReplayCycleSummary {
   verified: boolean;
   verified_lead_days: number;
   peak_region_abs_error: number | null;
+  peak_region_relative_error: number | null;
   peak_region_variable: string | null;
   peak_region_unit: string | null;
   medium_range_growth: number;

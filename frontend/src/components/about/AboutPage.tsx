@@ -175,12 +175,12 @@ export function AboutPage({ onReplay }: { onReplay: () => void }) {
                 deployment.
               </li>
               <li>
-                <b>Two geographies, not one.</b> The historical archive the model is trained
-                on covers all <b>666 districts</b>, each the area-weighted mean of every
-                0.25° cell its polygon overlaps. The live feed does not: it samples the
-                nearest grid point at <b>36 station locations</b>, one per state and union
-                territory. Both are labelled with district IDs, so a live cycle scores 36
-                regions where the archive behind the model covers 666.
+                <b>One geography now, not two.</b> The live feed used to sample the nearest
+                grid point at 36 station locations, one per state and union territory, while
+                the training archive covered all 666 districts as an area-weighted mean of
+                every 0.25° cell each polygon overlaps. Since 2026-09-23 the live feed uses
+                the same area-weighted method over the same 666 districts, so a live cycle
+                and the archive behind the model describe geography the same way.
               </li>
               <li>
                 GEFS runs 31 parallel forecasts; this uses 5 of them. How much those disagree
