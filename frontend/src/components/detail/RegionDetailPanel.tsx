@@ -141,7 +141,7 @@ export function RegionDetailPanel({
         {unavailable.length ? (
           <p className="muted small">
             Not modelled (too few matched forecast–observation pairs):{" "}
-            {unavailable.map((v) => v.variable).join(", ")}
+            {unavailable.map((v) => variableLabel(v.variable)).join(", ")}
           </p>
         ) : null}
       </section>

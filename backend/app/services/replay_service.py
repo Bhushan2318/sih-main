@@ -32,6 +32,7 @@ def _cycle_summary(state, init) -> Optional[schemas.ReplayCycleSummary]:
 
     verified_leads = 0
     peak_abs_err = None
+    peak_rel_err = None
     peak_dom_var = None
     growth = 0.0
     pv = sc.per_variable
@@ -50,6 +51,13 @@ def _cycle_summary(state, init) -> Optional[schemas.ReplayCycleSummary]:
         if not prz.empty and dom not in CIRCULAR_VARIABLES:
             peak_abs_err = float((prz["predicted_value"] - prz["observed_value"]).abs().mean())
             peak_dom_var = str(dom)
+            thr = state.thresholds.bust_threshold.get(peak_dom_var)
+            # Divided by that variable's own bust threshold so a rainfall miss (mm) and a
+            # pressure miss (hPa) land on the same scale: 1.0 means "missed by exactly one
+            # bust's worth". Without this, order_cycles has confidence and coverage to sort
+            # on but nothing for how wrong a verified cycle actually turned out to be.
+            if thr:
+                peak_rel_err = peak_abs_err / thr
 
     near = ev.loc[ev["lead_time_days"] <= 3, "bust_probability"].mean()
     far = ev.loc[ev["lead_time_days"] >= 4, "bust_probability"].mean()
@@ -68,6 +76,7 @@ def _cycle_summary(state, init) -> Optional[schemas.ReplayCycleSummary]:
         verified=verified_leads > 0,
         verified_lead_days=verified_leads,
         peak_region_abs_error=_f(peak_abs_err),
+        peak_region_relative_error=_f(peak_rel_err),
         peak_region_variable=peak_dom_var,
         peak_region_unit=_unit(peak_dom_var),
         medium_range_growth=round(growth, 4),
@@ -124,6 +133,12 @@ def order_cycles(cycles: list) -> list:
         key=lambda c: (
             round((c.n_regions or 0) / best / _COVERAGE_TIER),
             c.verified,
+            # How badly a verified cycle actually missed, not just how confident the model
+            # was. peak_region_relative_error is the peak miss as a multiple of that
+            # variable's own bust threshold, so it is comparable across variables/units.
+            # Unverified cycles carry None here and sort as 0.0 - below any real miss,
+            # which is correct: there is nothing yet to call badly missed.
+            round(c.peak_region_relative_error or 0.0, 3),
             round(max(c.medium_range_growth, 0.0), 3),
             round(c.peak_bust_probability or 0.0, 3),
             c.verified_lead_days,
