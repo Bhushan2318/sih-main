@@ -1,0 +1,63 @@
+import { fireEvent, render, screen, within } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { RegionDetailResponse } from "../../api/types";
+import { REAL_REGION_LEHLADAKH, REAL_REGION_PURBAMEDINIPUR } from "../../test/fixtures/regionDetail";
+
+let current: RegionDetailResponse | undefined;
+vi.mock("../../hooks/useDashboardData", () => ({
+  useRegionDetail: () => ({ data: current, isLoading: false, error: null }),
+}));
+// Recharts needs layout jsdom does not have; the panel's choice of series is what is tested.
+vi.mock("./VariableTrajectoryChart", () => ({
+  VariableTrajectoryChart: ({ series }: { series: { variable: string } }) => (
+    <div data-testid="trajectory">{series.variable}</div>
+  ),
+}));
+vi.mock("./BustProbabilityCurve", () => ({ BustProbabilityCurve: () => null }));
+
+import { RegionDetailPanel } from "./RegionDetailPanel";
+
+const peakDriver = (d: RegionDetailResponse) =>
+  [...d.bust_probability_curve].sort((a, b) => b.bust_probability - a.bust_probability)[0]
+    .dominant_variable;
+
+describe("RegionDetailPanel opens on the leading driver", () => {
+  beforeEach(() => { current = undefined; });
+
+  it("shows the peak-risk driver's forecast-vs-actual chart first, then SHAP", () => {
+    current = REAL_REGION_PURBAMEDINIPUR;
+    render(<RegionDetailPanel regionId={current.region_id} onClose={() => {}} />);
+
+    expect(screen.getByTestId("trajectory")).toHaveTextContent(peakDriver(current)!);
+    expect(screen.getByRole("heading", { name: /Leading driver/ })).toBeInTheDocument();
+
+    const headings = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent ?? "");
+    const at = (re: RegExp) => headings.findIndex((t) => re.test(t));
+    expect(at(/Leading driver/)).toBeLessThan(at(/What drove this prediction/));
+    expect(at(/What drove this prediction/)).toBeLessThan(at(/Bust probability by lead day/));
+  });
+
+  it("a different district opens on its own driver, not the previous tab", () => {
+    current = REAL_REGION_PURBAMEDINIPUR;
+    const { rerender } = render(
+      <RegionDetailPanel regionId={current.region_id} onClose={() => {}} />,
+    );
+    // Leave the first district on some other tab.
+    const tabs = screen.getByRole("tablist");
+    fireEvent.click(within(tabs).getByRole("tab", { name: /^temperature_c/ }));
+    expect(screen.getByTestId("trajectory")).toHaveTextContent("temperature_c");
+
+    current = REAL_REGION_LEHLADAKH;
+    rerender(<RegionDetailPanel regionId={current.region_id} onClose={() => {}} />);
+    expect(peakDriver(current)).not.toBe(peakDriver(REAL_REGION_PURBAMEDINIPUR));
+    expect(screen.getByTestId("trajectory")).toHaveTextContent(peakDriver(current)!);
+  });
+
+  it("marks the driver tab", () => {
+    current = REAL_REGION_LEHLADAKH;
+    render(<RegionDetailPanel regionId={current.region_id} onClose={() => {}} />);
+    const tab = within(screen.getByRole("tablist")).getByRole("tab", { selected: true });
+    expect(tab).toHaveTextContent(peakDriver(current)!);
+    expect(tab).toHaveTextContent("driver");
+  });
+});

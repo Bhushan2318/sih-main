@@ -1012,3 +1012,29 @@ here rather than discovered live.
   Meanwhile the model itself is not the limitation. Scored against a store that does have
   full district observations, `run_20260922T043925Z` returns 6,660 events across 666
   districts and all ten lead days.
+
+### `forecast_error_lag` reads an observation from after the forecast was issued, added 2026-09-25
+
+- **What it is.** `engineering.build_training_frame` sets `forecast_error_lag` to the
+  realised `abs_error` at lead k−1 of the *same* forecast (a `shift(1)` within
+  region, init date, variable and member). Under `valid_date = init + (lead − 1)`, lead
+  k−1 verifies at `init + (k − 2)`. So for every lead ≥ 2, the feature uses an
+  observation of a day that has not happened when the forecast is issued. Lead 1 is NaN.
+- **Who uses it.** All eight regressors of the live pooled run
+  (run_20260922T043925Z, checked in each `*_regressor.json`) and of the earlier
+  run_20260912T005532Z. The classifier does not take it directly. It does take every
+  regressor's output (`pred_err_*`, the top SHAP factors), so the effect reaches the bust
+  probability through them.
+- **What it does to the numbers.** In training and in the held-out year, every row with a
+  prior lead has a real observed error in this column. On a live cycle, only leads whose
+  previous day has already been observed have one; the rest are NaN. Replay of a past
+  cycle has them all. So held-out regressor metrics, and replay, can look better than
+  live scoring. How much better has **not** been measured: that needs a retrain without the
+  column and a comparison on the same 2017 rows.
+- **Not a leak:** `historical_bust_frequency_region_season`. It is computed from the
+  training split only (`train_pipeline.py`, `compute_historical_bust_frequency(tr)`) and
+  shipped with the run, like a climatology.
+- **The fix is a retrain, not a serve-time patch.** Dropping or NaN-filling the column
+  in front of a model trained with it only changes what the served model sees. It does
+  not remove what the model learned. An attempted serve-time NaN-fill (2026-09-25) was
+  parked on `parked/opencode-nemotron` for that reason.

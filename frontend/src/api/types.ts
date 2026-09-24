@@ -187,6 +187,9 @@ export interface ModelStatusResponse {
     canonical_rows?: number | null;
     paired_rows?: number | null;
     first_train_date?: string | null;
+    first_train_year?: number | null;
+    last_train_year?: number | null;
+    test_year?: number | null;
   };
 
   baselines?: {

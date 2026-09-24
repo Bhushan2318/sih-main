@@ -23,6 +23,7 @@ import { useLiveSocket } from "../hooks/useLiveSocket";
 import { stateNamesFrom } from "../lib/stateNames";
 import { parseAppState, toSearch, type View } from "../lib/urlState";
 import { useMediaQuery } from "../hooks/useMediaQuery";
+import { inferRiskCuts, isScoredProbability, resolveRiskCuts, riskBandForRegion } from "../lib/riskBands";
 
 // View lives in lib/urlState: it is the set of values the ?view= parameter accepts, so
 // the tab list and the URL parser must not be able to disagree about it.
@@ -64,7 +65,10 @@ export function DashboardPage() {
   const allRegions = regionsQuery.data;
   const regions =
     allRegions?.days.find((d) => d.lead_time_days === leadDay) ?? allRegions?.days[0];
-  const riskCuts = statusQuery.data?.thresholds?.risk_band_cuts;
+  const riskCuts = resolveRiskCuts(
+    statusQuery.data?.thresholds?.risk_band_cuts,
+    regions?.risk_band_definitions,
+  ) ?? inferRiskCuts(regions?.regions ?? []);
 
   const autoLeadPicked = useRef(false);
   const available = regions?.available_lead_days;
@@ -107,9 +111,20 @@ export function DashboardPage() {
     return () => window.removeEventListener("popstate", onPop);
   }, []);
 
-  const highCount = regions?.regions.filter((r) => r.risk_band === "high").length ?? 0;
+  const highCount = regions?.regions.filter(
+    (r) => r.data_available !== false
+      && isScoredProbability(r.bust_probability)
+      && riskBandForRegion(r, riskCuts) === "high",
+  ).length ?? 0;
 
-  const heroFills = Boolean(ensembleQuery.data?.model_trained);
+  const ensemble = ensembleQuery.data;
+  const heroFills = Boolean(
+    ensemble
+      && ensemble.model_trained
+      && isScoredProbability(ensemble.mean_bust_probability)
+      && ensemble.n_scored_regions > 0
+      && (ensemble.national?.length ?? 0) > 0,
+  );
 
   const showRail = useMediaQuery("(min-width: 1440px) and (min-height: 700px)");
 
@@ -201,8 +216,8 @@ export function DashboardPage() {
       ) : (
         <>
           <section className={heroFills ? "screen1" : undefined}>
-            <HeroDivergence data={ensembleQuery.data} />
-            <KpiStrip all={allRegions} day={regions} />
+            <HeroDivergence data={ensembleQuery.data} riskCuts={riskCuts} />
+            <KpiStrip all={allRegions} day={regions} riskCuts={riskCuts} />
             {heroFills ? <OpeningCues onReplay={() => setView("replay")} /> : null}
             {regions?.regions.length ? (
               <RiskTicker
@@ -210,6 +225,7 @@ export function DashboardPage() {
                 leadDay={regions.lead_time_days}
                 onSelect={selectAndReveal}
                 stateNames={stateNames}
+                riskCuts={riskCuts}
               />
             ) : null}
           </section>
@@ -226,7 +242,7 @@ export function DashboardPage() {
                   <LeadDaySelector
                     value={leadDay}
                     onChange={setLeadDay}
-                    disabled={!regions?.model_trained}
+                    disabled={!regions || !regions.model_trained || regions.regions.length === 0}
                     available={regions?.available_lead_days}
                   />
                 )}
@@ -252,6 +268,7 @@ export function DashboardPage() {
                     selectedRegionId={selectedRegion}
                     onSelect={setSelectedRegion}
                     topology={topology}
+                    riskCuts={riskCuts}
                   />
                 ) : (
                   <EmptyState title="Nothing to show for this lead day" message={regions.message} />
@@ -260,7 +277,12 @@ export function DashboardPage() {
             </section>
 
             {showRail ? (
-              <LeadDayRail all={allRegions} value={leadDay} onChange={setLeadDay} />
+              <LeadDayRail
+                all={allRegions}
+                value={leadDay}
+                onChange={setLeadDay}
+                riskCuts={riskCuts}
+              />
             ) : null}
 
             <RegionDetailPanel
@@ -278,7 +300,11 @@ export function DashboardPage() {
             <section className="app__below">
               <BaselineLadderCard data={statusQuery.data} />
               {regions?.regions.length ? (
-                <BustSummaryChart regions={regions.regions} onSelect={setSelectedRegion} />
+                <BustSummaryChart
+                  regions={regions.regions}
+                  onSelect={setSelectedRegion}
+                  riskCuts={riskCuts}
+                />
               ) : null}
             </section>
           ) : null}
