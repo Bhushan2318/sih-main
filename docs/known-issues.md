@@ -1108,7 +1108,7 @@ here rather than discovered live.
   Day 6 (see the next item). So the rate steps down exactly there. That confounds the
   "lead day alone has no skill" argument. Per-variable bust heads are planned, rainfall
   first.
-- **Variables served beyond the training archive's leads. Fixed 2026-09-25.**
+- **Variables served beyond the training archive's leads. Code fixed 2026-09-25 (PR #36); reaches the map only for cycle dates first scored after it (see the precompute entry below).**
   - The reforecast archive holds 10 m wind only to 120 h and soil moisture only to 72 h.
   - Live GEFS serves all ten days, and the map named wind the driver of 1,216 and soil
     moisture of 167 district-days beyond those leads.
@@ -1160,3 +1160,19 @@ here rather than discovered live.
     explanation (the panel now says so).
   - `scripts/ppt_figures.py` defaults to `current.json`, which on the training laptop
     points to an older run than the live one. Pass `--run-id`, or read `/api/model/status`.
+
+- **CI precompute never re-scores a date it has already scored.**
+  - `package_for_deploy._score_and_write` calls `inference.score_cycle`, which reads back
+    an existing `(run_id, init_date)` artifact before scoring anything. The refresh
+    workflow restores the previous release, artifacts included, so an already-scored date
+    is read back and written out unchanged.
+  - Found live on 2026-09-24 after PR #36 deployed. The API change was live (the panel
+    reported `max_lead_day`), but the 2026-09-24 map was byte-for-byte the old answer: 1,216
+    wind-driven district-days on Days 6–10.
+  - A scoring-code change therefore reaches only dates scored after it.
+  - The same reuse pins each date to the first cycle scored that day. Later 06/12/18Z
+    pulls update the store but not the map. That currently hides the four-cycles-into-one
+    collapse (entry above), because the map mostly shows the first, usually 00Z, cycle of
+    a date.
+  - Fix: a `use_precomputed=False` path for the precompute. Land it together with 00Z-only
+    ingest, so forcing a re-score does not expose the collapse.
