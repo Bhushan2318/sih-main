@@ -77,6 +77,19 @@ def test_prep_refuses_when_a_populated_column_is_destroyed_by_coercion():
         inference._prep(_frame(), cols, categorical={"state_id", "season"})
 
 
+def test_a_retired_noncausal_feature_is_refused_even_as_missing_data():
+    """Old artifacts can ask for forecast_error_lag, but current feature engineering must
+    never fabricate it. Serving such an artifact would be a train/serve contract mismatch,
+    so the model is refused rather than filled with NaN."""
+    with pytest.raises(ValueError, match="forecast_error_lag"):
+        inference._prep(_frame(), ["forecast_error_lag"], categorical=set())
+
+
+def test_a_retired_label_derived_feature_is_refused():
+    with pytest.raises(ValueError, match="historical_bust_frequency_region_season"):
+        inference._prep(_frame(), ["historical_bust_frequency_region_season"], categorical=set())
+
+
 def test_a_genuinely_absent_column_is_still_allowed_to_be_nan():
     """Not every NaN is a bug. Soil moisture stops at day 3 and wind at day 5 in the
     reforecast archive, so a column the frame simply does not carry stays NaN by design -

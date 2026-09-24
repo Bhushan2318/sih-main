@@ -123,6 +123,11 @@ def test_wind_direction_is_circular():
     assert j.loc["2017-11-09", "jump_sign_flips"] == 1
 
 
+def test_opposing_wind_members_have_an_undefined_mean_not_an_arbitrary_bearing():
+    fc = _fc_rows("A", "wind_direction_deg", VALID, {"2017-11-09": [0, 180]})
+    assert math.isnan(fe.forecast_trajectories(fc)["fc_mean"].iloc[0])
+
+
 def test_a_later_cycle_never_changes_an_earlier_row():
     """Causality: a forecast issued on 8 Nov can only know cycles issued by 8 Nov."""
     before = _jump(_fc_rows("A", "temperature_c", VALID, TEMPS))
@@ -134,17 +139,17 @@ def test_a_later_cycle_never_changes_an_earlier_row():
 
 def test_regions_variables_and_valid_dates_do_not_mix():
     a = _fc_rows("A", "temperature_c", VALID, TEMPS)
-    b = _fc_rows("B", "temperature_c", VALID, {"2017-11-08": [100, 100],
+    b = _fc_rows("B", "temperature_c", VALID, {"2017-11-08": [-40, -40],
                                               "2017-11-09": [0, 0]})
     c = _fc_rows("A", "humidity_pct", VALID, {"2017-11-09": [50, 50]})
     d = _fc_rows("A", "temperature_c", VALID + pd.Timedelta(days=1),
-                 {"2017-11-09": [90, 90]})
+                 {"2017-11-09": [50, 50]})
     out = fe.compute_jumpiness(fe.forecast_trajectories(pd.concat([a, b, c, d])))
     key = ["region_id", "variable", "valid_date", "init_date"]
     out = out.set_index(key)
     init = pd.Timestamp("2017-11-09")
     assert out.loc[("A", "temperature_c", VALID, init), "jump_abs_change"] == pytest.approx(4)
-    assert out.loc[("B", "temperature_c", VALID, init), "jump_abs_change"] == pytest.approx(100)
+    assert out.loc[("B", "temperature_c", VALID, init), "jump_abs_change"] == pytest.approx(40)
     assert math.isnan(out.loc[("A", "humidity_pct", VALID, init), "jump_abs_change"])
     assert math.isnan(out.loc[("A", "temperature_c", VALID + pd.Timedelta(days=1), init),
                               "jump_abs_change"])
@@ -200,6 +205,7 @@ def test_the_training_frame_carries_the_jump_features_on_every_member_row():
     assert last["jump_abs_change"].tolist() == pytest.approx([4.0, 4.0])
     # no climatology supplied -> relative jump unknown, not zero
     assert frame["jump_rel_climatology"].isna().all()
+    assert "forecast_error_lag" not in frame.columns
 
 
 def test_history_outside_the_frame_feeds_the_jump_but_is_not_paired():

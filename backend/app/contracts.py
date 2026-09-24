@@ -35,8 +35,16 @@ import pandas as pd
 # C3 (2026-09-18) added the three MJO columns - mjo_rmm1, mjo_rmm2, mjo_amplitude
 # (scripts/fetch_mjo_index.py, NOAA PSL's OMI index) - printed from a real call: land
 # right after elevation_mean, before ensemble_spread.
+# Features deliberately retired because they were non-causal or unavailable at serving.
+# Old artifacts that still request one are refused; pooled caches/checkpoints must not
+# silently reuse the old contract.
+RETIRED_FEATURES: frozenset[str] = frozenset({
+    "forecast_error_lag",
+    "historical_bust_frequency_region_season",
+})
+
 PAIRED_ROW_COLUMNS: tuple[str, ...] = (
-    "region_id", "variable", "valid_date", "forecast_value", "value_type",
+    "region_id", "cycle_hour", "variable", "valid_date", "forecast_value", "value_type",
     "init_date", "lead_time_days", "ensemble_member_id", "observed_value",
     "verification_status", "abs_error", "jump_abs_change", "jump_std",
     "jump_sign_flips", "jump_rel_climatology",
@@ -47,14 +55,14 @@ PAIRED_ROW_COLUMNS: tuple[str, ...] = (
     "mjo_rmm1", "mjo_rmm2", "mjo_amplitude",
     "ensemble_spread",
     "ensemble_member_count", "pressure_rate_of_change", "moisture_rate_of_change",
-    "forecast_error_lag", "fc_atmospheric_moisture_kgm2", "fc_humidity_pct",
+    "fc_atmospheric_moisture_kgm2", "fc_humidity_pct",
     "fc_pressure_hpa", "fc_rainfall_mm", "fc_soil_moisture_pct", "fc_temperature_c",
     "fc_wind_direction_deg", "fc_wind_speed_ms",
     "historical_bust_frequency_region_season",
 )
 
 # The identity of one row. A duplicate on these keys means a double-counted member.
-EVENT_KEYS: tuple[str, ...] = ("region_id", "init_date", "valid_date", "lead_time_days")
+EVENT_KEYS: tuple[str, ...] = ("region_id", "cycle_hour", "init_date", "valid_date", "lead_time_days")
 MEMBER_KEYS: tuple[str, ...] = EVENT_KEYS + ("ensemble_member_id",)
 
 # The label is NOT here on purpose. y_bust is applied after the chronological split,
@@ -67,7 +75,7 @@ LABEL = "y_bust"
 # int32 vs int64 and category vs object are not worth failing a build over, while a float
 # column arriving as text is exactly what must fail.
 _KINDS: dict[str, str] = {
-    "region_id": "C", "variable": "C", "valid_date": "M", "forecast_value": "f",
+    "region_id": "C", "cycle_hour": "i", "variable": "C", "valid_date": "M", "forecast_value": "f",
     "value_type": "C", "init_date": "M", "lead_time_days": "i",
     "ensemble_member_id": "C", "observed_value": "f", "verification_status": "C",
     "abs_error": "f", "jump_abs_change": "f", "jump_std": "f", "jump_sign_flips": "f",
@@ -80,8 +88,8 @@ _KINDS: dict[str, str] = {
     "mjo_rmm1": "f", "mjo_rmm2": "f", "mjo_amplitude": "f",
     "ensemble_spread": "f",
     "ensemble_member_count": "i", "pressure_rate_of_change": "f",
-    "moisture_rate_of_change": "f", "forecast_error_lag": "f",
-    "fc_atmospheric_moisture_kgm2": "f", "fc_humidity_pct": "f", "fc_pressure_hpa": "f",
+    "moisture_rate_of_change": "f", "fc_atmospheric_moisture_kgm2": "f",
+    "fc_humidity_pct": "f", "fc_pressure_hpa": "f",
     "fc_rainfall_mm": "f", "fc_soil_moisture_pct": "f", "fc_temperature_c": "f",
     "fc_wind_direction_deg": "f", "fc_wind_speed_ms": "f",
     "historical_bust_frequency_region_season": "f",
@@ -98,7 +106,7 @@ _KINDS: dict[str, str] = {
 # mjo_* columns (C3) are NaN before the OMI record begins (1991-01-01) or whenever the
 # as-of join finds no reading within MJO_ASOF_TOLERANCE_DAYS of init_date.
 NULLABLE: frozenset[str] = frozenset({
-    "pressure_rate_of_change", "moisture_rate_of_change", "forecast_error_lag",
+    "pressure_rate_of_change", "moisture_rate_of_change",
     "fc_atmospheric_moisture_kgm2", "fc_humidity_pct", "fc_pressure_hpa",
     "fc_rainfall_mm", "fc_soil_moisture_pct", "fc_temperature_c",
     "fc_wind_direction_deg", "fc_wind_speed_ms",

@@ -104,8 +104,23 @@ jobs:
         # Missing on the very first run, which is fine: the script then builds a store from
         # this cycle alone. It must not be fatal, or the pipeline could never bootstrap.
         run: |
-          if gh release download "$TAG" --pattern "$ASSET" --output /tmp/prev.tar.gz --clobber 2>/dev/null; then
-            tar -xzf /tmp/prev.tar.gz -C .
+          rm -f /tmp/prev.tar.gz
+          # An absent data-latest release is the one intentional bootstrap case.  If the
+          # release exists, a failed download is an error rather than permission to
+          # silently train from an empty store.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release download "$TAG" --pattern "$ASSET" --output /tmp/prev.tar.gz --clobber
+            test -s /tmp/prev.tar.gz
+            python ../ci/validate_release_archive.py /tmp/prev.tar.gz \
+              --allow-prefix data/ --allow-file metadata.db \
+              --require data/models/current.json \
+              --require-prefix data/canonical/ \
+              --require-prefix data/geo/ \
+              --require data/summary.json \
+              --require metadata.db
+            rm -rf data/canonical data/geo data/models data/analysis data/summary.json metadata.db
+            tar --extract --gzip --file /tmp/prev.tar.gz --directory . \
+              --no-same-owner --no-same-permissions
             echo "restored previous store:"
             du -sh data/canonical data/models 2>/dev/null || true
           else
@@ -116,13 +131,18 @@ jobs:
         working-directory: backend
         # Exit 2 means the cycle was refused as too incomplete to publish; the failure is
         # the point, and every step after this is skipped so nothing stale is shipped.
+        env:
+          FORCE_TRAIN: ${{ inputs.force_train }}
+          SKIP_FORECAST: ${{ inputs.skip_forecast }}
+          FORCE_CYCLE: ${{ inputs.force_cycle }}
+          CYCLE: ${{ inputs.cycle }}
         run: |
-          python -m scripts.refresh_for_deploy \
-            --skip-train \
-            ${{ inputs.force_train && '--force-train' || '' }} \
-            ${{ inputs.skip_forecast && '--skip-forecast' || '' }} \
-            ${{ inputs.force_cycle && '--force-cycle' || '' }} \
-            ${{ inputs.cycle && format('--cycle {0}', inputs.cycle) || '' }}
+          args=()
+          if [ "${FORCE_TRAIN:-}" = "true" ]; then args+=(--force-train); fi
+          if [ "${SKIP_FORECAST:-}" = "true" ]; then args+=(--skip-forecast); fi
+          if [ "${FORCE_CYCLE:-}" = "true" ]; then args+=(--force-cycle); fi
+          if [ -n "${CYCLE:-}" ]; then args+=(--cycle "$CYCLE"); fi
+          python -m scripts.refresh_for_deploy --skip-train "${args[@]}"
 
       - name: Train on the full archive, in a throwaway copy of the store
         # One-off, skipped entirely unless `backfill_years` is set, so every scheduled
@@ -151,8 +171,12 @@ jobs:
             | shasum -a 256 > /tmp/store_before_archive
           cp -r data/canonical /tmp/train_store
           BEFORE=$(du -sh data/canonical | cut -f1)
-          gh release download backfill-data -p "backfill-2000-2019.tar.gz" -D /tmp --clobber
-          tar xzf /tmp/backfill-2000-2019.tar.gz -C data/samples
+          gh release download backfill-data -p "backfill-2000-2019.tar.gz" \
+            --output /tmp/backfill-2000-2019.tar.gz --clobber
+          test -s /tmp/backfill-2000-2019.tar.gz
+          python ../ci/validate_release_archive.py /tmp/backfill-2000-2019.tar.gz
+          tar --extract --gzip --file /tmp/backfill-2000-2019.tar.gz \
+            --directory data/samples --no-same-owner --no-same-permissions
           python -m scripts.ingest_backfill --years "$BACKFILL_YEARS"
           python -c "
           import pyarrow.dataset as ds, pandas as pd
@@ -208,25 +232,37 @@ jobs:
         # repacks - so the artifact would grow ~8 MB every six hours and never shrink.
         run: |
           python -m scripts.package_for_deploy "/tmp/$ASSET"
+          test -s "/tmp/$ASSET"
+          python ../ci/validate_release_archive.py "/tmp/$ASSET" \
+            --allow-prefix data/ --allow-file metadata.db \
+            --require data/models/current.json \
+            --require-prefix data/canonical/ \
+            --require-prefix data/geo/ \
+            --require data/summary.json \
+            --require metadata.db
           echo "size=$(du -h "/tmp/$ASSET" | cut -f1)" >> "$GITHUB_OUTPUT"
           echo "run_id=$(python -c 'from app.ml import registry; print(registry.current_run_id())')" >> "$GITHUB_OUTPUT"
 
       - name: Publish the asset
         env:
           GH_TOKEN: ${{ github.token }}
+          MODEL_RUN_ID: ${{ steps.pack.outputs.run_id }}
+          ASSET_SIZE: ${{ steps.pack.outputs.size }}
+          COMMIT_SHA: ${{ github.sha }}
         # A fixed tag rather than a new release per run: the Dockerfile can then hard-code
         # one permanent URL, and we do not accumulate a release for every six hours.
         run: |
+          test -n "$MODEL_RUN_ID"
+          test -n "$ASSET_SIZE"
+          test -s "/tmp/$ASSET"
           gh release view "$TAG" >/dev/null 2>&1 || \
             gh release create "$TAG" \
               --title "Latest model and data" \
               --notes "Rolling artifact published by the refresh workflow. Replaced on every run; not a source release."
           gh release upload "$TAG" "/tmp/$ASSET" --clobber
-          gh release edit "$TAG" \
-            --notes "Rolling artifact published by the refresh workflow.
-          Model run: \`${{ steps.pack.outputs.run_id }}\`
-          Size: ${{ steps.pack.outputs.size }}
-          Built: $(date -u '+%Y-%m-%d %H:%M UTC') from ${{ github.sha }}"
+          notes=$(printf 'Rolling artifact published by the refresh workflow.\nModel run: `%s`\nSize: %s\nBuilt: %s from %s\n' \
+            "$MODEL_RUN_ID" "$ASSET_SIZE" "$(date -u '+%Y-%m-%d %H:%M UTC')" "$COMMIT_SHA")
+          gh release edit "$TAG" --notes "$notes"
 
       - name: Trigger the Render deploy
         id: deploy
@@ -237,18 +273,38 @@ jobs:
         env:
           HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
         run: |
-          if [ -n "$HOOK" ]; then
-            curl -fsS -X POST "$HOOK" && echo "deploy triggered"
-            echo "state=triggered" >> "$GITHUB_OUTPUT"
-          else
+          if [ -z "${HOOK:-}" ]; then
             echo "RENDER_DEPLOY_HOOK not set - asset published, deploy not triggered"
             echo "state=not configured" >> "$GITHUB_OUTPUT"
+          else
+            # Only a real 2xx response is success.  In particular, do not publish
+            # state=triggered after a network error or a redirect/error response.
+            status=""
+            if status=$(curl -sS --fail -o /dev/null -w '%{http_code}' \
+              --connect-timeout 10 --max-time 60 --retry 3 --retry-delay 2 \
+              -X POST "$HOOK"); then
+              case "$status" in
+                2[0-9][0-9])
+                  echo "deploy triggered (HTTP $status)"
+                  echo "state=triggered" >> "$GITHUB_OUTPUT"
+                  ;;
+                *)
+                  echo "::error::Render deploy hook returned HTTP $status; refusing to mark it triggered"
+                  echo "state=failed" >> "$GITHUB_OUTPUT"
+                  exit 1
+                  ;;
+              esac
+            else
+              echo "::error::Render deploy hook request failed; refusing to mark it triggered"
+              echo "state=failed" >> "$GITHUB_OUTPUT"
+              exit 1
+            fi
           fi
 
       - name: Warm the box
         if: steps.deploy.outputs.state == 'triggered'
         # Best-effort, never fails the run: the data is published and correct either way,
-        # and a red run is reserved for a cycle that was refused (see the header).
+        # and a red run is reserved for a refused cycle or an unconfirmed deploy-hook request.
         continue-on-error: true
         # The link is sent to judges who open it unattended, so the first *human* request
         # must not be the one that pays for a cold cache. Caches are per-process and the
@@ -259,8 +315,10 @@ jobs:
         # it OOM-killed the 512 MB box - it scored in a background thread while a real
         # request scored in the foreground, two passes at once. Pulling one endpoint at a
         # time from here is exactly one pass at a time, which the box can afford.
+        env:
+          MODEL_RUN_ID: ${{ steps.pack.outputs.run_id }}
         run: |
-          want='${{ steps.pack.outputs.run_id }}'
+          want="$MODEL_RUN_ID"
           echo "waiting for $want to go live at $SITE"
           live=""
           for i in $(seq 1 60); do
@@ -280,13 +338,17 @@ jobs:
           done
 
       - name: Summary
+        env:
+          MODEL_RUN_ID: ${{ steps.pack.outputs.run_id }}
+          ASSET_SIZE: ${{ steps.pack.outputs.size }}
+          DEPLOY_STATE: ${{ steps.deploy.outputs.state }}
         run: |
           {
             echo "### Refresh complete"
             echo ""
             echo "| | |"
             echo "|---|---|"
-            echo "| Model run | \`${{ steps.pack.outputs.run_id }}\` |"
-            echo "| Asset size | ${{ steps.pack.outputs.size }} |"
-            echo "| Deploy hook | ${{ steps.deploy.outputs.state }} |"
+            echo "| Model run | \`$MODEL_RUN_ID\` |"
+            echo "| Asset size | $ASSET_SIZE |"
+            echo "| Deploy hook | $DEPLOY_STATE |"
           } >> "$GITHUB_STEP_SUMMARY"

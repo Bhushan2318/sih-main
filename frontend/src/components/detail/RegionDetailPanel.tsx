@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useRegionDetail } from "../../hooks/useDashboardData";
+import type { RiskCuts } from "../../lib/riskBands";
 import { EmptyState, ErrorState, LoadingState, RiskBadge } from "../common/States";
 import { BustProbabilityCurve } from "./BustProbabilityCurve";
 import { ShapFactorsList } from "./ShapFactorsList";
@@ -12,7 +13,7 @@ export function RegionDetailPanel({
 }: {
   regionId: string | null;
   onClose: () => void;
-  riskCuts?: { medium: number; high: number };
+  riskCuts?: RiskCuts;
 }) {
   const { data, isLoading, error } = useRegionDetail(regionId);
   const [activeVariable, setActiveVariable] = useState<string | null>(null);

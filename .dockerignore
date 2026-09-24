@@ -9,8 +9,40 @@
 .git
 .github
 
-# Build output (stage 1 regenerates it)
+# Local credentials and environment files. The examples are not needed by the image;
+# exclude the whole family so a populated file cannot enter the build context.
+.env
+.env.*
+**/.env
+**/.env.*
+**/.netrc
+**/.npmrc
+**/.pypirc
+**/*.pem
+**/*.key
+**/*.p12
+**/*.pfx
+**/secrets
+**/secrets*
+**/secrets/**
+**/*secret*
+**/*credential*
+**/*credentials*
+.claude/
+_handoff_4060/
+HANDOFF*.md
+
+# Build output and local tool caches (stage 1 regenerates the frontend output)
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/.tox
+.coverage
+.coverage.*
+htmlcov
 frontend/dist
+frontend/tsconfig.tsbuildinfo
+backend/app/static
 
 # Local state: the release asset provides these in the image
 backend/data/canonical
@@ -20,9 +52,60 @@ backend/data/live
 backend/data/_live_scratch
 backend/data/canonical_backup_*
 backend/*.db
+backend/data/*.db
+*.db-wal
+*.db-shm
+*.db-journal
+**/*.db-wal
+**/*.db-shm
+**/*.db-journal
+backend/data/summary.json
+
+# Generated logs, checkpoints, and orchestration scratch. These can be large and are
+# never needed by the serving image; keeping them out also keeps local state out of the
+# build context entirely.
+*.log
+*.grib2
+*.nc
+backend/*.log
+backend/*.grib2
+backend/*.nc
+**/._*
+**/__MACOSX/
+backend/logs
+backend/data/*.log
+backend/data/*.json
+backend/data/_*.sh
+backend/data/_*.py
+backend/data/_*
+backend/data/samples/.decode_*.grib2
+backend/data/samples/._*
+backend/data/samples/_*/
+backend/data/samples/_ingest_chunks/
+backend/data/samples/*.grib2
+backend/data/samples/*.nc
+backend/data/samples/*.tmp
+backend/data/samples/*.part
+backend/data/samples/grids/
+backend/data/samples/grids-*/
+backend/data/samples/parts-*/
+backend/data/samples/_era5_cds/
+backend/data/samples/_era5_cells/
+backend/data/samples/_imd/
+backend/data/samples/*_labelled.parquet
+backend/data/samples/era5_cds_district_observations_india_*.parquet
+backend/data/samples/imd_merged_district_observations_india_*.parquet
+backend/data/samples/imd_aligned_district_observations_india_*.parquet
+backend/data/analysis/
+backend/data/_pooled_cache/
+backend/data/_cnn_parallel*/
 
 # Bulky sample mirrors; the committed parquet is the source of truth
 backend/data/samples/*.csv
+backend/data/samples/gefs_reforecast_india_*.parquet
+!backend/data/samples/gefs_reforecast_india_2019.parquet
+backend/data/samples/era5_observations_india_*.parquet
+!backend/data/samples/era5_observations_india_2019.parquet
 backend/data/samples/_gefs_parts
 
 # Docs and dev-only files

@@ -24,6 +24,12 @@ def test_error_thresholds_are_percentiles():
     assert 88 <= thr["t"] <= 91
 
 
+def test_error_thresholds_ignore_nonfinite_values():
+    df = pd.DataFrame({"variable": ["t"] * 4,
+                       "abs_error": [1.0, np.nan, np.inf, -np.inf]})
+    assert compute_error_thresholds(df) == {"t": 1.0}
+
+
 def test_risk_bands_ordered_and_serialise(tmp_path):
     proba = np.clip(np.random.default_rng(0).beta(2, 5, 500), 0, 1)
     cuts = compute_risk_bands(proba)
@@ -68,6 +74,75 @@ def test_pairing_and_target(_ingested_slice):
     # a row's own concurrent-variable column is blanked
     t = paired[paired["variable"] == "temperature_c"]
     assert t["fc_temperature_c"].isna().all()
+
+
+def test_nonfinite_and_implausible_canonical_values_are_quarantined_before_training():
+    rows = []
+    for i, value in enumerate([50.0, np.inf, 120.0, np.nan]):
+        common = {
+            "region_id": "A", "variable": "humidity_pct", "valid_date": "2020-01-01",
+            "init_date": "2019-12-31", "lead_time_days": 1,
+            "ensemble_member_id": f"m{i}", "verification_status": "final",
+        }
+        rows.append({**common, "value_type": "forecast", "value": value})
+        rows.append({**common, "value_type": "observed", "value": value,
+                     "init_date": pd.NaT, "lead_time_days": np.nan,
+                     "ensemble_member_id": None})
+    canonical = pd.DataFrame(rows)
+    clean, quarantined = fe.quarantine_invalid_canonical_values(canonical)
+    assert len(quarantined) == 6
+    assert clean["value"].tolist() == [50.0, 50.0]
+
+    frame = fe.build_training_frame(canonical)
+    assert len(frame) == 1
+    assert frame[["forecast_value", "observed_value"]].to_numpy().tolist() == [[50.0, 50.0]]
+
+
+def test_cached_paired_frames_quarantine_bad_concurrent_features_but_keep_missing_ones():
+    frame = pd.DataFrame({
+        "region_id": ["A", "B", "C"],
+        "variable": ["temperature_c"] * 3,
+        "forecast_value": [20.0, 20.0, 20.0],
+        "observed_value": [21.0, 21.0, 21.0],
+        "abs_error": [1.0, 1.0, 1.0],
+        "fc_rainfall_mm": [np.inf, 2500.0, np.nan],
+    })
+    clean, quarantined = fe.quarantine_invalid_paired_values(frame)
+    assert quarantined.index.tolist() == [0, 1]
+    assert clean.index.tolist() == [2]  # sparse NaN is legitimate
+
+
+def test_wind_direction_error_spread_and_event_threshold_are_circular():
+    canonical = pd.DataFrame([
+        {"region_id": "A", "variable": "wind_direction_deg", "value_type": "forecast",
+         "valid_date": "2020-01-02", "init_date": "2020-01-01", "lead_time_days": 2,
+         "ensemble_member_id": "m0", "value": 350.0},
+        {"region_id": "A", "variable": "wind_direction_deg", "value_type": "forecast",
+         "valid_date": "2020-01-02", "init_date": "2020-01-01", "lead_time_days": 2,
+         "ensemble_member_id": "m1", "value": 10.0},
+        {"region_id": "A", "variable": "wind_direction_deg", "value_type": "observed",
+         "valid_date": "2020-01-02", "init_date": pd.NaT, "lead_time_days": np.nan,
+         "ensemble_member_id": "o0", "value": 350.0},
+        {"region_id": "A", "variable": "wind_direction_deg", "value_type": "observed",
+         "valid_date": "2020-01-02", "init_date": pd.NaT, "lead_time_days": np.nan,
+         "ensemble_member_id": "o1", "value": 10.0},
+    ])
+    frame = fe.build_training_frame(canonical)
+    assert frame["abs_error"].tolist() == pytest.approx([10.0, 10.0])
+    assert frame["ensemble_spread"].tolist() == pytest.approx([10.0, 10.0])
+    assert np.isnan(frame["fc_wind_direction_deg"]).all()  # own concurrent feature is blank
+
+    events = pv.build_event_frame(
+        frame, pd.Series([1.0, 1.0], index=frame.index),
+        {"wind_direction_deg": 20.0}, {"wind_direction_deg": 15.0})
+    assert events["actual_err_wind_direction_deg"].iloc[0] == pytest.approx(0.0)
+    assert events["spread_wind_direction_deg"].iloc[0] == pytest.approx(10.0)
+
+    from app.ml.thresholds import compute_member_p90
+    from app.ml.train_pipeline import _event_mean_error
+    assert compute_member_p90(frame[["variable", "abs_error"]])["wind_direction_deg"] \
+        == pytest.approx(10.0)
+    assert _event_mean_error(frame)["abs_error"].iloc[0] == pytest.approx(0.0)
 
 
 def test_build_event_frame_copy_input_false_mutates_caller_frame_but_same_result(
@@ -338,10 +413,15 @@ def _ingested_slice(request):
 
     from app.db.base import SessionLocal, engine, init_db
     from app.db.models import Base
+    from app.ml import registry
     from app.storage import parquet_store
 
     Base.metadata.drop_all(engine)
     shutil.rmtree(parquet_store.CANONICAL_DIR, ignore_errors=True)
+    # This module's end-to-end fixture must start without an unrelated incumbent from
+    # another test module. The fail-closed promotion gate correctly refuses a candidate
+    # when the current pointer names an artifact with no comparable metrics.
+    shutil.rmtree(registry.MODEL_DIR, ignore_errors=True)
     init_db()
 
     tmp = request.getfixturevalue("tmp_path_factory").mktemp("mlslice")

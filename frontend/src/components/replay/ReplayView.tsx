@@ -3,6 +3,7 @@ import type { Topology } from "topojson-specification";
 import type { RegionSummary, ReplayRegionStep } from "../../api/types";
 import { useModelStatus, useReplay, useReplayCycles } from "../../hooks/useDashboardData";
 import { formatByMagnitude } from "../../lib/format";
+import { resolveRiskCuts } from "../../lib/riskBands";
 import { EmptyState, ErrorState, LoadingState } from "../common/States";
 import { IndiaChoroplethMap } from "../map/IndiaChoroplethMap";
 import { MapLegend } from "../map/MapLegend";
@@ -22,6 +23,10 @@ export function ReplayView({ topology }: { topology: Topology | null }) {
   const statusQuery = useModelStatus();
   const replayQuery = useReplay(selectedInit, true);
   const replay = replayQuery.data;
+  const riskCuts = resolveRiskCuts(
+    statusQuery.data?.thresholds?.risk_band_cuts,
+    replay?.risk_band_definitions,
+  );
   const steps = replay?.steps ?? [];
 
   useEffect(() => {
@@ -151,6 +156,7 @@ export function ReplayView({ topology }: { topology: Topology | null }) {
             selectedRegionId={shownFocus?.region_id ?? null}
             onSelect={(rid) => chartableRegionIds.has(rid) && setFocusRegionId(rid)}
             topology={topology}
+            riskCuts={riskCuts}
           />
           <p className="muted small">Click a district to chart its forecast against what actually happened.</p>
         </div>
@@ -198,7 +204,7 @@ export function ReplayView({ topology }: { topology: Topology | null }) {
               <ReplayFocusChart focus={shownFocus} currentLead={step.lead_time_days} />
               <ReplayProbabilityChart
                 currentLead={step.lead_time_days}
-                cuts={statusQuery.data?.thresholds?.risk_band_cuts}
+                cuts={riskCuts}
                 variable={shownFocus.variable}
                 points={(replayQuery.data?.steps ?? []).map((st) => {
 

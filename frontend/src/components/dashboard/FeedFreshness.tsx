@@ -1,5 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { triggerCycleRun } from "../../api/ingest";
+import { parseIsoTimestamp } from "../../format";
 import { useIngestStatus } from "../../hooks/useDashboardData";
 
 export function FeedFreshness() {
@@ -77,7 +78,8 @@ function feedState(running: boolean, failed: boolean): string {
 }
 
 function relative(iso: string): string {
-  const then = new Date(iso.endsWith("Z") ? iso : `${iso}Z`).getTime();
+  const then = parseIsoTimestamp(iso)?.getTime();
+  if (then == null) return "recently";
   const mins = Math.round((Date.now() - then) / 60000);
   if (!Number.isFinite(mins)) return "recently";
   if (mins < 1) return "just now";
@@ -88,8 +90,8 @@ function relative(iso: string): string {
 }
 
 function clock(iso: string): string {
-  const d = new Date(iso.endsWith("Z") ? iso : `${iso}Z`);
-  return Number.isNaN(d.getTime())
+  const d = parseIsoTimestamp(iso);
+  return !d
     ? "—"
     : d.toLocaleTimeString("en-GB", {
         timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", hour12: false,

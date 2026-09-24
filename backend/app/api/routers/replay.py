@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from typing import Optional
 
 from fastapi import APIRouter, Query
@@ -18,7 +19,7 @@ def replay_cycles() -> list[schemas.ReplayCycleSummary]:
 @router.get("", response_model=schemas.ReplayResponse)
 @router.get("/", response_model=schemas.ReplayResponse, include_in_schema=False)
 def replay(
-    init_date: Optional[str] = Query(
+    init_date: Optional[date] = Query(
         None, description="cycle init date, YYYY-MM-DD; omit for the most demo-worthy cycle"
     ),
     focus_region: Optional[str] = Query(

@@ -123,7 +123,7 @@ class Alert(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     training_run_id: Mapped[Optional[str]] = mapped_column(String(64), default=None, index=True)
-    region_id: Mapped[str] = mapped_column(String(8), index=True)
+    region_id: Mapped[str] = mapped_column(String(64), index=True)
     region_name: Mapped[Optional[str]] = mapped_column(String(128), default=None)
     lead_time_days: Mapped[int] = mapped_column(Integer)
     bust_probability: Mapped[float] = mapped_column(Float)

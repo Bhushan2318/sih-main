@@ -421,7 +421,7 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 .app__body--ops .map-column { display: flex; flex-direction: column; min-height: 0; }
 
 .app__body--ops .map-wrap {
-  flex: 1 1 0; min-height: 0;
+  flex: 1 1 auto; min-height: 0;
   align-self: start; aspect-ratio: 620 / 680; max-width: 100%;
   /* A column, so the map can take what the controls above it leave. */
   display: flex; flex-direction: column;
@@ -435,7 +435,7 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
    of the map - peninsular India and the Andamans, which sit lowest - painted outside the
    card. Filling the leftover space instead keeps the whole map inside the frame; the
    viewBox letterboxes within it. */
-.app__body--ops .map { flex: 1 1 0; min-height: 0; height: auto; }
+.app__body--ops .map { flex: 1 1 auto; min-height: 0; height: auto; }
 
 .app__body--ops > .panel {
   height: 100%; margin-bottom: 0; overflow-y: auto; overscroll-behavior: contain;
@@ -443,8 +443,12 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 
 @media (max-width: 1100px), (max-height: 700px) {
   .app__body--ops { height: auto; grid-template-columns: minmax(0, 1fr) 380px; }
-  .app__body--ops .map-wrap { flex: none; align-self: stretch; aspect-ratio: auto; }
-  .app__body--ops .map { height: auto; }
+  .app__body--ops .map-wrap { flex: none; align-self: stretch; aspect-ratio: auto; min-height: 220px; }
+  /* In the auto-height layout a flex-basis of 0 can collapse the SVG to zero. Let its
+     viewBox aspect ratio provide the intrinsic height instead. */
+  .app__body--ops .map {
+    flex: 0 0 auto; min-height: 220px; height: auto; aspect-ratio: 620 / 680;
+  }
 
   .app__body--ops > .panel {
     height: auto; overflow-y: visible; max-height: none; position: static;
@@ -613,7 +617,9 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
   position: relative; background: var(--card); border: 1px solid var(--rule);
   border-radius: var(--r); padding: 0.5rem; box-shadow: var(--shadow);
 }
-.map { width: 100%; height: auto; display: block; }
+.map {
+  width: 100%; height: auto; aspect-ratio: 620 / 680; display: block;
+}
 .region {
   /* Thin, because a drilled state draws many small districts and at that size the
      borders are most of the ink on the map. */

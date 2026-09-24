@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -157,16 +157,24 @@ def fetch_observations(start: date, end: date, tier: str = "final") -> tuple:
                 params["forecast_days"] = 0
                 params.pop("start_date"), params.pop("end_date")
                 data = _get_json(FORECAST_URL, params)
+            daily = _to_daily(data.get("hourly", {}), city.to_dict(), tier)
         except Exception as exc:  # noqa: BLE001
             log.warning("observation fetch failed for %s: %s", city["city"], exc)
             report.failures.append(str(city["city"]))
             continue
 
-        daily = _to_daily(data.get("hourly", {}), city.to_dict(), tier)
-        if not daily.empty:
+        if daily.empty:
+            # A successful HTTP response with no usable daily rows is still a failed
+            # observation for completeness purposes; otherwise a partial network/provider
+            # outage looks like a smaller, valid refresh.
+            report.failures.append(str(city["city"]))
+        else:
             if tier == "provisional":
                 daily = daily[(daily["date"] >= start) & (daily["date"] <= end)]
-            frames.append(daily)
+            if daily.empty:
+                report.failures.append(str(city["city"]))
+            else:
+                frames.append(daily)
         time.sleep(POLITE_GAP_S)
 
     report.seconds = time.time() - t0
@@ -187,7 +195,9 @@ def write_observations_csv(frame: pd.DataFrame, tier: str, start: date, end: dat
 
 
 def default_window(days_back: int, tier: str, today: Optional[date] = None) -> tuple:
-    today = today or date.today()
+    # The live data and all cycle boundaries are UTC. Using the host's local calendar
+    # date can select the wrong verification window around midnight outside UTC.
+    today = today or datetime.now(timezone.utc).date()
     if tier == "final":
         end = today - timedelta(days=5)
     else:

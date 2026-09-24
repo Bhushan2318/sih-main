@@ -124,9 +124,20 @@ def test_members_that_agree_exactly_with_earlier_cycles_give_an_undefined_ratio_
     assert j.loc["2017-11-09"]["laf_spread_ratio"] == pytest.approx(1.0)
 
 
+def test_wind_direction_pooling_uses_circular_mean_and_spread():
+    wind = {"2017-11-09": [0, 0], "2017-11-10": [350, 10]}
+    row = _laf(_fc_rows("A", "wind_direction_deg", VALID, wind), window=3).loc[
+        "2017-11-10"]
+    # The current members are 10 degrees from north and the prior mean is exactly north.
+    # A linear mean would be 180, and a linear std would be over 170 degrees.
+    assert row["laf_pool_mean"] == pytest.approx(0.0, abs=1e-9)
+    assert row["laf_pool_std"] == pytest.approx(math.sqrt(200 / 3))
+    assert row["laf_spread_ratio"] == pytest.approx(math.sqrt((200 / 3) / 100))
+
+
 def test_regions_variables_and_valid_dates_do_not_mix():
     a = _fc_rows("A", "temperature_c", VALID, MEMBERS)
-    b = _fc_rows("B", "temperature_c", VALID, {"2017-11-09": [0, 0], "2017-11-10": [100, 100]})
+    b = _fc_rows("B", "temperature_c", VALID, {"2017-11-09": [0, 0], "2017-11-10": [-40, -40]})
     fc = pd.concat([a, b], ignore_index=True)
     traj = fe.forecast_trajectories(fc)
     out = fe.compute_time_lagged_ensemble(fc, traj, window=3).set_index(
@@ -134,8 +145,8 @@ def test_regions_variables_and_valid_dates_do_not_mix():
     a_row = out.loc[("A", pd.Timestamp("2017-11-10"))]
     b_row = out.loc[("B", pd.Timestamp("2017-11-10"))]
     assert a_row["laf_pool_mean"] == pytest.approx(30.5)
-    # B's pool: [100, 100] (own members) + [0] (prior mean): mean 66.667.
-    assert b_row["laf_pool_mean"] == pytest.approx(200 / 3)
+    # B's pool: [-40, -40] (own members) + [0] (prior mean): mean -26.667.
+    assert b_row["laf_pool_mean"] == pytest.approx(-80 / 3)
 
 
 def test_a_later_cycle_never_changes_an_earlier_row():

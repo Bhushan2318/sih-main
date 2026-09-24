@@ -27,6 +27,8 @@ jobs:
   measure:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    env:
+      BACKFILL_YEARS: ${{ inputs.backfill_years || '2010-2015' }}
 
     steps:
       - uses: actions/checkout@v4
@@ -45,8 +47,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release download data-latest -p "sanket-data.tar.gz" -D /tmp --clobber
-          tar xzf /tmp/sanket-data.tar.gz -C .
+          gh release download data-latest -p "sanket-data.tar.gz" --output /tmp/sanket-data.tar.gz --clobber
+          test -s /tmp/sanket-data.tar.gz
+          python ../ci/validate_release_archive.py /tmp/sanket-data.tar.gz \
+            --allow-prefix data/ --allow-file metadata.db \
+            --require data/models/current.json \
+            --require-prefix data/canonical/ \
+            --require-prefix data/geo/ \
+            --require data/summary.json \
+            --require metadata.db
+          tar --extract --gzip --file /tmp/sanket-data.tar.gz --directory . \
+            --no-same-owner --no-same-permissions
           ls -l /tmp/sanket-data.tar.gz
 
       - name: Write the measurement harness
@@ -106,9 +117,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release download backfill-data -p "backfill-2010-2019.tar.gz" -D /tmp --clobber
-          tar xzf /tmp/backfill-2010-2019.tar.gz -C data/samples
-          python -m scripts.ingest_backfill --years '${{ inputs.backfill_years }}'
+          gh release download backfill-data -p "backfill-2010-2019.tar.gz" \
+            --output /tmp/backfill-2010-2019.tar.gz --clobber
+          test -s /tmp/backfill-2010-2019.tar.gz
+          python ../ci/validate_release_archive.py /tmp/backfill-2010-2019.tar.gz
+          tar --extract --gzip --file /tmp/backfill-2010-2019.tar.gz \
+            --directory data/samples --no-same-owner --no-same-permissions
+          python -m scripts.ingest_backfill --years "$BACKFILL_YEARS"
           # Regenerate the summary sidecar, exactly as package_for_deploy does on every
           # publish. Without this the store signature no longer matches the shipped
           # cache, /api/model/status falls back to deduplicating the whole store on the
@@ -133,7 +148,7 @@ jobs:
         # costs to scan and score, and retraining first would change two things at once.
         working-directory: backend
         run: |
-          { echo "### Backfilled store (\`${{ inputs.backfill_years }}\` added)"; echo ""
+          { echo "### Backfilled store (\`$BACKFILL_YEARS\` added)"; echo ""
             /tmp/measure.sh backfilled; echo ""; } | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Verdict

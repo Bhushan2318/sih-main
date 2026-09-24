@@ -67,6 +67,25 @@ def test_a_reader_that_lists_the_store_mid_write_can_still_read_it(fresh_store, 
     assert listed["dataset"].to_table().num_rows == 3
 
 
+def test_a_failed_replacement_keeps_the_previous_partition(fresh_store, monkeypatch):
+    parquet_store.append_batch("b-replace", _rows())
+    real = pq.write_table
+
+    def fail_replacement(table, where, **kw):
+        with open(where, "wb") as fh:
+            fh.write(b"PAR1 replacement failed")
+        raise OSError("replacement write failed")
+
+    monkeypatch.setattr(parquet_store.pq, "write_table", fail_replacement)
+    with pytest.raises(OSError):
+        parquet_store.append_batch("b-replace", _rows())
+    monkeypatch.setattr(parquet_store.pq, "write_table", real)
+
+    visible = list(parquet_store.CANONICAL_DIR.glob("batch_id=b-replace/*.parquet"))
+    assert len(visible) == 1
+    assert parquet_store.read_dataset().region_id.tolist() == ["IN-KL-IDUKKI"] * 3
+
+
 def test_a_successful_write_is_readable_at_its_final_name(fresh_store):
     n = parquet_store.append_batch("b-ok", _rows())
     files = list(parquet_store.CANONICAL_DIR.glob("batch_id=b-ok/*.parquet"))

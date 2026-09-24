@@ -8,13 +8,19 @@ import xgboost as xgb
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.model_selection import GroupKFold
 
+from app.features import engineering as fe
+
 MIN_ROWS = 30
+# Bump whenever the feature set or its semantics change. Pooled checkpoints and yearly
+# caches must not silently reuse artifacts trained under a different contract.
+FEATURE_CONTRACT_VERSION = "2026-09-24-causal-circular-cycle-v2"
 
 NUMERIC_FEATURES = [
     "lead_time_days", "forecast_value", "month",
     "ensemble_spread", "ensemble_member_count",
     "pressure_rate_of_change", "moisture_rate_of_change",
-    "forecast_error_lag", "historical_bust_frequency_region_season",
+    # Historical bust frequency is retained in diagnostics, but not used as a model
+    # feature until it is computed causally per prediction window.
     "jump_abs_change", "jump_std", "jump_sign_flips", "jump_rel_climatology",
     # C2: time-lagged ensemble (see app.features.engineering.LAF_FEATURES).
     "laf_pool_mean", "laf_pool_std", "laf_pool_size", "laf_spread_ratio",
@@ -93,7 +99,9 @@ def train_variable_regressor(
     train_df: pd.DataFrame, val_df: pd.DataFrame, variable: str
 ) -> RegressorArtifact | None:
     tr = train_df[train_df["variable"] == variable]
+    tr, _quarantined = fe.quarantine_invalid_paired_values(tr)
     va = val_df[val_df["variable"] == variable]
+    va, _quarantined = fe.quarantine_invalid_paired_values(va)
     if len(tr) < MIN_ROWS:
         return None
     cols = feature_columns(tr)
@@ -109,6 +117,7 @@ def train_variable_regressor(
 def oof_predict(train_df: pd.DataFrame, variable: str, n_splits: int = 3) -> pd.Series:
     """Out-of-fold predictions, grouped by init_date so no forecast cycle spans a fold."""
     tr = train_df[train_df["variable"] == variable].copy()
+    tr, _quarantined = fe.quarantine_invalid_paired_values(tr)
     if len(tr) < MIN_ROWS:
         return pd.Series(np.nan, index=tr.index)
     cols = feature_columns(tr)

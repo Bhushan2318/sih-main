@@ -62,8 +62,11 @@ def _reject_reason(result: dict, args) -> Optional[str]:
 
     Only a completed pull is judged; "skipped" means nothing new was ingested at all.
     """
-    if result.get("status") != "complete":
+    status = result.get("status")
+    if status == "skipped":
         return None
+    if status != "complete":
+        return f"forecast pull returned status={status!r}"
 
     # Both flags may be absent if the orchestrator is older than this script; an unknown
     # completeness is not evidence of a bad cycle, so the check is skipped rather than
@@ -168,11 +171,10 @@ def main() -> int:
                 result = orchestrator.run_forecast_cycle(
                     init, cycle_hour, trigger="scheduled", force=args.force_cycle)
             except Exception:  # noqa: BLE001
-                # A cycle that is not published yet is normal - GEFS runs ~5.5 h behind its
-                # init hour, and the oldest of a catch-up span may have aged off NOMADS
-                # while S3 was briefly unreachable. Keep going; the others still count.
-                log.exception("forecast pull failed for %s %sZ; continuing", init, cycle_hour)
-                continue
+                # A failed pull is not an incomplete-but-usable cycle. Do not let the
+                # workflow continue to train/publish with a misleading partial store.
+                log.exception("forecast pull failed for %s %sZ; refusing release", init, cycle_hour)
+                return 1
 
             log.info("forecast cycle: %s", result)
             if result.get("status") == "skipped":
@@ -202,6 +204,9 @@ def main() -> int:
             # the training run happens in *this* process where its exit code is visible.
             result = orchestrator.run_observation_refresh("final", None, trigger="scheduled",
                                                           retrain=False)
+            if result.get("status") == "failed":
+                log.error("final observation refresh failed: %s; refusing release", result)
+                return 1
             new_rows = int(result.get("rows_ingested") or 0)
             log.info("observation refresh: %s", result)
         except Exception:  # noqa: BLE001

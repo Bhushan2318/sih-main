@@ -1,8 +1,18 @@
 import { useMemo } from "react";
 import type { AllRegionsResponse, RegionsResponse } from "../../api/types";
+import {
+  isScoredRegion,
+  riskBandForProbability,
+  riskBandForRegion,
+  type RiskCuts,
+} from "../../lib/riskBands";
 
-export function KpiStrip({ all, day }: { all?: AllRegionsResponse; day?: RegionsResponse }) {
-  const stats = useMemo(() => derive(all, day), [all, day]);
+export function KpiStrip({ all, day, riskCuts }: {
+  all?: AllRegionsResponse;
+  day?: RegionsResponse;
+  riskCuts?: RiskCuts;
+}) {
+  const stats = useMemo(() => derive(all, day, riskCuts), [all, day, riskCuts]);
   if (!stats) return null;
 
   return (
@@ -91,13 +101,15 @@ function Kpi({ cap, label, value, note }: {
   );
 }
 
-function derive(all?: AllRegionsResponse, day?: RegionsResponse) {
+function derive(all?: AllRegionsResponse, day?: RegionsResponse, riskCuts?: RiskCuts) {
   if (!all?.model_trained || !day) return null;
 
-  const scoredRegions = day.regions.filter((r) => r.bust_probability != null);
+  const scoredRegions = day.regions.filter(isScoredRegion);
+  if (!scoredRegions.length) return null;
+
   const probs = scoredRegions.map((r) => r.bust_probability as number);
-  const mean = probs.length ? probs.reduce((a, b) => a + b, 0) / probs.length : null;
-  const high = day.regions.filter((r) => r.risk_band === "high").length;
+  const mean = probs.reduce((a, b) => a + b, 0) / probs.length;
+  const high = scoredRegions.filter((r) => riskBandForRegion(r, riskCuts) === "high").length;
 
   const peakRow = scoredRegions.reduce<(typeof scoredRegions)[number] | null>(
     (best, r) => (best == null || (r.bust_probability as number) > (best.bust_probability as number) ? r : best),
@@ -112,12 +124,13 @@ function derive(all?: AllRegionsResponse, day?: RegionsResponse) {
   const first = withConfidence[0];
   const last = withConfidence[withConfidence.length - 1];
   const canDecay = first && last && first.lead !== last.lead && first.mean > 0;
+  const meanBand = riskBandForProbability(mean, riskCuts);
 
   return {
     lead: day.lead_time_days,
     scored: scoredRegions.length,
     mean,
-    meanCap: mean == null ? "blue" : mean >= 0.57 ? "bust" : mean >= 0.36 ? "watch" : "calm",
+    meanCap: meanBand === "high" ? "bust" : meanBand === "medium" ? "watch" : meanBand === "low" ? "calm" : "blue",
     high,
     peak: peakRow
       ? {
@@ -134,6 +147,7 @@ function derive(all?: AllRegionsResponse, day?: RegionsResponse) {
 
 function meanConfidence(day: RegionsResponse): number | null {
   const vals = day.regions
+    .filter(isScoredRegion)
     .map((r) => r.confidence)
     .filter((c): c is number => c != null);
   return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;

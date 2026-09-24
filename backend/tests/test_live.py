@@ -418,6 +418,12 @@ def test_flags_can_force_a_thin_cycle_through():
     assert _reject(_THIN, min_steps=0, allow_short_accumulations=True) is None
 
 
+def test_a_failed_cycle_is_always_a_rejection():
+    reason = _reject({"status": "failed", "target": "2026-08-31 06",
+                      "error": "provider unavailable"})
+    assert reason is not None and "failed" in reason
+
+
 def test_a_skipped_cycle_is_not_a_rejection():
     # Nothing was ingested, so there is nothing to refuse - the previous artifact stands.
     assert _reject({"status": "skipped", "target": "2026-08-31 06",

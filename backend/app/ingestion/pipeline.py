@@ -2,22 +2,28 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import re
 import shutil
 import sys
 import uuid
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
-from pathlib import Path
+from datetime import date, datetime, time, timedelta, timezone
+from pathlib import Path, PurePosixPath
 from typing import Optional
 
 import numpy as np
 import pandas as pd
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.db import crud
 from app.db.base import get_session, init_db, resolve_path
-from app.ingestion.canonical_schema import ValueType
+from app.ingestion.canonical_schema import (
+    CanonicalVariable,
+    ValueType,
+    validate_canonical_row,
+)
 from app.ingestion.parsers import ParsedTable, parse_upload
 from app.ingestion import schema_mapper as sm
 from app.storage import parquet_store
@@ -26,6 +32,125 @@ from app.utils.geo import get_resolver
 RAW_DIR = resolve_path(settings.raw_upload_dir)
 
 _KMH_TO_MS = 1.0 / 3.6
+_INVALID = object()
+_CYCLE_HOUR_RE = re.compile(r"(?:^|[_-])(?P<hour>00|06|12|18)z(?:[._-]|$)", re.IGNORECASE)
+_ALLOWED_ROLES = {
+    sm.ROLE_MEASUREMENT,
+    sm.ROLE_DIMENSION,
+    sm.ROLE_VALUE,
+    sm.ROLE_VALUE_TYPE,
+    sm.ROLE_VARIABLE_NAME,
+    sm.ROLE_UNMAPPED,
+}
+_ALLOWED_CONVERSIONS = {None, "kmh_to_ms", "K_to_C", "Pa_to_hPa", "frac_to_pct"}
+
+
+class MappingValidationError(ValueError):
+    """A user/profile mapping cannot describe a canonical row."""
+
+
+def safe_upload_filename(filename: str | Path | None, *, default: str = "upload.csv") -> str:
+    """Return a single, portable basename for an uploaded/ingested file.
+
+    Multipart clients commonly send either POSIX or Windows path components, and a
+    filename is untrusted input.  Strip both separators before taking the basename so
+    this behaves the same on every platform; the raw-upload destination then has one
+    containment boundary rather than a platform-dependent one.  A missing/empty name
+    gets the explicit default rather than a path named ``.``.
+    """
+    raw = str(filename or "").strip()
+    if not raw:
+        raw = default
+    raw = raw.replace("\\", "/")
+    name = PurePosixPath(raw).name
+    if name in {"", ".", ".."} or "\x00" in name:
+        raise ValueError("upload filename must name a file")
+    # Keep the audit field bounded to the DB column as well as contained on disk.
+    if len(name) > 512:
+        name = name[-512:]
+    return name
+
+
+def cycle_hour_from_filename(filename: str | None) -> Optional[int]:
+    """Read the GEFS cycle hour from the operational filename, if present."""
+    if not filename:
+        return None
+    match = _CYCLE_HOUR_RE.search(safe_upload_filename(filename))
+    return int(match.group("hour")) if match else None
+
+
+def _is_missing_scalar(value) -> bool:
+    if value is None:
+        return True
+    try:
+        missing = pd.isna(value)
+        return isinstance(missing, (bool, np.bool_)) and bool(missing)
+    except (TypeError, ValueError):
+        return False
+
+
+def _coerce_datetime(value) -> Optional[datetime]:
+    if _is_missing_scalar(value):
+        return None
+    try:
+        ts = pd.to_datetime(value, errors="coerce")
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if pd.isna(ts):
+        return None
+    if getattr(ts, "tzinfo", None) is not None:
+        ts = ts.tz_convert("UTC").tz_localize(None)
+    return ts.to_pydatetime()
+
+
+def _coerce_cycle_hour(value) -> int | object:
+    """Coerce a user-supplied hour, returning ``_INVALID`` rather than guessing."""
+    if _is_missing_scalar(value):
+        return None
+    if isinstance(value, str):
+        value = value.strip()
+        if not value:
+            return None
+        if value.isdigit():
+            value = int(value)
+    if isinstance(value, (bool, np.bool_)):
+        return _INVALID
+    try:
+        number = float(value)
+        hour = int(number)
+    except (TypeError, ValueError, OverflowError):
+        return _INVALID
+    if not np.isfinite(number) or number != hour or not 0 <= hour <= 23:
+        return _INVALID
+    return hour
+
+
+def _coerce_lead_days(value) -> int | object:
+    """Normalise day or forecast-hour lead values, rejecting non-integral values.
+
+    Upload sources use both ``lead_day`` (1..10) and ``forecast_hour`` (24..240).
+    The latter is converted only when it is an exact multiple of 24; a value such as
+    25 is contradictory, not a lead of one day.
+    """
+    if _is_missing_scalar(value):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return _INVALID
+    if not np.isfinite(number):
+        return _INVALID
+    days = number / 24.0 if number >= 24 else number
+    rounded = round(days)
+    if abs(days - rounded) > 1e-9 or not 1 <= rounded <= 10:
+        return _INVALID
+    return int(rounded)
+
+
+def _cycle_timestamp(init_d: date, cycle_hour: Optional[int]) -> Optional[datetime]:
+    if init_d is None or cycle_hour is None:
+        return None
+    return datetime.combine(init_d, time(hour=cycle_hour))
 
 
 @dataclass
@@ -114,25 +239,62 @@ def _apply_unit(value: float, conversion: Optional[str]) -> float:
 
 
 def _coerce_date(v) -> Optional[date]:
-    if v is None or (isinstance(v, float) and np.isnan(v)):
+    dt = _coerce_datetime(v)
+    return None if dt is None else dt.date()
+
+
+def _coerce_date_checked(v) -> date | object | None:
+    """Coerce a date while distinguishing missing from present-but-invalid input."""
+    if v is None:
         return None
-    ts = pd.to_datetime(v, errors="coerce", utc=False)
-    return None if pd.isna(ts) else ts.date()
+    try:
+        if pd.isna(v):
+            return None
+    except (TypeError, ValueError):
+        pass
+    dt = _coerce_datetime(v)
+    return _INVALID if dt is None else dt.date()
 
 
-def _reconcile_time(init_d, valid_d, lead_days) -> tuple[Optional[date], Optional[date], Optional[int]]:
-    have = sum(x is not None for x in (init_d, valid_d, lead_days))
+def _reconcile_time(
+    init_d: Optional[date],
+    valid_d: Optional[date],
+    lead_days: int | object | None,
+) -> Optional[tuple[date, date, int]]:
+    """Reconcile the three forecast-time fields under the Day-k convention.
+
+    ``valid_date`` is ``init_date + (lead_time_days - 1)``.  A missing member may be
+    derived when the other two are present, but all three are checked when supplied:
+    silently preferring a derived value would turn a contradictory upload into a
+    plausible-looking forecast.  ``None`` means the row is invalid and must be refused.
+    """
+    if lead_days is _INVALID or init_d is _INVALID or valid_d is _INVALID:
+        return None
+    if init_d is not None:
+        init_d = _coerce_date(init_d)
+    if valid_d is not None:
+        valid_d = _coerce_date(valid_d)
+    lead = _coerce_lead_days(lead_days)
+    if lead is _INVALID:
+        return None
+    if lead is not None and not 1 <= lead <= 10:
+        return None
+
+    have = sum(x is not None for x in (init_d, valid_d, lead))
     if have < 2:
-        return init_d, valid_d, lead_days
+        return None
     if valid_d is None:
-        valid_d = init_d + pd.Timedelta(days=int(lead_days))
-        valid_d = valid_d.date() if hasattr(valid_d, "date") else valid_d
+        valid_d = init_d + timedelta(days=lead - 1)
     elif init_d is None:
-        init_d = valid_d - pd.Timedelta(days=int(lead_days))
-        init_d = init_d.date() if hasattr(init_d, "date") else init_d
-    elif lead_days is None:
-        lead_days = (valid_d - init_d).days
-    return init_d, valid_d, lead_days
+        init_d = valid_d - timedelta(days=lead - 1)
+    else:
+        inferred = (valid_d - init_d).days + 1
+        if lead is not None and inferred != lead:
+            return None
+        lead = inferred
+    if not 1 <= lead <= 10 or valid_d != init_d + timedelta(days=lead - 1):
+        return None
+    return init_d, valid_d, lead
 
 
 def to_canonical_rows(
@@ -143,6 +305,7 @@ def to_canonical_rows(
     source_file: str,
     grain: str,
     filename_hint: str = "",
+    cycle_hour: int | str | None = None,
 ) -> tuple[pd.DataFrame, int, list]:
     notes: list = []
     resolver = get_resolver()
@@ -153,7 +316,15 @@ def to_canonical_rows(
     lat_col, lon_col = dims.get("lat"), dims.get("lon")
     valid_col, init_col, lead_col = dims.get("valid_date"), dims.get("init_date"), dims.get("lead_time_days")
     member_col = dims.get("ensemble_member_id")
+    cycle_col = dims.get("cycle_hour")
+    init_cycle_col = dims.get("init_cycle")
     vt_col = result.value_type_column
+
+    supplied_cycle_hour = _coerce_cycle_hour(cycle_hour)
+    if supplied_cycle_hour is _INVALID:
+        raise ValueError("cycle_hour must be an integer from 0 to 23")
+    if supplied_cycle_hour is None:
+        supplied_cycle_hour = cycle_hour_from_filename(filename_hint)
 
     plan: list[tuple] = []
     if result.layout == "long":
@@ -182,8 +353,12 @@ def to_canonical_rows(
     def _num(row, col):
         if not col or col not in row:
             return None
-        v = pd.to_numeric(row[col], errors="coerce")
-        return None if pd.isna(v) else float(v)
+        try:
+            v = pd.to_numeric(row[col], errors="coerce")
+            number = float(v)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        return number if np.isfinite(number) else None
 
     def _norm_value_type(raw) -> Optional[str]:
         if raw is None or (isinstance(raw, float) and np.isnan(raw)):
@@ -196,6 +371,8 @@ def to_canonical_rows(
 
     out_rows: list[dict] = []
     skipped = 0
+    invalid_time = 0
+    invalid_mapping = 0
     resolved_regions = 0
     total_region_attempts = 0
 
@@ -203,19 +380,38 @@ def to_canonical_rows(
     for row in records:
         name = str(row[region_col]).strip() if region_col and pd.notna(row.get(region_col)) else None
         lat, lon = _num(row, lat_col), _num(row, lon_col)
-        init_d = _coerce_date(row.get(init_col)) if init_col else None
-        valid_d = _coerce_date(row.get(valid_col)) if valid_col else None
-        lead = _num(row, lead_col)
-        if lead is not None:
-            lead = int(round(lead / 24)) if lead >= 24 else int(round(lead))
-        init_d, valid_d, lead = _reconcile_time(init_d, valid_d, lead)
-
-        if valid_d is None:
-            skipped += 1
-            continue
-
+        init_raw = row.get(init_col) if init_col else None
+        valid_raw = row.get(valid_col) if valid_col else None
+        init_checked = _coerce_date_checked(init_raw)
+        valid_checked = _coerce_date_checked(valid_raw)
+        date_invalid = init_checked is _INVALID or valid_checked is _INVALID
+        init_dt = _coerce_datetime(init_raw)
+        init_d = init_checked if isinstance(init_checked, date) else None
+        valid_d = valid_checked if isinstance(valid_checked, date) else None
+        lead = _coerce_lead_days(row.get(lead_col)) if lead_col else None
         member = str(row[member_col]).strip() if member_col and pd.notna(row.get(member_col)) else None
         row_vt = _norm_value_type(row.get(vt_col)) if vt_col else None
+
+        row_cycle = _coerce_cycle_hour(row.get(cycle_col)) if cycle_col else None
+        row_init_cycle = _coerce_datetime(row.get(init_cycle_col)) if init_cycle_col else None
+        if row_init_cycle is None and init_dt is not None and init_dt.hour:
+            row_cycle = init_dt.hour
+        if row_init_cycle is not None:
+            derived_row_cycle = row_init_cycle.hour
+            if init_d is not None and row_init_cycle.date() != init_d:
+                row_cycle = _INVALID
+            else:
+                row_cycle = derived_row_cycle
+        if row_cycle is _INVALID:
+            cycle_invalid = True
+        else:
+            cycle_invalid = date_invalid
+        if supplied_cycle_hour is not None and row_cycle is not None \
+                and row_cycle is not _INVALID and row_cycle != supplied_cycle_hour:
+            cycle_invalid = True
+        effective_cycle_hour = supplied_cycle_hour
+        if effective_cycle_hour is None and row_cycle not in (None, _INVALID):
+            effective_cycle_hour = row_cycle
 
         rm = _resolve_region(name, lat, lon)
         total_region_attempts += 1
@@ -244,43 +440,93 @@ def to_canonical_rows(
                 emissions.append((variable, vt, raw, unit, scol))
 
         for variable, vt, raw, unit, scol in emissions:
-            if vt is None:
+            try:
+                variable = CanonicalVariable(variable).value
+                value_type = ValueType(vt)
+            except (TypeError, ValueError):
+                invalid_mapping += 1
                 skipped += 1
                 continue
+
+            if value_type is ValueType.FORECAST:
+                if cycle_invalid:
+                    invalid_time += 1
+                    skipped += 1
+                    continue
+                reconciled = _reconcile_time(init_d, valid_d, lead)
+                if reconciled is None:
+                    invalid_time += 1
+                    skipped += 1
+                    continue
+                row_init_d, row_valid_d, row_lead = reconciled
+                # Historical files predate cycle metadata and were 00Z-only.  Defaulting
+                # those rows to 00 preserves their old identity while allowing new 06/12/18Z
+                # rows to remain distinct.
+                row_hour = 0 if effective_cycle_hour is None else effective_cycle_hour
+                init_cycle = _cycle_timestamp(row_init_d, row_hour)
+            else:
+                # Observations have no forecast cycle.  They may be accompanied by stale
+                # init/lead columns in a mixed file, but those fields never become canonical.
+                if valid_d is None:
+                    skipped += 1
+                    continue
+                row_init_d, row_valid_d, row_lead = None, valid_d, None
+                init_cycle = None
+                row_hour = None
+
             value = _apply_unit(raw, unit)
-            if value is None or (isinstance(value, float) and np.isnan(value)):
+            confidence = _confidence_for(result, scol)
+            if value is None or not np.isfinite(value) or not np.isfinite(confidence):
+                invalid_mapping += 1
+                skipped += 1
                 continue
-            lt = lead if (vt == ValueType.FORECAST.value and lead and 1 <= lead <= 10) else None
-            out_rows.append(
-                dict(
-                    record_id=str(uuid.uuid4()),
-                    upload_batch_id=batch_id,
-                    source_file=source_file,
-                    source_column=scol,
-                    variable=variable,
-                    value_type=vt,
-                    value=float(value),
-                    region_id=rm.region_id,
-                    region_name=rm.region_name or name,
-                    lat=lat,
-                    lon=lon,
-                    init_date=init_d if vt == ValueType.FORECAST.value else None,
-                    valid_date=valid_d,
-                    lead_time_days=lt,
-                    ensemble_member_id=member,
-                    mapping_confidence=_confidence_for(result, scol),
-                    ingested_at=ingested_at,
-                    grain=grain,
-                    region_resolution_method=rm.method,
-                )
+            candidate = dict(
+                record_id=str(uuid.uuid4()),
+                upload_batch_id=batch_id,
+                source_file=source_file,
+                source_column=scol,
+                variable=variable,
+                value_type=value_type.value,
+                value=float(value),
+                region_id=rm.region_id,
+                region_name=rm.region_name or name,
+                lat=lat,
+                lon=lon,
+                init_date=row_init_d,
+                valid_date=row_valid_d,
+                lead_time_days=row_lead,
+                ensemble_member_id=member,
+                mapping_confidence=float(confidence),
+                ingested_at=ingested_at,
+                grain=grain,
+                region_resolution_method=rm.method,
+                init_cycle=init_cycle,
+                cycle_hour=row_hour,
             )
+            try:
+                validate_canonical_row(candidate)
+            except ValidationError as exc:
+                invalid_mapping += 1
+                skipped += 1
+                # Keep the reason in the batch note, but do not echo an entire source row
+                # (and potentially a large/untrusted value) into logs or API responses.
+                reason = str(exc).splitlines()[0]
+                if reason not in notes:
+                    notes.append(f"rejected invalid canonical value: {reason}")
+                continue
+            out_rows.append(candidate)
 
     if total_region_attempts:
         rate = resolved_regions / total_region_attempts
         notes.append(f"region resolution: {resolved_regions}/{total_region_attempts} "
                      f"({rate:.0%}) via name/point-in-polygon")
+    if invalid_time:
+        notes.append(f"rejected {invalid_time} forecast row-value(s) with invalid or contradictory dates/leads")
     if skipped:
-        notes.append(f"skipped {skipped} row-values with no valid_date or no value_type signal")
+        detail = "no valid_date, value_type signal, or canonical value"
+        if invalid_time:
+            detail += f"; {invalid_time} invalid/contradictory time rows"
+        notes.append(f"skipped {skipped} row-values ({detail})")
 
     return pd.DataFrame(out_rows), skipped, notes
 
@@ -307,9 +553,20 @@ def _load_profiles(session: Session):
 
 
 def _store_raw(path: Path, batch_id: str, original_filename: str) -> Path:
-    dest_dir = RAW_DIR / batch_id
+    # ``batch_id`` is generated by the application, but resolve and check the final path
+    # anyway.  This is a second boundary for callers that bypass the HTTP route.
+    raw_root = Path(RAW_DIR).resolve()
+    dest_dir = (raw_root / safe_upload_filename(batch_id, default="batch")).resolve()
+    try:
+        dest_dir.relative_to(raw_root)
+    except ValueError as exc:
+        raise ValueError("upload batch directory escapes the raw-upload root") from exc
     dest_dir.mkdir(parents=True, exist_ok=True)
-    dest = dest_dir / original_filename
+    dest = (dest_dir / safe_upload_filename(original_filename)).resolve()
+    try:
+        dest.relative_to(dest_dir)
+    except ValueError as exc:
+        raise ValueError("upload filename escapes the raw-upload directory") from exc
     shutil.copy2(path, dest)
     return dest
 
@@ -320,6 +577,7 @@ def _finish_canonicalization(
     parsed: ParsedTable,
     result: sm.MappingResult,
     verification_status: Optional[str] = None,
+    cycle_hour: int | str | None = None,
 ) -> IngestResult:
     canon_df, skipped, notes = to_canonical_rows(
         parsed.df,
@@ -327,6 +585,8 @@ def _finish_canonicalization(
         batch_id=batch.id,
         source_file=batch.original_filename,
         grain=parsed.grain,
+        filename_hint=batch.original_filename,
+        cycle_hour=cycle_hour,
     )
     if verification_status and not canon_df.empty:
         canon_df["verification_status"] = canon_df["value_type"].map(
@@ -394,9 +654,15 @@ def ingest_upload(
     original_filename: Optional[str] = None,
     confirmed_mappings: Optional[list] = None,
     verification_status: Optional[str] = None,
+    cycle_hour: int | str | None = None,
 ) -> IngestResult:
     path = Path(path)
-    original_filename = original_filename or path.name
+    original_filename = safe_upload_filename(original_filename or path.name)
+    if cycle_hour is not None:
+        parsed_cycle_hour = _coerce_cycle_hour(cycle_hour)
+        if parsed_cycle_hour is _INVALID:
+            raise ValueError("cycle_hour must be an integer from 0 to 23")
+        cycle_hour = parsed_cycle_hour
 
     batch = crud.create_upload_batch(
         session,
@@ -434,7 +700,9 @@ def ingest_upload(
                 notes=parsed.parse_notes + result.notes,
             )
 
-        return _finish_canonicalization(session, batch, parsed, result, verification_status)
+        return _finish_canonicalization(
+            session, batch, parsed, result, verification_status, cycle_hour=cycle_hour
+        )
 
     except Exception as exc:  # noqa: BLE001 - record then re-raise
         crud.update_batch(session, batch, status="failed", error=f"{type(exc).__name__}: {exc}")
@@ -452,11 +720,55 @@ def confirm_mapping(session: Session, batch_id: str, mappings: list) -> IngestRe
     )
     _apply_confirmations(result, mappings)
     crud.update_batch(session, batch, status="canonicalizing")
-    return _finish_canonicalization(session, batch, parsed, result)
+    return _finish_canonicalization(
+        session, batch, parsed, result,
+        cycle_hour=cycle_hour_from_filename(batch.original_filename),
+    )
 
 
 def _apply_confirmations(result: sm.MappingResult, mappings: list) -> None:
-    by_col = {m["source_column"]: m for m in mappings}
+    """Apply a user mapping after validating it as a canonical mapping."""
+    proposal_columns = {p.source_column for p in result.proposals}
+    by_col: dict[str, dict] = {}
+    for raw in mappings or []:
+        if not isinstance(raw, dict):
+            raise MappingValidationError("each mapping must be an object")
+        source = raw.get("source_column")
+        if not isinstance(source, str) or not source or source not in proposal_columns:
+            raise MappingValidationError(f"mapping refers to an unknown source column: {source!r}")
+        if source in by_col:
+            raise MappingValidationError(f"duplicate mapping for source column {source!r}")
+        role = raw.get("role") or sm.ROLE_MEASUREMENT
+        if role not in _ALLOWED_ROLES:
+            raise MappingValidationError(f"unsupported mapping role: {role!r}")
+        conversion = raw.get("unit_conversion")
+        if conversion not in _ALLOWED_CONVERSIONS:
+            raise MappingValidationError(f"unsupported unit conversion: {conversion!r}")
+        variable = raw.get("variable")
+        value_type = raw.get("value_type")
+        if role == sm.ROLE_MEASUREMENT and variable not in (None, "", "unmapped"):
+            try:
+                variable = CanonicalVariable(variable).value
+            except (TypeError, ValueError) as exc:
+                raise MappingValidationError(f"unknown canonical variable: {variable!r}") from exc
+        elif role != sm.ROLE_MEASUREMENT:
+            # Dimension/value-type columns are allowed to carry no measurement mapping,
+            # but a non-null enum value must still be real if the client supplied one.
+            variable = variable or None
+        if value_type not in (None, "", "unmapped"):
+            try:
+                value_type = ValueType(value_type).value
+            except (TypeError, ValueError) as exc:
+                raise MappingValidationError(f"unknown canonical value_type: {value_type!r}") from exc
+        else:
+            value_type = None
+        by_col[source] = {
+            **raw,
+            "role": role,
+            "variable": variable,
+            "value_type": value_type,
+            "unit_conversion": conversion,
+        }
 
     vt_col = result.value_type_column
     if vt_col is not None:
@@ -476,15 +788,17 @@ def _apply_confirmations(result: sm.MappingResult, mappings: list) -> None:
                 p.decision = "unmapped"
                 p.role = sm.ROLE_UNMAPPED
             continue
-        if m.get("role") == sm.ROLE_UNMAPPED or m.get("variable") in (None, "", "unmapped"):
+        if m["role"] == sm.ROLE_UNMAPPED or m["variable"] in (None, "", "unmapped"):
             p.decision, p.role = "unmapped", sm.ROLE_UNMAPPED
             continue
-        p.role = m.get("role", sm.ROLE_MEASUREMENT if not m.get("role") else p.role)
-        if p.role == sm.ROLE_UNMAPPED:
-            p.role = sm.ROLE_MEASUREMENT
-        p.suggested_variable = m.get("variable", p.suggested_variable)
-        p.suggested_value_type = m.get("value_type", p.suggested_value_type)
-        p.unit_conversion = m.get("unit_conversion", p.unit_conversion)
+        p.role = m["role"]
+        p.suggested_variable = m["variable"] or p.suggested_variable
+        p.suggested_value_type = m["value_type"] or p.suggested_value_type
+        p.unit_conversion = m["unit_conversion"]
+        if p.role == sm.ROLE_MEASUREMENT and not p.suggested_variable:
+            raise MappingValidationError(
+                f"measurement column {p.source_column!r} needs a canonical variable"
+            )
         p.decision, p.method = "confirmed", "manual"
 
     accepted: dict = {}

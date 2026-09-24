@@ -1,12 +1,17 @@
 import { useMemo } from "react";
 import type { AllRegionsResponse, RegionsResponse } from "../../api/types";
+import { isScoredRegion, riskBandForRegion, type RiskCuts } from "../../lib/riskBands";
 
-export function LeadDayRail({ all, value, onChange }: {
+export function LeadDayRail({ all, value, onChange, riskCuts }: {
   all?: AllRegionsResponse;
   value: number;
   onChange: (d: number) => void;
+  riskCuts?: RiskCuts;
 }) {
-  const rows = useMemo(() => (all?.days ?? []).map(summarise).filter(Boolean) as Row[], [all]);
+  const rows = useMemo(
+    () => (all?.days ?? []).map((day) => summarise(day, riskCuts)).filter(Boolean) as Row[],
+    [all, riskCuts],
+  );
   const drivers = useMemo(() => driverRuns(rows), [rows]);
 
   if (rows.length < 2) return null;
@@ -66,8 +71,8 @@ type Row = {
   driver: string | null;
 };
 
-function summarise(day: RegionsResponse): Row | null {
-  const regions = day.regions ?? [];
+function summarise(day: RegionsResponse, riskCuts?: RiskCuts): Row | null {
+  const regions = (day.regions ?? []).filter(isScoredRegion);
   if (!regions.length) return null;
 
   const probs: number[] = [];
@@ -77,10 +82,11 @@ function summarise(day: RegionsResponse): Row | null {
   let bust = 0;
 
   for (const r of regions) {
-    if (r.risk_band === "high") bust += 1;
-    else if (r.risk_band === "medium") watch += 1;
-    else if (r.risk_band === "low") low += 1;
-    if (r.bust_probability != null) probs.push(r.bust_probability);
+    const band = riskBandForRegion(r, riskCuts);
+    if (band === "high") bust += 1;
+    else if (band === "medium") watch += 1;
+    else if (band === "low") low += 1;
+    probs.push(r.bust_probability as number);
     if (r.dominant_variable) drivers.set(r.dominant_variable, (drivers.get(r.dominant_variable) ?? 0) + 1);
   }
   if (!probs.length) return null;

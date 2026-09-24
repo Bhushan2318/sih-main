@@ -37,9 +37,11 @@ jobs:
     timeout-minutes: 25
     steps:
       - name: Wait for the new build, then warm it
+        env:
+          WANT_COMMIT: ${{ github.sha }}
         run: |
           set -u
-          want='${{ github.sha }}'
+          want="$WANT_COMMIT"
 
           get_commit() {
             curl -fsS --max-time 30 "$SITE/api/health" 2>/dev/null \

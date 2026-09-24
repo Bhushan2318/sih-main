@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from threading import Lock
 from typing import Optional
 
 import pandas as pd
@@ -7,6 +8,7 @@ import pandas as pd
 from app.api import schemas
 from app.ingestion.canonical_schema import CIRCULAR_VARIABLES
 from app.ml import inference
+from app.storage import parquet_store
 from app.services.region_service import (
     NOT_TRAINED_MSG,
     _f,
@@ -17,7 +19,11 @@ from app.services.region_service import (
 
 _MAX_CYCLES = 10
 
-_cycles_memo: "tuple[str, list[schemas.ReplayCycleSummary]] | None" = None
+# The model run alone is not a sufficient cache key: a live ingest can add or replace
+# forecast partitions without changing the served model. Keep the store fingerprint in
+# the key so a successful write cannot leave the replay catalogue describing old data.
+_cycles_memo: "tuple[str, str, list[schemas.ReplayCycleSummary]] | None" = None
+_memo_lock = Lock()
 
 
 def _cycle_summary(state, init) -> Optional[schemas.ReplayCycleSummary]:
@@ -79,8 +85,14 @@ def list_cycles() -> list[schemas.ReplayCycleSummary]:
     state = inference.load_model_state()
     if state is None:
         return []
-    if _cycles_memo is not None and _cycles_memo[0] == state.run_id:
-        return _cycles_memo[1]
+    fingerprint = parquet_store.store_fingerprint()
+    with _memo_lock:
+        if (
+            _cycles_memo is not None
+            and _cycles_memo[0] == state.run_id
+            and _cycles_memo[1] == fingerprint
+        ):
+            return _cycles_memo[2]
 
     out: list[schemas.ReplayCycleSummary] = []
     for init in inference.available_cycles()[:_MAX_CYCLES]:
@@ -96,7 +108,8 @@ def list_cycles() -> list[schemas.ReplayCycleSummary]:
         ),
         reverse=True,
     )
-    _cycles_memo = (state.run_id, out)
+    with _memo_lock:
+        _cycles_memo = (state.run_id, fingerprint, out)
     return out
 
 
@@ -314,4 +327,5 @@ def _build_focus(
 
 def invalidate() -> None:
     global _cycles_memo
-    _cycles_memo = None
+    with _memo_lock:
+        _cycles_memo = None

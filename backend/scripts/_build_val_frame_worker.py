@@ -41,6 +41,7 @@ def main() -> int:
     try:
         import pandas as pd
 
+        from app.features import engineering as fe
         from app.ml.pooled_training import attach_hbf_column
 
         out_dir = Path(job["out_dir"])
@@ -52,8 +53,13 @@ def main() -> int:
         hbf = job["hbf"]
         next_row = 0
         for year in job["val_years"]:
-            part = pd.read_parquet(job["cached"][year], columns=columns)
+            path = job["cached"][year]
+            import pyarrow.parquet as pq
+            available = set(pq.ParquetFile(path).schema_arrow.names)
+            read_columns = [column for column in columns if column in available]
+            part = pd.read_parquet(path, columns=read_columns)
             part = part[part["init_date"].isin(val_cycles)]
+            part, _quarantined = fe.quarantine_invalid_paired_values(part)
             if part.empty:
                 del part
                 continue

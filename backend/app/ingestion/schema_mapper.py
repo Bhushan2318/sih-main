@@ -93,6 +93,10 @@ DIMENSION_SYNONYMS: dict[str, set[str]] = {
                        "forecast lead", "horizon", "step hours"},
     "ensemble_member_id": {"member", "ensemble member", "ensemble member id", "ens member",
                            "perturbation", "realization"},
+    # Optional cycle identity columns.  Historical files do not have them; live GEFS
+    # files may, and the pipeline can also receive the hour explicitly from the fetcher.
+    "cycle_hour": {"cycle hour", "cycle_hour", "forecast hour", "initialization hour"},
+    "init_cycle": {"init cycle", "init_cycle", "initialization timestamp", "cycle timestamp"},
 }
 
 VARIABLE_NAME_HEADERS = {"forecast variable", "variable", "parameter", "param", "element",
@@ -468,18 +472,46 @@ class SchemaMapper:
         if applied and profile_match == "exact":
             for p in proposals:
                 stored = applied.get(p.source_column)
-                if stored:
-                    p.role = stored.get("role", p.role)
-                    p.suggested_variable = stored.get("variable", p.suggested_variable)
-                    p.suggested_value_type = stored.get("value_type", p.suggested_value_type)
-                    p.unit_conversion = stored.get("unit_conversion", p.unit_conversion)
-                    p.decision, p.method = "confirmed", "profile"
+                if not stored:
+                    continue
+                role = stored.get("role", p.role)
+                variable = stored.get("variable", p.suggested_variable)
+                value_type = stored.get("value_type", p.suggested_value_type)
+                conversion = stored.get("unit_conversion", p.unit_conversion)
+                try:
+                    if variable not in (None, ""):
+                        variable = CanonicalVariable(variable).value
+                    if value_type not in (None, ""):
+                        value_type = ValueType(value_type).value
+                except (TypeError, ValueError):
+                    notes.append(f"ignored invalid stored mapping for {p.source_column!r}")
+                    continue
+                if role not in {
+                    ROLE_MEASUREMENT, ROLE_DIMENSION, ROLE_VALUE, ROLE_VALUE_TYPE,
+                    ROLE_VARIABLE_NAME, ROLE_UNMAPPED,
+                } or conversion not in {None, "kmh_to_ms", "K_to_C", "Pa_to_hPa", "frac_to_pct"}:
+                    notes.append(f"ignored invalid stored mapping for {p.source_column!r}")
+                    continue
+                p.role = role
+                p.suggested_variable = variable
+                p.suggested_value_type = value_type
+                p.unit_conversion = conversion
+                p.decision, p.method = "confirmed", "profile"
         elif applied and profile_match == "partial":
             for p in proposals:
                 stored = applied.get(p.source_column)
                 if stored and p.decision == "needs_confirmation":
-                    p.suggested_variable = stored.get("variable", p.suggested_variable)
-                    p.suggested_value_type = stored.get("value_type", p.suggested_value_type)
+                    try:
+                        variable = stored.get("variable", p.suggested_variable)
+                        value_type = stored.get("value_type", p.suggested_value_type)
+                        if variable not in (None, ""):
+                            variable = CanonicalVariable(variable).value
+                        if value_type not in (None, ""):
+                            value_type = ValueType(value_type).value
+                    except (TypeError, ValueError):
+                        continue
+                    p.suggested_variable = variable
+                    p.suggested_value_type = value_type
                     p.method = "profile"
 
         if profile_match != "exact":

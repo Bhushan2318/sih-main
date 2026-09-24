@@ -29,6 +29,9 @@ concurrency:
 env:
   # These jobs train; full_retrain refuses unless a process opts in.
   ALLOW_LOCAL_RETRAIN: "true"
+  # Keep dispatch input in the environment.  It is quoted as a single argument below,
+  # never interpolated into the shell command by Actions.
+  BACKFILL_YEARS: ${{ inputs.years || '2010-2018' }}
 
 jobs:
   train:
@@ -60,8 +63,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         # Same base the live model trains from, so the comparison is like for like.
         run: |
-          gh release download data-latest -p "sanket-data.tar.gz" -D /tmp --clobber
-          tar xzf /tmp/sanket-data.tar.gz -C .
+          gh release download data-latest -p "sanket-data.tar.gz" --output /tmp/sanket-data.tar.gz --clobber
+          test -s /tmp/sanket-data.tar.gz
+          python ../ci/validate_release_archive.py /tmp/sanket-data.tar.gz \
+            --allow-prefix data/ --allow-file metadata.db \
+            --require data/models/current.json \
+            --require-prefix data/canonical/ \
+            --require-prefix data/geo/ \
+            --require data/summary.json \
+            --require metadata.db
+          tar --extract --gzip --file /tmp/sanket-data.tar.gz --directory . \
+            --no-same-owner --no-same-permissions
           python -c "
           import pyarrow.dataset as ds
           d = ds.dataset('data/canonical', format='parquet', partitioning='hive').to_table().to_pandas()
@@ -74,13 +86,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         # Parquet, not CSV: identical content and ~18x smaller (1.6 MB vs 29.2 MB a year).
         run: |
-          gh release download backfill-data -p "backfill-2010-2019.tar.gz" -D /tmp --clobber
-          tar xzf /tmp/backfill-2010-2019.tar.gz -C data/samples
+          gh release download backfill-data -p "backfill-2010-2019.tar.gz" \
+            --output /tmp/backfill-2010-2019.tar.gz --clobber
+          test -s /tmp/backfill-2010-2019.tar.gz
+          python ../ci/validate_release_archive.py /tmp/backfill-2010-2019.tar.gz
+          tar --extract --gzip --file /tmp/backfill-2010-2019.tar.gz \
+            --directory data/samples --no-same-owner --no-same-permissions
           ls data/samples/*_201*.parquet | wc -l | xargs echo "backfill files:"
 
       - name: Ingest
         working-directory: backend
-        run: python -m scripts.ingest_backfill --years '${{ inputs.years || '2010-2018' }}'
+        run: python -m scripts.ingest_backfill --years "$BACKFILL_YEARS"
 
       - name: Train, sampling memory to a file
         working-directory: backend
@@ -118,7 +134,7 @@ jobs:
             echo ""
             echo "| | |"
             echo "|---|---|"
-            echo "| years ingested | \`${{ inputs.years || '2010-2018' }}\` |"
+            echo "| years ingested | \`$BACKFILL_YEARS\` |"
             echo "| train exit code | \`$RC\` |"
             echo "| peak python RSS | **$((PEAK_KB / 1024)) MB** |"
             echo "| lowest MemAvailable | **$((MIN_AVAIL_KB / 1024)) MB** |"

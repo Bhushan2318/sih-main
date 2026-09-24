@@ -45,7 +45,7 @@ def test_paired_row_columns_are_frozen():
     say so in the message - or something upstream changed shape without meaning to.
     """
     assert contracts.PAIRED_ROW_COLUMNS == (
-        "region_id", "variable", "valid_date", "forecast_value", "value_type",
+        "region_id", "cycle_hour", "variable", "valid_date", "forecast_value", "value_type",
         "init_date", "lead_time_days", "ensemble_member_id", "observed_value",
         "verification_status", "abs_error", "jump_abs_change", "jump_std",
         "jump_sign_flips", "jump_rel_climatology",
@@ -56,7 +56,7 @@ def test_paired_row_columns_are_frozen():
         "mjo_rmm1", "mjo_rmm2", "mjo_amplitude",
         "ensemble_spread",
         "ensemble_member_count", "pressure_rate_of_change", "moisture_rate_of_change",
-        "forecast_error_lag", "fc_atmospheric_moisture_kgm2", "fc_humidity_pct",
+        "fc_atmospheric_moisture_kgm2", "fc_humidity_pct",
         "fc_pressure_hpa", "fc_rainfall_mm", "fc_soil_moisture_pct", "fc_temperature_c",
         "fc_wind_direction_deg", "fc_wind_speed_ms",
         "historical_bust_frequency_region_season",
@@ -70,8 +70,25 @@ def test_the_label_is_not_a_paired_row_column():
     assert "y_bust" not in contracts.PAIRED_ROW_COLUMNS
 
 
+def test_the_noncausal_realized_error_lag_is_retired_everywhere():
+    assert "forecast_error_lag" in contracts.RETIRED_FEATURES
+    assert "forecast_error_lag" not in contracts.PAIRED_ROW_COLUMNS
+    from app.ml import regressors
+    assert "forecast_error_lag" not in regressors.NUMERIC_FEATURES
+
+
+def test_label_derived_historical_frequency_is_not_a_model_feature():
+    from app.features import pivot
+    from app.ml import regressors
+
+    assert "historical_bust_frequency_region_season" in contracts.RETIRED_FEATURES
+    assert "historical_bust_frequency_region_season" not in regressors.NUMERIC_FEATURES
+    sample = pd.DataFrame({"historical_bust_frequency_region_season": [0.2]})
+    assert "historical_bust_frequency_region_season" not in pivot.classifier_feature_columns(sample)
+
+
 def test_event_keys_identify_a_row_and_are_all_present():
-    for key in ("region_id", "init_date", "valid_date", "lead_time_days",
+    for key in ("region_id", "cycle_hour", "init_date", "valid_date", "lead_time_days",
                 "ensemble_member_id"):
         assert key in contracts.PAIRED_ROW_COLUMNS
 
@@ -80,6 +97,16 @@ def _conforming_frame(n: int = 3) -> pd.DataFrame:
     """A frame built to the contract. Values are arbitrary - the shape is the point."""
     return pd.DataFrame({c: contracts.example_column(c, n)
                          for c in contracts.PAIRED_ROW_COLUMNS})
+
+
+def test_pooled_cache_with_the_retired_feature_is_not_reused(tmp_path):
+    from app.ml.pooled_training import _drop_stale_caches
+
+    cache = tmp_path / "paired_2000.parquet"
+    pd.DataFrame(columns=[*contracts.PAIRED_ROW_COLUMNS,
+                          "forecast_error_lag"]).to_parquet(cache, index=False)
+    assert _drop_stale_caches(tmp_path, [2000]) == [2000]
+    assert not cache.exists()
 
 
 def test_a_conforming_frame_validates():
