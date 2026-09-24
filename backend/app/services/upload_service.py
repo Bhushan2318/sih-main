@@ -10,9 +10,15 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from app.api import schemas
+from app.config import settings
 from app.db.base import get_session
 from app.db.models import TrainingRun
-from app.ingestion.pipeline import IngestResult, confirm_mapping, ingest_upload
+from app.ingestion.pipeline import (
+    IngestResult,
+    confirm_mapping,
+    ingest_upload,
+    safe_upload_filename,
+)
 from app.ml import inference
 from app.realtime.broadcaster import emit
 from app.realtime.events import EventType
@@ -32,9 +38,15 @@ def last_training_error() -> Optional[str]:
     return _training_state["last_error"]
 
 
-def save_temp_upload(filename: str, data: bytes) -> Path:
+def new_temp_upload(filename: str) -> Path:
+    """Create a contained temporary destination for a streamed upload."""
     tmp_dir = Path(tempfile.mkdtemp(prefix="fg-upload-"))
-    dest = tmp_dir / Path(filename).name
+    return tmp_dir / safe_upload_filename(filename)
+
+
+def save_temp_upload(filename: str, data: bytes) -> Path:
+    """Compatibility helper for non-HTTP callers; the route uses streaming writes."""
+    dest = new_temp_upload(filename)
     dest.write_bytes(data)
     return dest
 
@@ -72,6 +84,12 @@ def handle_confirm(session: Session, batch_id: str, mappings: list) -> IngestRes
 
 
 def run_retrain(batch_id: Optional[str] = None) -> None:
+    # The HTTP boundary rejects uploads on a serving deployment, but live refresh can
+    # call this function from a daemon thread.  Keep the function itself default-deny so
+    # that path cannot turn an environment typo into a 2 GB training job.
+    if not settings.allow_local_retrain:
+        log.info("retrain requested on a serving deployment; refusing batch %s", batch_id)
+        return
     if not _training_lock.acquire(blocking=False):
         log.info("retrain already running; skipping duplicate trigger")
         return

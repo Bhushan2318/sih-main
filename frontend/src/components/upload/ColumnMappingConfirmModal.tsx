@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import type { ConfirmMappingItem, MappingProposal, UploadResponse } from "../../api/types";
+import { confirmedRole, unitConversionForChoice } from "../../lib/uploadMapping";
 
 const CANONICAL_VARIABLES = [
   "rainfall_mm",
@@ -62,12 +63,22 @@ export function ColumnMappingConfirmModal({ upload, onCancel, onSubmit }: {
   const submit = () => {
     const mappings: ConfirmMappingItem[] = needing.map((p) => {
       const c = choices[p.source_column];
-      if (!c?.variable) return { source_column: p.source_column, role: "unmapped" };
+      if (!c?.variable) {
+        return { source_column: p.source_column, role: "unmapped", unit_conversion: null };
+      }
       return {
         source_column: p.source_column,
         variable: c.variable,
         value_type: c.valueType || null,
-        unit_conversion: p.unit_conversion,
+        // Preserve structural roles (notably long-format `value` columns) instead of
+        // allowing the backend to infer a different role after a variable edit.
+        role: confirmedRole(p),
+        unit_conversion: unitConversionForChoice(
+          p.source_column,
+          c.variable,
+          p.suggested_variable,
+          p.unit_conversion,
+        ),
       };
     });
     onSubmit(mappings);
@@ -96,7 +107,13 @@ export function ColumnMappingConfirmModal({ upload, onCancel, onSubmit }: {
             </div>
             {needing.map((p) => {
               const c = choices[p.source_column];
-              const dupKey = `${c?.variable}|${c?.valueType}`;
+              const conversion = unitConversionForChoice(
+                 p.source_column,
+                 c?.variable ?? "",
+                 p.suggested_variable,
+                 p.unit_conversion,
+               );
+               const dupKey = `${c?.variable}|${c?.valueType}`;
               const isDup = Boolean(c?.variable) && duplicates.has(dupKey);
               return (
                 <div className="mapping-row" role="row" key={p.source_column}>
@@ -108,7 +125,7 @@ export function ColumnMappingConfirmModal({ upload, onCancel, onSubmit }: {
                       {CANONICAL_VARIABLES.map((v) => <option key={v} value={v}>{v}</option>)}
                     </select>
                     {isDup ? <em className="warn small"> duplicate</em> : null}
-                    {p.unit_conversion ? <em className="muted small"> ({p.unit_conversion})</em> : null}
+                    {conversion ? <em className="muted small"> ({conversion})</em> : null}
                   </span>
                   <span>
                     <select

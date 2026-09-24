@@ -103,8 +103,16 @@ def _nasa_power_header_offset(raw: str) -> tuple[int, str]:
 
 def _apply_missing_sentinels(df: pd.DataFrame, notes: list) -> pd.DataFrame:
     hits = 0
+    textual = {str(v).strip().upper() for v in MISSING_SENTINELS}
+    numeric_sentinels = {-999.0, -9999.0}
     for col in df.columns:
-        mask = df[col].isin(MISSING_SENTINELS)
+        values = df[col]
+        # Providers vary the spelling and precision of the same sentinel (-999,
+        # -999.00, -9999.0, sometimes with surrounding whitespace). Normalize both
+        # the textual and numeric forms before handing values to the mapper.
+        mask = values.astype(str).str.strip().str.upper().isin(textual)
+        numeric = pd.to_numeric(values, errors="coerce")
+        mask = mask | numeric.isin(numeric_sentinels)
         if mask.any():
             hits += int(mask.sum())
             df.loc[mask, col] = np.nan

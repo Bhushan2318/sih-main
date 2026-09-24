@@ -111,8 +111,11 @@ def run_forecast_cycle(
         path = gefs.write_cycle_csv(frame, init, cycle_hour, LIVE_DIR)
 
         with get_session() as session:
-            result = ingest_upload(session, path, path.name,
-                                   confirmed_mappings=FORECAST_MAPPINGS)
+            result = ingest_upload(
+                session, path, path.name,
+                confirmed_mappings=FORECAST_MAPPINGS,
+                cycle_hour=cycle_hour,
+            )
             detail = (
                 f"transport={report.transport} steps={report.steps_fetched}/"
                 f"{report.steps_expected} {report.bytes_downloaded/1048576:.1f}MB "
@@ -188,6 +191,16 @@ def run_observation_refresh(
                 _finish_run(session, session.get(IngestRun, run_id), "skipped",
                             detail=f"no observations returned for {target}")
             return {"status": "skipped", "target": target, "reason": "no rows returned"}
+
+        # Final observations are training evidence. Never ingest or retrain on a partial
+        # city set: a network/provider outage must leave the previous verified store in
+        # place rather than silently changing the label distribution.
+        if tier == "final" and report.failures:
+            detail = f"incomplete city coverage: {','.join(report.failures)}"
+            with get_session() as session:
+                _finish_run(session, session.get(IngestRun, run_id), "failed", error=detail)
+            return {"status": "failed", "target": target, "error": detail,
+                    "failed_cities": report.failures}
 
         path = observations.write_observations_csv(frame, tier, start, end, LIVE_DIR)
         with get_session() as session:

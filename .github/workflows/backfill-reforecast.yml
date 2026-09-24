@@ -74,10 +74,13 @@ jobs:
 
       - name: Fetch shard
         working-directory: backend
+        env:
+          FETCH_YEAR: ${{ matrix.year }}
+          FETCH_SHARD: ${{ matrix.shard }}
         run: |
           python -m scripts.fetch_gefs_reforecast_sample \
-            --years '${{ matrix.year }}' \
-            --shard '${{ matrix.shard }}/2' \
+            --years "$FETCH_YEAR" \
+            --shard "$FETCH_SHARD/2" \
             --resume
 
       - name: Upload this shard's parts

@@ -56,7 +56,7 @@ class TrainReport:
 
 
 _TRAINING_COLUMNS = [
-    "region_id", "variable", "valid_date", "value", "value_type",
+    "region_id", "cycle_hour", "variable", "valid_date", "value", "value_type",
     "init_date", "lead_time_days", "ensemble_member_id", "verification_status",
 ]
 
@@ -262,14 +262,84 @@ MAX_ROC_AUC_REGRESSION = 0.05
 MIN_ROC_AUC = 0.55
 
 
+_CLASSIFIER_REQUIRED = ("n", "positives", "bust_rate", "precision", "recall", "f1",
+                        "roc_auc", "pr_auc", "brier")
+_REGRESSOR_REQUIRED = ("n", "mae", "rmse", "r2", "baseline_mae_predict_mean")
+
+
+def _finite_number(value) -> bool:
+    return (isinstance(value, (int, float, np.integer, np.floating))
+            and not isinstance(value, (bool, np.bool_)) and bool(np.isfinite(value)))
+
+
 def _held_out(metrics: dict | None) -> dict:
     if not isinstance(metrics, dict):
         return {}
     clf = metrics.get("classifier", metrics)
+    if not isinstance(clf, dict):
+        return {}
     for split in ("test", "val"):
         if isinstance(clf.get(split), dict):
             return clf[split]
     return {}
+
+
+def _held_out_regressor(metrics: dict | None) -> dict:
+    if not isinstance(metrics, dict):
+        return {}
+    for split in ("test", "val"):
+        if isinstance(metrics.get(split), dict):
+            return metrics[split]
+    return {}
+
+
+def _classifier_health_failure(metrics: dict | None) -> str | None:
+    held = _held_out(metrics)
+    if not held:
+        return "no held-out classifier metrics (test or val) were recorded"
+    missing = [name for name in _CLASSIFIER_REQUIRED if name not in held]
+    if missing:
+        return f"held-out classifier metrics are missing {', '.join(missing)}"
+    nonfinite = [name for name in _CLASSIFIER_REQUIRED if not _finite_number(held[name])]
+    if nonfinite:
+        return f"held-out classifier metrics are non-finite: {', '.join(nonfinite)}"
+    n, positives = float(held["n"]), float(held["positives"])
+    if n <= 0 or not n.is_integer() or positives <= 0 or not positives.is_integer() \
+            or positives >= n:
+        return (f"held-out classifier labels are degenerate (n={held['n']}, "
+                f"positives={held['positives']})")
+    bounded = ("bust_rate", "precision", "recall", "f1", "roc_auc", "pr_auc", "brier")
+    outside = [name for name in bounded if not 0.0 <= float(held[name]) <= 1.0]
+    if outside:
+        return f"held-out classifier metrics are outside [0, 1]: {', '.join(outside)}"
+    if not np.isclose(float(held["bust_rate"]), positives / n, rtol=1e-9, atol=1e-12):
+        return "held-out classifier bust_rate is inconsistent with n/positives"
+    return None
+
+
+def _regressor_health_failure(metrics: dict | None) -> str | None:
+    regressors = metrics.get("regressors") if isinstance(metrics, dict) else None
+    if not isinstance(regressors, dict) or not regressors:
+        return "no regressor health metrics were recorded"
+    for variable, values in sorted(regressors.items()):
+        held = _held_out_regressor(values)
+        if not held:
+            return f"regressor {variable!r} has no held-out metrics"
+        missing = [name for name in _REGRESSOR_REQUIRED if name not in held]
+        if missing:
+            return f"regressor {variable!r} metrics are missing {', '.join(missing)}"
+        nonfinite = [name for name in _REGRESSOR_REQUIRED if not _finite_number(held[name])]
+        if nonfinite:
+            return f"regressor {variable!r} metrics are non-finite: {', '.join(nonfinite)}"
+        n = float(held["n"])
+        if n < 2 or not n.is_integer():
+            return f"regressor {variable!r} has degenerate n={held['n']}"
+        if min(float(held["mae"]), float(held["rmse"]),
+               float(held["baseline_mae_predict_mean"])) < 0:
+            return f"regressor {variable!r} reports a negative error"
+        if float(held["rmse"]) + 1e-12 < float(held["mae"]):
+            return f"regressor {variable!r} reports RMSE below MAE"
+    return None
 
 
 def _promotion_decision(new_metrics: dict | None) -> tuple[bool, str]:
@@ -278,13 +348,19 @@ def _promotion_decision(new_metrics: dict | None) -> tuple[bool, str]:
     `make_current` used to be unconditional: any run that finished without raising became
     current, published its artifact and fired the deploy. A model that had quietly got
     worse shipped itself, and the failure looked exactly like success. For a project whose
-    whole claim is knowing when to distrust a forecast, that was the wrong default.
+    whole claim is knowing when to distrust a forecast, that was the wrong default. Missing,
+    non-finite or degenerate held-out classifier/regressor health now fails closed as well;
+    an absent metric is never treated as permission to publish.
     """
-    new = _held_out(new_metrics)
-    auc = new.get("roc_auc")
-    if not isinstance(auc, (int, float)):
-        return True, "promoted: this run reported no held-out ROC-AUC to check"
+    classifier_failure = _classifier_health_failure(new_metrics)
+    if classifier_failure:
+        return False, f"NOT promoted: {classifier_failure}"
+    regressor_failure = _regressor_health_failure(new_metrics)
+    if regressor_failure:
+        return False, f"NOT promoted: {regressor_failure}"
 
+    new = _held_out(new_metrics)
+    auc = float(new["roc_auc"])
     if auc < MIN_ROC_AUC:
         return False, (f"NOT promoted: held-out ROC-AUC {auc:.4f} is below the floor of "
                        f"{MIN_ROC_AUC}. A model that cannot beat the base rate should not "
@@ -296,9 +372,9 @@ def _promotion_decision(new_metrics: dict | None) -> tuple[bool, str]:
 
     prev = _held_out(registry.load_metrics(current))
     prev_auc = prev.get("roc_auc")
-    if not isinstance(prev_auc, (int, float)):
-        return True, (f"promoted: held-out ROC-AUC {auc:.4f}; the current run "
-                      f"({current}) has no comparable metric")
+    if not _finite_number(prev_auc):
+        return False, (f"NOT promoted: current run {current} has no finite held-out "
+                       f"ROC-AUC with which to compare this run")
 
     drop = prev_auc - auc
     # Compared with a tolerance: 0.84 - 0.05 is 0.05000000000000004 in binary floating
@@ -479,7 +555,10 @@ def full_retrain(triggered_by_batch_id: str | None = None, make_current: bool = 
         report.status = "success"
         report.seconds = time.time() - t0
         if make_current:
-            promote, why = _promotion_decision({"classifier": report.classifier_metrics})
+            promote, why = _promotion_decision({
+                "regressors": report.regressor_metrics,
+                "classifier": report.classifier_metrics,
+            })
             report.promotion_note = why
             if promote:
                 registry.set_current(run_id)
@@ -517,10 +596,8 @@ def _emit_eval_events(run_id: str, clf_art, splits: dict) -> Path:
 
 
 def _event_mean_error(paired: pd.DataFrame) -> pd.DataFrame:
-    em = (paired.groupby(fe.EVENT_KEYS + ["variable"], observed=True)
-          .agg(fc_mean=("forecast_value", "mean"), obs=("observed_value", "mean"))
-          .reset_index())
-    em["abs_error"] = (em["fc_mean"] - em["obs"]).abs()
+    em = fe.event_value_means(paired)
+    em["abs_error"] = fe.absolute_error(em["fc_mean"], em["obs"], em["variable"])
     return em[["variable", "abs_error"]]
 
 

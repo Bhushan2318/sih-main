@@ -18,7 +18,19 @@ from app.ml.train_pipeline import (
 
 
 def _metrics(auc: float, split: str = "test") -> dict:
-    return {"classifier": {split: {"roc_auc": auc, "brier": 0.16, "n": 1000}}}
+    return {
+        "regressors": {
+            "temperature_c": {split: {
+                "mae": 1.2, "rmse": 1.5, "r2": 0.4, "n": 1000,
+                "baseline_mae_predict_mean": 1.8,
+            }},
+        },
+        "classifier": {split: {
+            "n": 1000, "positives": 250, "bust_rate": 0.25,
+            "precision": 0.7, "recall": 0.6, "f1": 0.65,
+            "roc_auc": auc, "pr_auc": 0.6, "brier": 0.16,
+        }},
+    }
 
 
 @pytest.fixture
@@ -38,8 +50,8 @@ def current_run(tmp_path, monkeypatch):
     return _make
 
 
-def test_a_first_model_is_promoted():
-    assert registry.current_run_id() is None or True   # no incumbent required
+def test_a_first_model_is_promoted(monkeypatch):
+    monkeypatch.setattr(registry, "current_run_id", lambda: None)
     ok, why = _promotion_decision(_metrics(0.84))
     assert ok and "0.84" in why
 
@@ -82,17 +94,50 @@ def test_a_model_below_the_absolute_floor_is_refused(current_run):
     assert "floor" in why
 
 
-def test_an_unreadable_incumbent_does_not_block_deploys_forever(current_run):
-    """A corrupt or metric-less current run must not wedge every future publish."""
+def test_an_unreadable_incumbent_fails_closed(current_run):
+    """Without a finite incumbent metric there is no safe regression comparison."""
     current_run(None)
     ok, why = _promotion_decision(_metrics(0.84))
-    assert ok
-    assert "no comparable metric" in why
+    assert not ok
+    assert "no finite held-out" in why
 
 
-def test_a_run_without_metrics_is_promoted_but_says_so():
+def test_a_run_without_metrics_is_not_promoted():
     ok, why = _promotion_decision({})
-    assert ok and "no held-out ROC-AUC" in why
+    assert not ok
+    assert "no held-out classifier metrics" in why
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), -float("inf"), True])
+def test_nonfinite_or_boolean_classifier_auc_is_refused(bad):
+    m = _metrics(0.84)
+    m["classifier"]["test"]["roc_auc"] = bad
+    ok, why = _promotion_decision(m)
+    assert not ok
+    assert "non-finite" in why
+
+
+def test_degenerate_classifier_labels_are_refused():
+    m = _metrics(0.84)
+    m["classifier"]["test"].update(n=10, positives=0)
+    ok, why = _promotion_decision(m)
+    assert not ok and "degenerate" in why
+
+
+def test_missing_regressor_health_is_refused():
+    m = _metrics(0.84)
+    del m["regressors"]
+    ok, why = _promotion_decision(m)
+    assert not ok and "regressor health" in why
+
+
+@pytest.mark.parametrize("metric", ["mae", "rmse", "r2", "n"])
+def test_nonfinite_regressor_health_is_refused(metric):
+    m = _metrics(0.84)
+    m["regressors"]["temperature_c"]["test"][metric] = float("nan")
+    ok, why = _promotion_decision(m)
+    assert not ok
+    assert "regressor 'temperature_c'" in why and "non-finite" in why
 
 
 def test_held_out_prefers_test_over_val():

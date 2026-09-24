@@ -50,6 +50,7 @@ import numpy as np
 import pandas as pd
 import xgboost as xgb
 
+from app import contracts
 from app.features import engineering as fe
 from app.features import pivot as pv
 from app.ml import classifier as clf_mod
@@ -69,6 +70,14 @@ from app.ml.train_pipeline import (
 )
 
 _THIN_STATS_COLUMNS = ["region_id", "season", "variable", "abs_error"]
+
+
+def _available_columns(path: Path, requested: list[str]) -> list[str]:
+    """Keep pooled readers compatible with pre-cycle-identity cache files."""
+    import pyarrow.parquet as pq
+
+    available = set(pq.ParquetFile(path).schema_arrow.names)
+    return [col for col in dict.fromkeys(requested) if col in available]
 
 
 def cache_year(year: int, cache_dir: Path) -> Path:
@@ -284,8 +293,12 @@ def pooled_stats(cached_paths: dict, train_years: list, train_cycles: set):
     per_var: dict = {}
     event_frames = []
     for year in train_years:
-        df = pd.read_parquet(cached_paths[year], columns=read_cols)
+        path = cached_paths[year]
+        df = pd.read_parquet(path, columns=_available_columns(path, read_cols))
+        if "cycle_hour" not in df.columns:
+            df["cycle_hour"] = 0
         df = df[df["init_date"].isin(train_cycles)]
+        df, _quarantined = fe.quarantine_invalid_paired_values(df)
         if df.empty:
             continue
         # Native dtype, never a cast: rounding abs_error to float32 moved the 75th
@@ -316,10 +329,11 @@ def pooled_stats(cached_paths: dict, train_years: list, train_cycles: set):
     large: dict = {}
     total: dict = {}
     for year in train_years:
-        df = pd.read_parquet(
-            cached_paths[year],
-            columns=list(dict.fromkeys(_THIN_STATS_COLUMNS + ["init_date"])))
+        path = cached_paths[year]
+        requested = list(dict.fromkeys(_THIN_STATS_COLUMNS + ["init_date"]))
+        df = pd.read_parquet(path, columns=_available_columns(path, requested))
         df = df[df["init_date"].isin(train_cycles)]
+        df, _quarantined = fe.quarantine_invalid_paired_values(df)
         if df.empty:
             continue
         codes, cats = _as_codes(df["variable"])
@@ -349,31 +363,30 @@ def pooled_stats(cached_paths: dict, train_years: list, train_cycles: set):
 
 
 def _drop_stale_caches(cache_dir: Path, years: list) -> list:
-    """Delete any cached year narrower than its peers, so it is rebuilt with the columns
-    the current code produces.
+    """Delete caches that do not satisfy the current paired-frame contract.
 
-    A cache file is only valid for the feature set that existed when it was written. Real
-    crash 2026-09-21: paired_2016 and paired_2017 were built before the district
-    descriptors landed - 27 columns against the other sixteen years' 44 - and
-    `_feature_columns_for` reads the schema of one year to decide what to read from all of
-    them. The run died on `No match for FieldRef.Name(area_km2)` after eight hours of
-    caching. Comparing schemas costs one footer read per year."""
+    Schema compatibility is more than "not narrower than its peers": an old cache can have
+    the same width while still containing a retired feature or linear wind-direction
+    errors/spreads.  Requiring every current contract column and rejecting the retired
+    non-causal feature makes those caches rebuild under the current train/serve contract.
+    """
     import pyarrow.parquet as pq
-    schemas = {}
+    required = set(contracts.PAIRED_ROW_COLUMNS)
+    # HBF remains a diagnostic column in the paired cache; only the removed
+    # non-causal lag makes an otherwise current cache unsafe to reuse.
+    retired = {"forecast_error_lag"}
+    stale = []
     for year in years:
         path = cache_dir / f"paired_{year}.parquet"
         if not path.exists():
             continue
         try:
-            schemas[year] = set(pq.ParquetFile(path).schema_arrow.names)
+            names = set(pq.ParquetFile(path).schema_arrow.names)
         except Exception:  # noqa: BLE001 - unreadable is handled by cache_year itself
             continue
-    if len(schemas) < 2:
-        return []
-    widest = max(len(n) for n in schemas.values())
-    stale = sorted(y for y, names in schemas.items() if len(names) < widest)
-    for year in stale:
-        (cache_dir / f"paired_{year}.parquet").unlink()
+        if not required.issubset(names) or names & retired:
+            stale.append(year)
+            path.unlink()
     return stale
 
 
@@ -397,12 +410,10 @@ def _as_codes(col: "pd.Series"):
 
 def _feature_columns_for(cached_paths: dict, years: list) -> list:
     """Which columns `reg_mod.feature_columns` would pick for this variable's frame,
-    without reading any row data - schema only, plus the one feature attached after
-    caching (`historical_bust_frequency_region_season`, computed globally in
-    `pooled_stats` rather than known at cache time)."""
+    without reading any row data. Label-derived historical bust frequency remains a
+    diagnostic column and is intentionally not returned as a model feature."""
     import pyarrow.parquet as pq
     names = set(pq.ParquetFile(cached_paths[years[0]]).schema_arrow.names)
-    names.add("historical_bust_frequency_region_season")
     return reg_mod.feature_columns(pd.DataFrame(columns=sorted(names)))
 
 
@@ -475,7 +486,8 @@ class _YearDataIter(xgb.DataIter):
         self._hbf = hbf
         self._read_cols = list(dict.fromkeys(
             [c for c in feature_cols if c != "historical_bust_frequency_region_season"]
-            + ["region_id", "season", "variable", "init_date", "abs_error"]))
+            + ["region_id", "season", "variable", "init_date", "observed_value",
+               "abs_error"]))
         self._i = 0
         self.batches = 0  # batches handed to XGBoost; 0 means this chunk had no rows
         # No cache_prefix: QuantileDMatrix builds its quantile sketch batch by batch and
@@ -492,9 +504,11 @@ class _YearDataIter(xgb.DataIter):
         # every QuantileDMatrix pass, drove the worker past 43 GB of commit before its
         # first boosting round. Measured on real 2009+2010: peak 29.87 GB -> 9.38 GB,
         # 69 s -> 10 s, identical rows and abs_error sums.
-        df = pd.read_parquet(self._paths[self._i], columns=self._read_cols,
+        path = self._paths[self._i]
+        df = pd.read_parquet(path, columns=_available_columns(path, self._read_cols),
                              filters=[("variable", "==", self._variable)])
         df = df[(df["variable"] == self._variable) & (df["init_date"].isin(self._cycles))]
+        df, _quarantined = fe.quarantine_invalid_paired_values(df)
         self._i += 1
         if df.empty:
             return 1
@@ -604,6 +618,7 @@ def train_variable_regressor_pooled(cached_paths: dict, train_years: list, varia
     model = _booster_to_sklearn(booster, xgb.XGBRegressor)
 
     va = val_df[val_df["variable"] == variable]
+    va, _quarantined = fe.quarantine_invalid_paired_values(va)
     del booster  # see oof_fold_models for why: real fragmentation crashes
     gc.collect()
     # No train-split metric here, unlike the single-frame path: recomputing it would mean
@@ -720,11 +735,14 @@ def year_event_frame(cached_path: Path, train_cycles: set, hbf: dict, p90_error:
     present = pd.to_datetime(pq.read_table(cached_path, columns=["init_date"])
                              .column("init_date").unique().to_pandas())
     mine = set(present) & {pd.Timestamp(c) for c in train_cycles}
-    read_cols = sorted(columns) if columns else None
+    read_cols = _available_columns(cached_path, sorted(columns)) if columns else None
     frames = []
     for batch in _cycle_batches(mine, max_cycles_per_batch):
         df = pd.read_parquet(cached_path, columns=read_cols,
                              filters=[("init_date", "in", list(batch))])
+        if df.empty:
+            continue
+        df, _quarantined = fe.quarantine_invalid_paired_values(df)
         if df.empty:
             continue
         df = attach_hbf_column(df, hbf)
@@ -774,6 +792,9 @@ def val_event_frame(spill_dir: Path, val_pred, hbf: dict, p90_error: dict,
         df = pd.read_parquet(spill_dir, filters=[("init_date", "in", list(batch))])
         if df.empty:
             continue
+        df, _quarantined = fe.quarantine_invalid_paired_values(df)
+        if df.empty:
+            continue
         df = df.set_index("_va_row").sort_index()
         pred = pd.Series(val_pred[df.index.to_numpy()], index=df.index)
         frames.append(_events_float32(pv.build_event_frame(
@@ -796,11 +817,14 @@ def test_event_frame(cached_path: Path, test_cycles: set, hbf: dict, p90_error: 
     present = pd.to_datetime(pq.read_table(cached_path, columns=["init_date"])
                              .column("init_date").unique().to_pandas())
     mine = set(present) & {pd.Timestamp(c) for c in test_cycles}
-    read_cols = sorted(columns) if columns else None
+    read_cols = _available_columns(cached_path, sorted(columns)) if columns else None
     frames, y_parts, p_parts = [], {}, {}
     for batch in _cycle_batches(mine, max_cycles_per_batch):
         df = pd.read_parquet(cached_path, columns=read_cols,
                              filters=[("init_date", "in", list(batch))])
+        if df.empty:
+            continue
+        df, _quarantined = fe.quarantine_invalid_paired_values(df)
         if df.empty:
             continue
         df = attach_hbf_column(df, hbf)
@@ -973,6 +997,7 @@ def _variable_checkpoint_path(cache_dir: Path, variable: str, train_years: list,
     changed split or changed params never picks up a stale result."""
     import hashlib
     h = hashlib.sha256()
+    h.update(reg_mod.FEATURE_CONTRACT_VERSION.encode())
     h.update(repr(sorted(train_years)).encode())
     if isinstance(train_cycles, list):  # staged fit: the chunking itself is part of the key
         h.update(b"staged")

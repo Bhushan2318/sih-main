@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from app.features import engineering as fe
 from app.features.engineering import (
     DISTRICT_DESCRIPTOR_FEATURES,
     EVENT_KEYS,
@@ -32,6 +33,10 @@ def build_event_frame(
     that block was what ran out. Freeing fold_models first (see
     _build_pooled_year_events_worker.py) was not enough on its own."""
     df = paired.copy() if copy_input else paired
+    if "cycle_hour" not in df.columns:
+        df["cycle_hour"] = 0
+    else:
+        df["cycle_hour"] = pd.to_numeric(df["cycle_hour"], errors="coerce").fillna(0).astype("int16")
     df["pred_err"] = pred_err.reindex(df.index).to_numpy()
     # `variable` is categorical in the retrain's paired frame. Series.map on a categorical
     # returns a categorical when every category maps to a distinct value - true for a
@@ -46,15 +51,15 @@ def build_event_frame(
     jump = [c for c in JUMP_FEATURES if c in df.columns]
     laf = [c for c in LAF_FEATURES if c in df.columns]
     per_var_cols = jump + laf
-    em = (df.groupby(EVENT_KEYS + ["variable"], observed=True)
-            .agg(fc_mean=("forecast_value", "mean"),
-                 obs=("observed_value", "mean"),
-                 spread=("ensemble_spread", "mean"),
-                 pred_err=("pred_err", "mean"),
-                 conf=("conf", "mean"),
-                 **{c: (c, "mean") for c in per_var_cols})
-            .reset_index())
-    em["actual_err"] = (em["fc_mean"] - em["obs"]).abs()
+    em = fe.event_value_means(df)
+    context = (df.groupby(EVENT_KEYS + ["variable"], observed=True)
+                 .agg(spread=("ensemble_spread", "mean"),
+                      pred_err=("pred_err", "mean"),
+                      conf=("conf", "mean"),
+                      **{c: (c, "mean") for c in per_var_cols})
+                 .reset_index())
+    em = em.merge(context, on=EVENT_KEYS + ["variable"], how="left", validate="one_to_one")
+    em["actual_err"] = fe.absolute_error(em["fc_mean"], em["obs"], em["variable"])
 
     pe = em.pivot_table(index=EVENT_KEYS, columns="variable",
                         values=["pred_err", "conf", "spread", "actual_err"] + per_var_cols,
@@ -98,8 +103,7 @@ def classifier_feature_columns(event_df: pd.DataFrame) -> list:
     per_var = [c for c in event_df.columns
                if c.startswith(("pred_err_", "conf_", "jump_", "laf_"))
                or (c.startswith("spread_") and c not in ("spread_mean", "spread_max"))]
-    context = (["lead_time_days", "month", "spread_mean", "spread_max",
-                "historical_bust_frequency_region_season"]
+    context = (["lead_time_days", "month", "spread_mean", "spread_max"]
                + list(DISTRICT_DESCRIPTOR_FEATURES) + list(MJO_FEATURES) + ["season"])
     ordered, seen = [], set()
     for c in per_var + context:

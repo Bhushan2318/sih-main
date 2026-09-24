@@ -80,6 +80,26 @@ def test_resolve_source_honours_an_explicit_filename():
     assert got == SAMPLES / "gefs_reforecast_india_2019_district.parquet"
 
 
+def test_cycle_coverage_requires_all_core_dimensions():
+    import pandas as pd
+    from scripts.ingest_districts_chunked import cycle_has_expected_coverage
+
+    rows = []
+    variables = [f"v{i}" for i in range(8)]
+    members = [f"m{i}" for i in range(5)]
+    for i in range(666):
+        rows.append({
+            "region_id": f"IN-X-{i:04d}",
+            "variable": variables[i % len(variables)],
+            "ensemble_member_id": members[i % len(members)],
+            "lead_time_days": i % 10 + 1,
+        })
+    frame = pd.DataFrame(rows)
+    assert cycle_has_expected_coverage(frame)
+    assert not cycle_has_expected_coverage(frame.iloc[:-1])
+    assert not cycle_has_expected_coverage(frame[frame["lead_time_days"] != 10])
+
+
 def test_resolve_source_honours_an_explicit_absolute_path(tmp_path):
     from scripts.ingest_districts_chunked import resolve_source
     p = tmp_path / "somewhere_else.parquet"

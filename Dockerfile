@@ -36,7 +36,9 @@ ENV PYTHONUNBUFFERED=1 \
 # curl for the release asset below; ca-certificates so HTTPS works at all
 RUN apt-get update \
  && apt-get install -y --no-install-recommends curl ca-certificates \
- && rm -rf /var/lib/apt/lists/*
+ && rm -rf /var/lib/apt/lists/* \
+ && addgroup --system sanket \
+ && adduser --system --ingroup sanket --home /app --no-create-home sanket
 
 # Core requirements only. requirements-live.txt (eccodes/cfgrib/xarray) is for decoding
 # fresh GRIB2 and is CI's job, not this container's - leaving it out keeps the image small
@@ -44,10 +46,10 @@ RUN apt-get update \
 COPY backend/requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY backend/ ./
+COPY --chown=sanket:sanket backend/ ./
 # main.py mounts this directory only if it exists, so local dev (where it does not) is
 # untouched and keeps using the Vite dev server.
-COPY --from=web /web/dist ./app/static
+COPY --chown=sanket:sanket --from=web /web/dist ./app/static
 
 # The trained model, the canonical parquet store and the metadata db are build inputs
 # rather than source: they are regenerated every cycle and would otherwise be a 17 MB
@@ -63,18 +65,48 @@ COPY --from=web /web/dist ./app/static
 # into the running container.
 ENV DATA_ASSET_URL="https://github.com/Bhushan2318/sih-main/releases/download/data-latest/sanket-data.tar.gz"
 
+# Validate every downloaded release archive before extraction.  The validator is copied
+# into the image as well as used by CI, so the runtime path has the same link/path checks.
+COPY ci/validate_release_archive.py /usr/local/bin/validate-release-archive
+
 # A build-time copy as a genuine fallback, so a GitHub outage at boot degrades the site
 # to stale data rather than to no data. This layer IS cached and so may be old - that is
 # fine for a fallback, and the entrypoint overwrites it with the current artifact on every
-# start. Never fatal: an image that will not build is worse than one serving last week's
-# cycle, and the app reports having no model honestly if both fetches fail.
-RUN curl -fsSL --retry 3 --retry-delay 2 -o /tmp/data.tar.gz "$DATA_ASSET_URL" \
-      && tar -xzf /tmp/data.tar.gz -C /app && rm /tmp/data.tar.gz \
-      && echo "baked fallback data into the image" \
-    || echo "WARNING: no fallback data baked in; the entrypoint fetch will have to work"
+# start. A missing asset is still allowed (the image can be built before the first publish),
+# but a corrupt, incomplete, or path-unsafe asset must fail the build instead of leaving a
+# partially extracted store behind.
+RUN set -eu; \
+    rm -f /tmp/data.tar.gz; \
+    if curl -fsSL --connect-timeout 15 --max-time 300 --retry 3 --retry-delay 2 \
+      -o /tmp/data.tar.gz "$DATA_ASSET_URL"; then \
+      python /usr/local/bin/validate-release-archive /tmp/data.tar.gz \
+        --allow-prefix data/ --allow-file metadata.db \
+        --require data/models/current.json \
+        --require-prefix data/canonical/ \
+        --require-prefix data/geo/ \
+        --require data/summary.json \
+        --require metadata.db; \
+      rm -rf /app/data/canonical /app/data/models /app/data/geo /app/data/analysis \
+        /app/data/summary.json /app/metadata.db; \
+      tar --extract --gzip --file /tmp/data.tar.gz --directory /app \
+        --no-same-owner --no-same-permissions; \
+      test -d /app/data/canonical; \
+      test -d /app/data/models; \
+      test -f /app/data/models/current.json; \
+      test -f /app/data/summary.json; \
+      test -f /app/metadata.db; \
+      rm -f /tmp/data.tar.gz; \
+      echo "baked fallback data into the image"; \
+    else \
+      rm -f /tmp/data.tar.gz; \
+      echo "WARNING: no fallback data baked in; the entrypoint fetch will have to work"; \
+    fi
 
 COPY docker-entrypoint.sh /usr/local/bin/
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh \
+ && chown -R sanket:sanket /app
+
+USER sanket
 
 EXPOSE 8000
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]

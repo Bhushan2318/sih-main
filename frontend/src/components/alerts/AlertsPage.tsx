@@ -46,8 +46,8 @@ export function AlertsPage({ onSelect, filter, onFilter }: {
       {data && !data.model_trained ? <EmptyState title="No alerts yet" message={data.message} /> : null}
       {data?.model_trained && !alerts?.length ? (
         <EmptyState
-          title="No watch or bust regions"
-          message="Every region in the current cycle scored low."
+          title="No alerts in this cycle"
+          message={data.message ?? "No watch or bust regions were reported for this cycle."}
         />
       ) : null}
 

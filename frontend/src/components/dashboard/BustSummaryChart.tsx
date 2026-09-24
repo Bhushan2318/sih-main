@@ -1,21 +1,28 @@
 import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import type { RegionSummary } from "../../api/types";
+import { isScoredRegion, riskBandForRegion, type RiskCuts } from "../../lib/riskBands";
 import { CHART, bandLabel } from "../../theme";
 
-export function BustSummaryChart({ regions, onSelect }: {
+export function BustSummaryChart({ regions, onSelect, riskCuts }: {
   regions: RegionSummary[];
   onSelect: (regionId: string) => void;
+  riskCuts?: RiskCuts;
 }) {
   if (!regions.length) return null;
   const data = regions
-    .filter((r) => r.bust_probability != null)
-    .slice(0, 10)
-    .map((r) => ({
-      region: r.region_name ?? r.region_id,
-      regionId: r.region_id,
-      probability: Number(((r.bust_probability ?? 0) * 100).toFixed(1)),
-      band: r.risk_band ?? "low",
-    }));
+    .filter(isScoredRegion)
+    .flatMap((r) => {
+      const band = riskBandForRegion(r, riskCuts);
+      return band
+        ? [{
+            region: r.region_name ?? r.region_id,
+            regionId: r.region_id,
+            probability: Number((r.bust_probability * 100).toFixed(1)),
+            band,
+          }]
+        : [];
+    })
+    .slice(0, 10);
   if (!data.length) return null;
 
   return (

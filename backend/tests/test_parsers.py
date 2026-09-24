@@ -56,6 +56,14 @@ def test_missing_sentinels_become_nan():
     assert not (pt.df.astype(str) == "-999").any().any()
 
 
+def test_numeric_missing_sentinel_variants_become_nan(tmp_path):
+    path = tmp_path / "sentinels.csv"
+    path.write_text("value\n-999\n-999.00\n-9999.0\n  -999  \n1.5\n")
+    parsed = parse_upload(path, path.name)
+    assert parsed.df["value"].isna().sum() == 4
+    assert parsed.df["value"].dropna().astype(float).tolist() == [1.5]
+
+
 def test_xlsx_reads_first_sheet():
     path = find_sample("nasa_power_weather", ".xlsx") or find_sample(".xlsx")
     if path is None:

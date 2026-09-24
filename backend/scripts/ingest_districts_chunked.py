@@ -88,11 +88,46 @@ def cycles_in_store() -> set:
     return {pd.Timestamp(d) for d in parquet_store.distinct_forecast_init_dates()}
 
 
+EXPECTED_DISTRICTS = 666
+EXPECTED_VARIABLES = 8
+EXPECTED_MEMBERS = 5
+EXPECTED_LEADS = set(range(1, 11))
+
+
 def districts_for_cycle(cycle) -> int:
     from app.storage import parquet_store
     df = parquet_store.read_dataset(value_types=["forecast"], columns=["region_id"],
                                     init_dates=[pd.Timestamp(cycle).date()], dedupe=False)
     return df.region_id.nunique() if not df.empty else 0
+
+
+def cycle_has_expected_coverage(df: pd.DataFrame) -> bool:
+    """A cycle is complete only when its canonical dimensions have the expected shape.
+
+    A district count above 600 was previously treated as complete. That allowed a cycle
+    with missing districts, variables, members, or lead days to be skipped forever on a
+    resume. Keep the inexpensive dimension checks here; detailed value validation belongs
+    to ingestion and model-quality gates.
+    """
+    if df.empty:
+        return False
+    return (
+        df["region_id"].dropna().nunique() == EXPECTED_DISTRICTS
+        and df["variable"].dropna().nunique() >= EXPECTED_VARIABLES
+        and df["ensemble_member_id"].dropna().nunique() >= EXPECTED_MEMBERS
+        and set(pd.to_numeric(df["lead_time_days"], errors="coerce").dropna().astype(int)) >= EXPECTED_LEADS
+    )
+
+
+def cycle_is_complete(cycle) -> bool:
+    from app.storage import parquet_store
+    df = parquet_store.read_dataset(
+        value_types=["forecast"],
+        columns=["region_id", "variable", "ensemble_member_id", "lead_time_days"],
+        init_dates=[pd.Timestamp(cycle).date()],
+        dedupe=False,
+    )
+    return cycle_has_expected_coverage(df)
 
 
 def main() -> int:
@@ -142,7 +177,7 @@ def main() -> int:
     # 36 is NOT - it must be re-ingested to pick up the other 630.
     todo = []
     for c in all_cycles:
-        if c in have and districts_for_cycle(c) > 600:
+        if c in have and cycle_is_complete(c):
             continue
         todo.append(c)
     print(f"cycles selected : {len(all_cycles)}   already complete: "

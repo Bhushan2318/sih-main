@@ -117,7 +117,7 @@ export function ModelPage() {
                 </dl>
                 <dl className="metrics">
                   <div className="metrics__wide">
-                    <dt>Valid-date range on this server</dt>
+                    <dt>Serving data valid-date range</dt>
                     <dd className="mono small">
                       {vol.valid_date_min ?? "—"} → {vol.valid_date_max ?? "—"}
                     </dd>
@@ -126,10 +126,11 @@ export function ModelPage() {
                 {vol.unavailable_reason ? (
                   <p className="notice">{vol.unavailable_reason}</p>
                 ) : null}
+                {/* TEMPORARY wording clarification only; revisit after the full archive model retrain. */}
                 <p className="muted small">
-                  The serving copy carries the cycles needed to score today and to replay
-                  recent ones — not the full training archive, which lives where the model
-                  is trained.
+                  This is the date range carried by the serving store for scoring and replay,
+                  not the model's full training archive. The serving copy only needs the
+                  cycles required to score today and replay recent ones.
                   {td.first_train_date ? (
                     <> The model itself was trained on data going back to{" "}
                       <b>{String(td.first_train_date).slice(0, 10)}</b>; this range is only

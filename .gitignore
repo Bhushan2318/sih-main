@@ -48,6 +48,7 @@ backend/app/static/
 
 # Session handoff notes: internal strategy, kept out of the public repo.
 HANDOFF.md
+HANDOFF_*.md
 
 # Generated beside the canonical store by the packaging step.
 backend/data/summary.json
@@ -83,7 +84,19 @@ backend/data/samples/_era5_cells/
 
 # Local run-orchestration scratch (machine-specific paths, not shared)
 backend/data/_*.sh
+backend/data/_*.py
 backend/data/_resolution_fixed
+backend/data/*.log
+backend/data/*.nc
+backend/*.nc
+backend/data/overnight*.json
+backend/data/overnight*.log
+backend/data/cds_prefetch_*.log
+backend/data/job_*.log
+backend/data/train_*_console.log
+backend/data/samples/.decode_*.grib2
+backend/data/samples/*.grib2
+backend/data/samples/*.nc
 
 # Pooled-training external-memory cache: one full year's paired frame per file,
 # multiple GB each, rebuilt by app.ml.pooled_training.cache_year from the canonical

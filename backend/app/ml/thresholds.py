@@ -51,8 +51,9 @@ def compute_error_thresholds(
     event_error: pd.DataFrame, percentile: float = DEFAULT_THRESHOLD_PCT
 ) -> dict:
     out = {}
-    for var, g in event_error.groupby("variable"):
-        vals = g["abs_error"].dropna().to_numpy()
+    for var, g in event_error.groupby("variable", observed=True):
+        vals = pd.to_numeric(g["abs_error"], errors="coerce").to_numpy(dtype=float)
+        vals = vals[np.isfinite(vals)]
         if vals.size:
             out[var] = float(np.percentile(vals, percentile))
     return out
@@ -60,8 +61,9 @@ def compute_error_thresholds(
 
 def compute_member_p90(member_error: pd.DataFrame) -> dict:
     out = {}
-    for var, g in member_error.groupby("variable"):
-        vals = g["abs_error"].dropna().to_numpy()
+    for var, g in member_error.groupby("variable", observed=True):
+        vals = pd.to_numeric(g["abs_error"], errors="coerce").to_numpy(dtype=float)
+        vals = vals[np.isfinite(vals)]
         if vals.size:
             out[var] = float(np.percentile(vals, 90))
     return out
@@ -69,7 +71,7 @@ def compute_member_p90(member_error: pd.DataFrame) -> dict:
 
 def compute_risk_bands(proba: np.ndarray, cuts: tuple = DEFAULT_RISK_CUTS) -> dict:
     p = np.asarray(proba, dtype=float)
-    p = p[~np.isnan(p)]
+    p = p[np.isfinite(p) & (p >= 0.0) & (p <= 1.0)]
     if p.size < 20 or np.allclose(p, p[0]):
         return {"medium": 0.33, "high": 0.66}
     med = float(np.quantile(p, cuts[0]))

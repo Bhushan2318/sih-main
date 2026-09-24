@@ -120,11 +120,17 @@ jobs:
 
       - name: Fetch month
         working-directory: backend
+        env:
+          # Dispatch values are environment data, not shell source.  Keep the command
+          # arguments quoted so a value is passed literally to the fetch script.
+          FETCH_YEAR: ${{ github.event.inputs.year }}
+          FETCH_STRIDE: ${{ github.event.inputs.stride }}
+          FETCH_MONTH: ${{ matrix.month }}
         run: |
           python -m scripts.fetch_gefs_reforecast_sample \
-            --years '${{ github.event.inputs.year }}' \
-            --stride '${{ github.event.inputs.stride }}' \
-            --months '${{ matrix.month }}' \
+            --years "$FETCH_YEAR" \
+            --stride "$FETCH_STRIDE" \
+            --months "$FETCH_MONTH" \
             --resume
 
       - name: What arrived

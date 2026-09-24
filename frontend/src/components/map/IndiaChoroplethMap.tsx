@@ -12,6 +12,13 @@ import topoData from "../../assets/geo/india_districts.topojson?url";
 import claimedTerritoryUrl from "../../assets/geo/claimed_territory.geojson?url";
 import type { RegionSummary, RiskBand } from "../../api/types";
 import { bandLabel } from "../../theme";
+import {
+  inferRiskCuts,
+  isScoredRegion,
+  riskBandForProbability,
+  riskBandForRegion,
+  type RiskCuts,
+} from "../../lib/riskBands";
 
 const WIDTH = 620;
 const HEIGHT = 680;
@@ -33,35 +40,8 @@ function districtLabel(p: DistrictProps): string {
     : `${p.region_name}, ${p.state_name}`;
 }
 
-/**
- * Band edges, recovered from the rows the API already sent.
- *
- * Every district arrives with both a probability and a band, so the cuts can be read off
- * the pairs instead of parsed out of the prose in `risk_band_definitions` or duplicated
- * as constants that would drift the next time the model retrains.
- */
-function deriveCuts(regions: RegionSummary[]): { medium: number; high: number } {
-  const byBand: Record<RiskBand, number[]> = { low: [], medium: [], high: [] };
-  regions.forEach((r) => {
-    if (r.risk_band && r.bust_probability != null) byBand[r.risk_band].push(r.bust_probability);
-  });
-  const edge = (below: number[], above: number[], fallback: number) => {
-    const lo = below.length ? Math.max(...below) : null;
-    const hi = above.length ? Math.min(...above) : null;
-    if (lo != null && hi != null) return (lo + hi) / 2;
-    return hi ?? lo ?? fallback;
-  };
-  return {
-    medium: edge(byBand.low, byBand.medium, 0.37),
-    high: edge(byBand.medium, byBand.high, 0.58),
-  };
-}
-
-function bandFor(p: number | null, cuts: { medium: number; high: number }): RiskBand | null {
-  if (p == null) return null;
-  if (p >= cuts.high) return "high";
-  if (p >= cuts.medium) return "medium";
-  return "low";
+function bandFor(p: number | null, cuts?: RiskCuts | null) {
+  return riskBandForProbability(p, cuts);
 }
 
 export function IndiaChoroplethMap({
@@ -69,11 +49,13 @@ export function IndiaChoroplethMap({
   selectedRegionId,
   onSelect,
   topology,
+  riskCuts,
 }: {
   regions: RegionSummary[];
   selectedRegionId: string | null;
   onSelect: (regionId: string) => void;
   topology: Topology | null;
+  riskCuts?: RiskCuts;
 }) {
   const [hover, setHover] = useState<{ x: number; y: number; title: string; body: string[] } | null>(null);
   const [query, setQuery] = useState("");
@@ -105,7 +87,10 @@ export function IndiaChoroplethMap({
     return m;
   }, [regions]);
 
-  const cuts = useMemo(() => deriveCuts(regions), [regions]);
+  const cuts = useMemo(
+    () => riskCuts ?? inferRiskCuts(regions),
+    [riskCuts, regions],
+  );
 
   // Districts, and the state outlines built by merging them. Merging uses the topology's
   // shared arcs, so a state boundary is exactly its districts' outer edge - no second
@@ -137,24 +122,41 @@ export function IndiaChoroplethMap({
 
   // One district-level summary per state, so a state can be coloured by its districts.
   const stateRollup = useMemo(() => {
-    const acc = new Map<string, { probs: number[]; worst: RegionSummary | null }>();
+    const acc = new Map<string, {
+      probs: number[];
+      worst: RegionSummary | null;
+      bands: RiskBand[];
+    }>();
     districts.forEach((f) => {
       const r = byRegionId.get(f.properties.region_id);
-      if (!r || r.bust_probability == null) return;
-      const e = acc.get(f.properties.state_id) ?? { probs: [], worst: null };
-      e.probs.push(r.bust_probability);
-      if (!e.worst || (e.worst.bust_probability ?? 0) < r.bust_probability) e.worst = r;
+      if (!r || !isScoredRegion(r)) return;
+      const e = acc.get(f.properties.state_id) ?? { probs: [], worst: null, bands: [] };
+      e.probs.push(r.bust_probability as number);
+      const band = riskBandForRegion(r, cuts);
+      if (band) e.bands.push(band);
+      if (!e.worst || (e.worst.bust_probability ?? 0) < (r.bust_probability as number)) e.worst = r;
       acc.set(f.properties.state_id, e);
     });
-    const out = new Map<string, { value: number; worst: RegionSummary | null; n: number }>();
+    const out = new Map<string, {
+      value: number;
+      worst: RegionSummary | null;
+      n: number;
+      band: RiskBand | null;
+    }>();
     acc.forEach((e, k) => {
       const value = aggregation === "worst"
         ? Math.max(...e.probs)
         : e.probs.reduce((a, b) => a + b, 0) / e.probs.length;
-      out.set(k, { value, worst: e.worst, n: e.probs.length });
+      const sameBand = e.bands.length > 0 && e.bands.every((band) => band === e.bands[0])
+        ? e.bands[0]
+        : null;
+      const band = aggregation === "worst" && e.worst
+        ? riskBandForRegion(e.worst, cuts)
+        : bandFor(value, cuts) ?? sameBand;
+      out.set(k, { value, worst: e.worst, n: e.probs.length, band });
     });
     return out;
-  }, [districts, byRegionId, aggregation]);
+  }, [districts, byRegionId, aggregation, cuts]);
 
   // The API keys regions by whatever the canonical store holds. Until the archive is
   // re-fetched at district resolution it holds states, which match no district id here -
@@ -285,7 +287,7 @@ export function IndiaChoroplethMap({
           {!activeState && claimedTerritory ? (
             <path
               className={`region region--claimed region--${
-                bandFor(stateRollup.get("IN-JK")?.value ?? null, cuts) ?? "nodata"}`}
+                stateRollup.get("IN-JK")?.band ?? "nodata"}`}
               d={pathFor(claimedTerritory.geometry)}
               aria-label="Claimed territory, not scored: no district-level forecast data"
               // Hoverable but not clickable: there is nothing to drill into, and the
@@ -311,7 +313,7 @@ export function IndiaChoroplethMap({
           {!activeState
             ? states.map((f) => {
                 const roll = stateRollup.get(f.properties.state_id);
-                const band = bandFor(roll?.value ?? null, cuts);
+                const band = roll?.band ?? null;
                 return (
                   <path
                     key={f.properties.state_id}
@@ -350,7 +352,8 @@ export function IndiaChoroplethMap({
             : shown.map((f) => {
                 const p = f.properties;
                 const region = byRegionId.get(p.region_id);
-                const band = region?.risk_band ?? null;
+                const scored = region ? isScoredRegion(region) : false;
+                 const band = scored && region ? riskBandForRegion(region, cuts) : null;
                 return (
                   <path
                     key={p.region_id}
@@ -360,14 +363,14 @@ export function IndiaChoroplethMap({
                       band ? `region--${band}` : "region--nodata",
                       p.region_id === selectedRegionId ? "region--selected" : "",
                     ].join(" ")}
-                    tabIndex={region ? 0 : -1}
-                    role={region ? "button" : undefined}
+                    tabIndex={scored ? 0 : -1}
+                    role={scored ? "button" : undefined}
                     aria-label={`${districtLabel(p)}${band ? `, ${bandLabel(band)} risk` : ", no data"}`}
-                    onClick={() => onSelect(p.region_id)}
+                    onClick={() => { if (scored) onSelect(p.region_id); }}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" || e.key === " ") {
                         e.preventDefault();
-                        onSelect(p.region_id);
+                        if (scored) onSelect(p.region_id);
                       }
                     }}
                     onMouseMove={(e) => {
@@ -376,9 +379,9 @@ export function IndiaChoroplethMap({
                         x: e.clientX - rect.left,
                         y: e.clientY - rect.top,
                         title: districtLabel(p),
-                        body: region
+                        body: scored && region
                           ? [
-                              `Bust probability: ${((region.bust_probability ?? 0) * 100).toFixed(1)}% (${bandLabel(region.risk_band)})`,
+                              `Bust probability: ${((region.bust_probability ?? 0) * 100).toFixed(1)}% (${bandLabel(band)})`,
                               region.dominant_variable ? `Driver: ${region.dominant_variable}` : "",
                               region.confidence != null ? `Mean confidence: ${(region.confidence * 100).toFixed(0)}%` : "",
                             ].filter(Boolean)

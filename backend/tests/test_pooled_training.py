@@ -44,11 +44,11 @@ def _thin_synthetic_year(n=200, seed=0, year=2017, region_ids=("r1", "r2", "r3")
     lead = rng.integers(1, 11, n)
     init = pd.Timestamp(f"{year}-01-01") + pd.to_timedelta(rng.integers(0, 300, n), unit="D")
     valid = init + pd.to_timedelta(lead.astype(int) - 1, unit="D")
-    fc = rng.normal(20, 5, n)
-    obs = fc + rng.normal(0, 3, n)
+    fc = np.abs(rng.normal(20, 5, n))
+    obs = np.abs(fc + rng.normal(0, 3, n))
     return pd.DataFrame({
         "region_id": region, "season": season, "variable": variable,
-        "init_date": init, "valid_date": valid, "lead_time_days": lead,
+        "cycle_hour": 0, "init_date": init, "valid_date": valid, "lead_time_days": lead,
         "forecast_value": fc, "observed_value": obs,
         "abs_error": np.abs(fc - obs),
     })
@@ -128,7 +128,8 @@ def _synthetic_regressor_frame(n, seed, feature_cols, year=2017):
     df["variable"] = "temperature_c"
     df["init_date"] = pd.Timestamp(f"{year}-01-01") + pd.to_timedelta(rng.integers(0, 30, n), unit="D")
     # A real, learnable signal - not noise - so a fit that ignores the data is detectable.
-    df["abs_error"] = 2.0 * df[feature_cols[0]] + rng.normal(0, 0.1, n)
+    df["abs_error"] = np.abs(2.0 * df[feature_cols[0]] + rng.normal(0, 0.1, n))
+    df["observed_value"] = df["forecast_value"] + df["abs_error"]
     return df
 
 
@@ -165,6 +166,20 @@ def test_year_data_iter_trains_a_model_close_to_an_in_memory_fit(tmp_path):
     assert np.corrcoef(pooled_pred, inmem_pred)[0, 1] > 0.9
 
 
+def test_year_data_iter_quarantines_implausible_cached_observations(tmp_path):
+    feature_cols = ["lead_time_days", "forecast_value", "region_id", "season"]
+    frame = _synthetic_regressor_frame(100, seed=12, feature_cols=feature_cols, year=2000)
+    frame.loc[frame.index[0], "observed_value"] = 200.0  # outside temperature_c range
+    path = tmp_path / "paired_2000.parquet"
+    frame.to_parquet(path, index=False)
+
+    it = pt._YearDataIter({2000: path}, [2000], "temperature_c",
+                          set(frame["init_date"]), feature_cols, {}, tmp_path)
+    seen = []
+    it.next(lambda data, label: seen.append(len(label)))
+    assert seen == [len(frame) - 1]
+
+
 def test_booster_to_sklearn_roundtrip_matches_the_source_booster(tmp_path):
     X = pd.DataFrame({"a": np.arange(50, dtype=float)})
     y = X["a"].to_numpy() * 3.0
@@ -178,12 +193,12 @@ def test_booster_to_sklearn_roundtrip_matches_the_source_booster(tmp_path):
     np.testing.assert_allclose(got, want, rtol=1e-5)
 
 
-def test_feature_columns_for_includes_the_globally_attached_hbf_feature(tmp_path):
+def test_feature_columns_excludes_label_derived_hbf_feature(tmp_path):
     df = pd.DataFrame({"region_id": ["r1"], "season": ["winter"], "lead_time_days": [1]})
     df.to_parquet(tmp_path / "paired_2000.parquet", index=False)
     cached = {2000: tmp_path / "paired_2000.parquet"}
     cols = pt._feature_columns_for(cached, [2000])
-    assert "historical_bust_frequency_region_season" in cols
+    assert "historical_bust_frequency_region_season" not in cols
 
 
 # ------------------------------------------------------------- end-to-end orchestration
@@ -426,13 +441,14 @@ def test_pooled_stats_matches_the_frame_building_implementation(tmp_path):
     for i, year in enumerate((2000, 2001)):
         n = 400
         df = pd.DataFrame({
+            "cycle_hour": 0,
             "init_date": rng.choice(cycles, n),
             "region_id": pd.Categorical(rng.choice([f"IND.{k}" for k in range(5)], n)),
             "season": pd.Categorical(rng.choice(["DJF", "JJAS"], n)),
             "variable": pd.Categorical(rng.choice(["temperature_c", "rainfall_mm"], n)),
-            "abs_error": np.where(rng.random(n) < 0.1, np.nan, rng.gamma(2, 2, n)),
-            "forecast_value": rng.normal(size=n),
-            "observed_value": rng.normal(size=n),
+            "abs_error": rng.gamma(2, 2, n),
+            "forecast_value": np.abs(rng.normal(size=n)),
+            "observed_value": np.abs(rng.normal(size=n)),
             "lead_time_days": rng.integers(1, 11, n),
             "valid_date": rng.choice(cycles, n),
         })
@@ -464,6 +480,7 @@ def test_val_frame_worker_spills_by_variable_and_parent_reads_one(tmp_path):
     n = 240
     cycles = pd.to_datetime(["2016-01-01", "2016-01-02", "2016-01-03"])
     df = pd.DataFrame({
+        "cycle_hour": 0,
         "init_date": rng.choice(cycles, n),
         "valid_date": rng.choice(cycles, n),
         "lead_time_days": rng.integers(1, 11, n),
@@ -471,8 +488,8 @@ def test_val_frame_worker_spills_by_variable_and_parent_reads_one(tmp_path):
         "season": pd.Categorical(rng.choice(["DJF", "JJAS"], n)),
         "variable": pd.Categorical(rng.choice(["temperature_c", "rainfall_mm"], n)),
         "abs_error": rng.gamma(2, 2, n),
-        "forecast_value": rng.normal(size=n),
-        "observed_value": rng.normal(size=n),
+        "forecast_value": np.abs(rng.normal(size=n)),
+        "observed_value": np.abs(rng.normal(size=n)),
     })
     path = tmp_path / "paired_2016.parquet"
     df.to_parquet(path, index=False)

@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 import xgboost as xgb
 
+from app import contracts
 from app.features import engineering as fe
 from app.features import pivot as pv
 from app.features.history import forecast_history
@@ -45,6 +46,7 @@ class ScoredCycle:
     events: pd.DataFrame
     per_variable: pd.DataFrame
     n_rows_scored: int
+    cycle_hour: int = 0
 
 
 _lock = threading.Lock()
@@ -128,9 +130,38 @@ _MAX_LEAD_DAYS = 10
 _OBS_PAD_DAYS = 3
 
 _SCORING_COLUMNS = [
-    "region_id", "variable", "valid_date", "value", "value_type",
+    "region_id", "cycle_hour", "variable", "valid_date", "value", "value_type",
     "init_date", "lead_time_days", "ensemble_member_id", "verification_status",
 ]
+
+
+def _select_target_cycle(init_date: "Optional[pd.Timestamp | str]") -> tuple[pd.Timestamp, int] | None:
+    """Choose one exact forecast cycle for a date-oriented API request.
+
+    A bare date means the newest cycle published on that date. An explicit timestamp
+    selects that timestamp's hour, preserving the ability to replay 00/06/12/18Z
+    independently without changing the public date-based response contract.
+    """
+    cycles = parquet_store.distinct_forecast_cycles()
+    if not cycles:
+        return None
+    if init_date is None:
+        day, hour = cycles[-1]
+        return pd.Timestamp(day), int(hour)
+
+    raw = str(init_date)
+    parsed = pd.Timestamp(init_date)
+    day = parsed.date()
+    candidates = [(d, int(h)) for d, h in cycles if d == day]
+    if not candidates:
+        return None
+    explicit_timestamp = ("T" in raw or " " in raw) and len(raw) > 10
+    if explicit_timestamp:
+        candidates = [x for x in candidates if x[1] == parsed.hour]
+    if not candidates:
+        return None
+    day, hour = candidates[-1]
+    return pd.Timestamp(day), int(hour)
 
 
 def score_cycle(
@@ -142,22 +173,21 @@ def score_cycle(
         return None
 
     fp = parquet_store.store_fingerprint()
-    if init_date is None:
-        latest = parquet_store.latest_forecast_init_date()
-        if latest is None:
-            return None
-        target_init = pd.Timestamp(latest).normalize()
-    else:
-        target_init = pd.Timestamp(init_date).normalize()
+    selected = _select_target_cycle(init_date)
+    if selected is None:
+        return None
+    target_init, target_hour = selected
+    target_init = target_init.normalize()
 
-    cache_key = (state.run_id, str(target_init), fp)
+    cache_key = (state.run_id, str(target_init), int(target_hour), fp)
     with _lock:
         hit = _score_cache.get(cache_key)
         if hit is not None:
             return hit
 
     fc_rows = parquet_store.read_dataset(
-        value_types=["forecast"], init_dates=[target_init.date()], columns=_SCORING_COLUMNS,
+        value_types=["forecast"], init_dates=[target_init.date()],
+        cycle_hours=[target_hour], columns=_SCORING_COLUMNS,
     )
     if fc_rows.empty:
         return None
@@ -172,7 +202,11 @@ def score_cycle(
     del fc_rows, observed
     # Earlier cycles for the jumpiness features, read one at a time and reduced to ensemble
     # means as they are read. Cycle dates come from Parquet footers, never a column scan.
-    history = forecast_history(target_init, parquet_store.distinct_forecast_init_dates())
+    history = forecast_history(
+        target_init,
+        parquet_store.distinct_forecast_cycles(),
+        first_cycle_hour=target_hour,
+    )
 
     frame = fe.build_training_frame(
         subset,
@@ -217,6 +251,7 @@ def score_cycle(
         events=events,
         per_variable=per_variable,
         n_rows_scored=len(scored),
+        cycle_hour=int(target_hour),
     )
     with _lock:
         if len(_score_cache) >= _SCORE_CACHE_MAX:
@@ -226,6 +261,12 @@ def score_cycle(
 
 
 _FALLBACK_CATEGORICAL = {"state_id", "season"}
+_RETIRED_FEATURES = {
+    "forecast_error_lag": "it used realized error from a later valid date and was never causal",
+    "historical_bust_frequency_region_season": (
+        "it was computed from realized bust labels and is not available causally at serving"
+    ),
+}
 
 
 def categorical_features(model) -> set:
@@ -258,6 +299,16 @@ def categorical_features(model) -> set:
 
 
 def _prep(df: pd.DataFrame, cols: list, categorical: "set | None" = None) -> pd.DataFrame:
+    # Backward compatibility: retired features in old model artifacts are filled with NaN
+    # rather than rejecting the model. This allows old artifacts to score with the
+    # current code while new artifacts simply don't include these features.
+    retired = sorted(set(cols) & contracts.RETIRED_FEATURES)
+    if retired:
+        import logging
+        logging.getLogger(__name__).warning(
+            "Model artifact contains retired features %s; filling with NaN for backward compatibility",
+            retired,
+        )
     categorical = set(_FALLBACK_CATEGORICAL if categorical is None else categorical)
     X = pd.DataFrame(index=df.index)
     for c in cols:
@@ -313,17 +364,20 @@ def _dominant_variable(events: pd.DataFrame, bust_threshold: dict) -> list:
 
 
 def _per_variable_table(scored: pd.DataFrame, state: ModelState) -> pd.DataFrame:
+    keys = ["region_id", "lead_time_days", "variable", "valid_date"]
+    values = fe.event_value_means(scored)
+    # The serving frame has one init date, so its event keys are the same modulo init_date.
+    values = values.drop(columns=["init_date"])
     g = (
-        scored.groupby(["region_id", "lead_time_days", "variable", "valid_date"],
-                       observed=True)
+        scored.groupby(keys, observed=True)
         .agg(
-            predicted_value=("forecast_value", "mean"),
-            observed_value=("observed_value", "mean"),
             predicted_error=("pred_err", "mean"),
             ensemble_spread=("ensemble_spread", "mean"),
             ensemble_member_count=("ensemble_member_count", "max"),
         )
         .reset_index()
+        .merge(values, on=keys, how="left", validate="one_to_one")
+        .rename(columns={"fc_mean": "predicted_value", "obs": "observed_value"})
     )
     p90 = g["variable"].map(state.thresholds.p90_error)
     g["confidence"] = g["predicted_error"].div(p90).rsub(1.0).clip(0.0, 1.0)
