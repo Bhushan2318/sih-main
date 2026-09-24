@@ -18,7 +18,10 @@ export function RegionDetailPanel({
   riskCuts?: { medium: number; high: number };
 }) {
   const { data, isLoading, error, failureCount } = useRegionDetail(regionId);
-  const [activeVariable, setActiveVariable] = useState<string | null>(null);
+  // Keyed by region so a newly opened district starts on its own leading driver, not on
+  // whichever tab the previous district was left on.
+  const [picked, setPicked] = useState<{ region: string; variable: string } | null>(null);
+  const activeVariable = picked && picked.region === regionId ? picked.variable : null;
 
   if (!regionId) {
     return (
@@ -41,8 +44,10 @@ export function RegionDetailPanel({
 
   const available = data.variables.filter((v) => v.available);
   const unavailable = data.variables.filter((v) => !v.available);
-  const current = available.find((v) => v.variable === activeVariable) ?? available[0];
   const worst = [...data.bust_probability_curve].sort((a, b) => b.bust_probability - a.bust_probability)[0];
+  const driver = available.find((v) => v.variable === worst?.dominant_variable) ?? null;
+  const current = available.find((v) => v.variable === activeVariable) ?? driver ?? available[0];
+  const showingDriver = driver != null && current?.variable === driver.variable;
 
   return (
     <aside className="panel">
@@ -81,12 +86,17 @@ export function RegionDetailPanel({
       ) : null}
 
       <section className="panel__section">
-        <h3>Bust probability by lead day</h3>
-        <BustProbabilityCurve points={data.bust_probability_curve} cuts={riskCuts} />
-      </section>
-
-      <section className="panel__section">
-        <h3>Forecast vs what actually happened</h3>
+        <h3>
+          {showingDriver
+            ? <>Leading driver: {variableLabel(current.variable).toLowerCase()}</>
+            : "Forecast vs what actually happened"}
+        </h3>
+        {showingDriver ? (
+          <p className="muted small">
+            The variable pushing the peak bust risk at lead day {worst.lead_time_days}. Its
+            forecast against what was actually observed:
+          </p>
+        ) : null}
         {available.length ? (
           <>
             <div className="tabs" role="tablist">
@@ -96,10 +106,11 @@ export function RegionDetailPanel({
                   role="tab"
                   aria-selected={current?.variable === v.variable}
                   className={current?.variable === v.variable ? "tab tab--active" : "tab"}
-                  onClick={() => setActiveVariable(v.variable)}
+                  onClick={() => setPicked({ region: regionId, variable: v.variable })}
                   title={v.variable}
                 >
                   {variableLabel(v.variable)}
+                  {driver?.variable === v.variable ? <span className="tab__chip">driver</span> : null}
                 </button>
               ))}
             </div>
@@ -136,8 +147,13 @@ export function RegionDetailPanel({
       </section>
 
       <section className="panel__section">
-        <h3>Why this region — what drove the prediction</h3>
+        <h3>What drove this prediction (SHAP)</h3>
         <ShapFactorsList factors={data.top_factors} method={data.top_factors_method} />
+      </section>
+
+      <section className="panel__section">
+        <h3>Bust probability by lead day</h3>
+        <BustProbabilityCurve points={data.bust_probability_curve} cuts={riskCuts} />
       </section>
 
       <section className="panel__section">

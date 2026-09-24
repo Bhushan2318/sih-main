@@ -3,6 +3,7 @@ import {
   ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 import type { BustProbabilityPoint, RiskBand } from "../../api/types";
+import type { RiskCuts } from "../../lib/riskBands";
 import { CHART, bandLabel } from "../../theme";
 
 const BAND_COLOR: Record<RiskBand, string> = {
@@ -13,7 +14,7 @@ const BAND_COLOR: Record<RiskBand, string> = {
 
 export function BustProbabilityCurve({ points, cuts }: {
   points: BustProbabilityPoint[];
-  cuts?: { medium: number; high: number };
+  cuts?: RiskCuts;
 }) {
   if (!points.length) return <p className="muted">No bust-probability curve for this region.</p>;
   const data = points.map((p) => ({
