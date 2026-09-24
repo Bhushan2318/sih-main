@@ -22,7 +22,9 @@ export function ShapFactorsList({ factors, method }: { factors: TopFactor[]; met
       </ul>
       <p className="muted small">
         {method === "shap"
-          ? "How much each input pushed this prediction, averaged over the validation split (SHAP)."
+          ? "How strongly each input moved this district's predictions, averaged over the " +
+              "validation year (SHAP). A standing profile of the district, not a breakdown of " +
+              "today's forecast alone."
           : method === "feature_importance_fallback"
             ? "SHAP unavailable — showing the model's own feature-importance ranking instead, " +
               "which reflects what it relies on overall rather than for this region."
