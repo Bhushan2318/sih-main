@@ -21,7 +21,12 @@ _cycles_memo: "tuple[str, list[schemas.ReplayCycleSummary]] | None" = None
 
 
 def _cycle_summary(state, init) -> Optional[schemas.ReplayCycleSummary]:
-    sc = inference.score_cycle(state, init)
+    try:
+        sc = inference.score_cycle(state, init)
+    except inference.CycleNotPrecomputed:
+        # On the serving box a cycle CI skipped is left out of the list rather than offered
+        # and then refused.
+        return None
     if sc is None or sc.events.empty:
         return None
     ev = sc.events

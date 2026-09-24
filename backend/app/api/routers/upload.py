@@ -7,10 +7,22 @@ from sqlalchemy.orm import Session
 
 from app.api import schemas
 from app.api.deps import get_db
+from app.config import settings
 from app.ingestion.parsers import ParseError
 from app.services import upload_service
 
-router = APIRouter(prefix="/api/upload", tags=["upload"])
+def _require_writable_server() -> None:
+    if settings.serving_read_only:
+        raise HTTPException(
+            409,
+            "Uploads are disabled on this deployment. It serves a model trained elsewhere "
+            "and an upload would write into the store it serves from. Run the API locally "
+            "to try an upload.",
+        )
+
+
+router = APIRouter(prefix="/api/upload", tags=["upload"],
+                   dependencies=[Depends(_require_writable_server)])
 
 MAX_BYTES = 200 * 1024 * 1024
 
