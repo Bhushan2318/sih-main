@@ -1,5 +1,6 @@
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { RegionSummary } from "../../api/types";
+import { isScoredRegion, riskBandForRegion, type RiskCuts } from "../../lib/riskBands";
 
 /** How fast the ticker reads, in CSS pixels per second.
  *
@@ -16,13 +17,14 @@ function stateIdOf(regionId: string): string {
   return regionId.split("-").slice(0, 2).join("-");
 }
 
-export function RiskTicker({ regions, leadDay, onSelect, stateNames }: {
+export function RiskTicker({ regions, leadDay, onSelect, stateNames, riskCuts }: {
   regions: RegionSummary[];
   leadDay: number;
   onSelect: (regionId: string) => void;
   /** state_id -> state_name, from the map topology: the same table the choropleth
    * labels states with, so the ticker cannot drift from the map. */
   stateNames: Map<string, string>;
+  riskCuts?: RiskCuts;
 }) {
   const [paused, setPaused] = useState(false);
   const trackRef = useRef<HTMLDivElement>(null);
@@ -38,7 +40,7 @@ export function RiskTicker({ regions, leadDay, onSelect, stateNames }: {
   const items = useMemo(() => {
     const worst = new Map<string, RegionSummary>();
     for (const r of regions) {
-      if (r.bust_probability == null) continue;
+      if (!isScoredRegion(r)) continue;
       const sid = stateIdOf(r.region_id);
       const held = worst.get(sid);
       if (!held || (held.bust_probability as number) < r.bust_probability) worst.set(sid, r);
@@ -47,7 +49,7 @@ export function RiskTicker({ regions, leadDay, onSelect, stateNames }: {
       .map(([stateId, district]) => ({ stateId, district }))
       .sort((a, b) =>
         (b.district.bust_probability as number) - (a.district.bust_probability as number));
-  }, [regions]);
+  }, [regions, riskCuts]);
 
   // Measured rather than estimated from the item count: names vary in width, and the
   // keyframes move the track by -50%, so one loop is exactly half its scroll width.
@@ -73,7 +75,7 @@ export function RiskTicker({ regions, leadDay, onSelect, stateNames }: {
           tabIndex={hidden ? -1 : 0}
           title={`Worst district: ${district.region_name ?? district.region_id}`}
         >
-          <i className={`ticker__dot ticker__dot--${district.risk_band ?? "none"}`} aria-hidden="true" />
+          <i className={`ticker__dot ticker__dot--${riskBandForRegion(district, riskCuts) ?? "none"}`} aria-hidden="true" />
           <span className="ticker__name">{stateNames.get(stateId) ?? stateId}</span>
           <span className="ticker__value">
             {((district.bust_probability as number) * 100).toFixed(0)}%

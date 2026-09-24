@@ -1,6 +1,7 @@
 import {
   CartesianGrid, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
+import type { RiskCuts } from "../../lib/riskBands";
 import { CHART } from "../../theme";
 
 /** Recharts injects cx/cy/payload/key into a Line's `dot` render prop at draw time; its
@@ -20,7 +21,7 @@ export function ReplayProbabilityChart({
 }: {
   points: { lead: number; p: number | null; busted: boolean | null }[];
   currentLead: number;
-  cuts?: { medium?: number; high?: number };
+  cuts?: RiskCuts;
   variable?: string;
 }) {
   const any = points.some((d) => d.p != null);
