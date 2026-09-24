@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 import xgboost as xgb
 
+from app.config import settings
 from app.features import engineering as fe
 from app.features import pivot as pv
 from app.features.history import forecast_history
@@ -46,6 +47,18 @@ class ScoredCycle:
     events: pd.DataFrame
     per_variable: pd.DataFrame
     n_rows_scored: int
+
+
+class CycleNotPrecomputed(RuntimeError):
+    """A cycle with no CI-precomputed answer, requested on a box that must not score it."""
+
+    def __init__(self, init_date):
+        self.init_date = pd.Timestamp(init_date).date()
+        super().__init__(
+            f"Cycle {self.init_date} has no precomputed answer on this server, and scoring "
+            "it here would exceed the server's 512 MB memory limit. Choose one of the cycles "
+            "listed by /api/replay/cycles."
+        )
 
 
 _lock = threading.Lock()
@@ -216,6 +229,10 @@ def score_cycle(
         with _lock:
             _score_cache[cache_key] = ready
         return ready
+    # On the serving box the fall-through below is the 1,406 MB path, and Replay and the
+    # ensemble endpoint accept any date. Refuse, rather than score and be killed.
+    if settings.serving_read_only:
+        raise CycleNotPrecomputed(target_init)
 
     fc_rows = parquet_store.read_dataset(
         value_types=["forecast"], init_dates=[target_init.date()], columns=_SCORING_COLUMNS,
