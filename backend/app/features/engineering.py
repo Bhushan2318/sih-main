@@ -5,6 +5,7 @@ import functools
 import numpy as np
 import pandas as pd
 
+from app import contracts
 from app.config import settings
 from app.db.base import resolve_path
 from app.utils import india_districts as idist
@@ -209,6 +210,22 @@ def _add_concurrent_variable_forecasts(paired: pd.DataFrame) -> pd.DataFrame:
         if col in merged.columns:
             merged.loc[merged["variable"] == var, col] = np.nan
     return merged
+
+
+def drop_beyond_archive_leads(rows: pd.DataFrame) -> pd.DataFrame:
+    """Drop forecast rows for a (variable, lead day) the training archive does not hold.
+
+    Applied wherever forecast rows are read for features, so the live feed - which carries
+    wind and soil moisture to Day 10 - reaches the models in the same shape the reforecast
+    archive trained them on. Observed rows pass through untouched.
+    """
+    if rows.empty or "lead_time_days" not in rows.columns:
+        return rows
+    cap = rows["variable"].astype(str).map(contracts.ARCHIVE_MAX_LEAD_DAYS)
+    beyond = cap.notna() & (pd.to_numeric(rows["lead_time_days"], errors="coerce") > cap)
+    if "value_type" in rows.columns:
+        beyond &= rows["value_type"].astype(str) == "forecast"
+    return rows.loc[~beyond] if beyond.any() else rows
 
 
 def forecast_trajectories(fc: pd.DataFrame) -> pd.DataFrame:

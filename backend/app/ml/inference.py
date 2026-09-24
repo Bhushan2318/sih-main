@@ -237,6 +237,7 @@ def score_cycle(
     fc_rows = parquet_store.read_dataset(
         value_types=["forecast"], init_dates=[target_init.date()], columns=_SCORING_COLUMNS,
     )
+    fc_rows = fe.drop_beyond_archive_leads(fc_rows)
     if fc_rows.empty:
         return None
     observed = parquet_store.read_dataset(
