@@ -297,7 +297,12 @@ def _prior_cycle_mean(state, init: pd.Timestamp):
         return None, None, (
             f"nearest earlier cycle is {prev.date()}, too far back to compare"
         )
-    prior = inference.score_cycle(state, init_date=prev.date())
+    try:
+        prior = inference.score_cycle(state, init_date=prev.date())
+    except inference.CycleNotPrecomputed:
+        # Optional context for the hero, so it degrades to a note instead of refusing the
+        # whole answer: the cycle before the oldest Replay cycle is never precomputed.
+        return None, None, f"cycle {prev.date()} is not precomputed on this server"
     if prior is None or prior.events.empty:
         return None, None, f"cycle {prev.date()} could not be scored"
     return float(prior.events["bust_probability"].mean()), prev.date(), None

@@ -39,6 +39,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from app.config import settings
 from app.db.base import resolve_path
 
 DIR_NAME = "scored_cycles"
@@ -50,7 +51,7 @@ _META = "meta.json"
 def default_dir() -> Path:
     """Where the packaged artifacts live. A function, not a constant, so a test can point
     it somewhere else without reaching into module state."""
-    return Path(resolve_path("data")) / "analysis" / DIR_NAME
+    return Path(resolve_path(settings.data_dir)) / "analysis" / DIR_NAME
 
 
 def cycle_dir(base: Path, run_id: str, init_date) -> Path:
