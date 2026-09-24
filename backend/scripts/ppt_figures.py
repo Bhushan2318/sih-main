@@ -409,10 +409,17 @@ def to_markdown(d: dict) -> str:
         a("")
         spread = cs.get("ensemble_spread", float("nan"))
         if np.isfinite(spread) and spread == 0:
+            # Both scores are read from this run, never typed in (CLAUDE.md rule 2): the
+            # sentence used to carry one old run's two scores, typed in, into every deck.
+            spread_auc = next((b.get("roc_auc") for b in d["baselines"]
+                               if str(b.get("name", "")).lower() == "spread"), None)
+            scores = ""
+            if spread_auc is not None and d["headline"].get("roc_auc") is not None:
+                scores = (f", and part of why that baseline scores {_f(spread_auc)} ROC-AUC "
+                          f"while this model scores {_f(d['headline']['roc_auc'])}")
             a(f"The ensemble's spread on {cs['variable']} was **exactly zero** — all five "
               "members agreed, and all five were wrong. That is the case the spread "
-              "baseline cannot catch by construction, and it is why that baseline scores "
-              "0.508 ROC-AUC while this model scores 0.841.")
+              f"baseline cannot catch by construction{scores}.")
             a("")
         a("*Chosen by rule, not by eye: the highest-confidence correct warning whose actual "
           "error most exceeds its own threshold, on held-out data, excluding sites whose "

@@ -109,6 +109,9 @@ class VariableSeries(Schema):
     model_rmse: Optional[float] = None
     model_r2: Optional[float] = None
     metrics_split: Optional[str] = None
+    # Last lead day this variable is modelled for, when the training archive stops short
+    # of Day 10 (contracts.ARCHIVE_MAX_LEAD_DAYS); None means all ten days.
+    max_lead_day: Optional[int] = None
     points: list = Field(default_factory=list)
 
 

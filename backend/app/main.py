@@ -9,13 +9,14 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api.routers import alerts, ensemble, ingest, model_status, regions, replay, upload, ws
 from app.config import settings
 from app.db.base import init_db
 from app.ml import registry
+from app.ml.inference import CycleNotPrecomputed
 from app.realtime.broadcaster import manager
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -77,6 +78,13 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.exception_handler(CycleNotPrecomputed)
+async def _cycle_not_precomputed(_request, exc: CycleNotPrecomputed) -> JSONResponse:
+    # 409, not 404: the cycle exists, this server just will not score it. See
+    # settings.serving_read_only.
+    return JSONResponse(status_code=409, content={"detail": str(exc)})
+
 
 app.include_router(upload.router)
 app.include_router(regions.router)

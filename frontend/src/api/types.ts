@@ -95,6 +95,8 @@ export interface VariableSeries {
   model_rmse: number | null;
   model_r2: number | null;
   metrics_split: string | null;
+  /** Last lead day modelled, when the training archive stops short of Day 10. */
+  max_lead_day?: number | null;
   points: VariablePoint[];
 }
 

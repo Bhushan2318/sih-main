@@ -15,7 +15,7 @@ Smart India Hackathon 2026 · Problem Statement 26079 · NCMRWF, Ministry of Ear
 ![React](https://img.shields.io/badge/React_18-20232a?logo=react&logoColor=61dafb)
 ![TypeScript](https://img.shields.io/badge/TypeScript-3178c6?logo=typescript&logoColor=white)
 ![Parquet](https://img.shields.io/badge/Apache_Parquet-50ABF1?logo=apacheparquet&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-233_passing-00a882)
+![Tests](https://img.shields.io/badge/tests-pytest_%2B_vitest-00a882)
 ![Hosting](https://img.shields.io/badge/hosting_cost-%240-00a882)
 
 </div>
@@ -118,8 +118,12 @@ project exists to avoid; this README had exactly that problem, claiming ROC-AUC 
 a 17-cycle run long after the deployed model was trained on ten years.
 
 What is stable enough to state: the classifier is scored only on forecast cycles it never
-trained on, spanning two decades of the GEFSv12 reforecast archive, and it is compared
-against those baselines on identical rows rather than reported alone.
+trained on - the served model trains on 2000-2016 and is tested on all of 2017 - and it is
+compared against those baselines on identical rows rather than reported alone. Two
+findings from 2026-09-25 mean the current scores overstate skill until the next retrain:
+an input that used an observation from after issue time (`forecast_error_lag`), and
+rainfall truth for the 2016-2017 validation and test years taken from a one-day-late IMD
+file rather than the ERA5 used in training. Both are in `docs/known-issues.md`.
 
 > Regressor errors dropped ~17% on 2026-08-29 when a one-day forecast/observation
 > misalignment was found and fixed: lead day *k* was built from forecast hours
@@ -164,11 +168,14 @@ If PowerShell blocks the activate script with an execution-policy error, run onc
 
 Stated plainly, because a reader should hit these before drawing conclusions.
 
-- **Coverage is sampled, not continuous.** The reforecast archive is a handful of
-  initialisations per year, not a daily record, plus the live cycles since deployment. A
-  date range on its own would overstate it, so the site reports the cycle count beside it.
-- **City points, not regional coverage.** Region-level readings are indicative. IMD's 36
-  meteorological subdivisions are the right unit and are not what this uses.
+- **One held-out year.** The served model trains on daily reforecast cycles for 2000-2016
+  and is tested on 2017 only, one monsoon. 2018 and 2019 are in the archive, unused by the
+  model, and are the next evaluation.
+- **Most "busts" in some variables are steady bias.** For temperature, humidity and soil
+  moisture most large errors are districts that are off the same way every day, which
+  ordinary bias correction removes. The next retrain defines busts on bias-corrected error.
+- **Some variables stop early in the training archive** - 10 m wind at Day 5, soil moisture
+  at Day 3 - and are not scored beyond that on the live feed.
 - **5 of 31 GEFS ensemble members**, so spread-derived features are a noisy estimate of
   true ensemble spread. Widening it requires a retrain, not a config change.
 - **ERA5 precipitation is weak over India** relative to gauge-based gridded products, and

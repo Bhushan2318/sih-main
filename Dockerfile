@@ -33,6 +33,11 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1
 
+# This image is the serving box: refuse to score a cycle CI did not precompute (1,406 MB
+# peak on a box killed at 512) and refuse uploads into the served store. In the image
+# rather than render.yaml so it ships with the code that reads it. See app/config.py.
+ENV SERVING_READ_ONLY=true
+
 # curl for the release asset below; ca-certificates so HTTPS works at all
 RUN apt-get update \
  && apt-get install -y --no-install-recommends curl ca-certificates \

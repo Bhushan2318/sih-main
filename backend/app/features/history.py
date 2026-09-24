@@ -38,6 +38,7 @@ def forecast_history(first_init, store_inits: Sequence[date],
             value_types=["forecast"], columns=_READ_COLUMNS, init_dates=[init.date()],
             valid_date_min=first.date(), exclude_provisional=exclude_provisional,
         )
+        rows = fe.drop_beyond_archive_leads(rows)
         if not rows.empty:
             parts.append(fe.forecast_trajectories(rows))
         del rows

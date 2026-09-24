@@ -100,9 +100,12 @@ export function AboutPage({ onReplay }: { onReplay: () => void }) {
               {typeof td.cycles === "number" ? <> out of {td.cycles} in total</> : null}.
             </p>
             <p className="muted small">
-              Because a bust is defined against each variable’s <i>own</i> error percentile
-              rather than an absolute error, the label does not simply grow with lead time —
-              so this skill is not a rediscovery of “day 10 is worse than day 1”.
+              One caution, found in our own data and being fixed rather than hidden: for
+              temperature, humidity and soil moisture most large errors are the same
+              districts being off in the same direction every day — a steady bias that
+              ordinary bias correction already removes — rather than a forecast failing on
+              a particular day. The next model defines a bust on bias-corrected error, so a
+              warning means “today is unusual”, not “this district is always off”.
             </p>
 
             {bl.models?.length ? (
@@ -151,11 +154,13 @@ export function AboutPage({ onReplay }: { onReplay: () => void }) {
                 record of what the weather actually did.
               </li>
               <li>
-                <b>Leakage is tested, not asserted.</b> Bust thresholds are fitted on the
-                training split only; when the model is checked against itself, whole forecast
-                runs are kept together so it is never tested on a run it partly trained on; and
-                no observed day appears on both sides of the train/test split. Each is a test in
-                the suite, written so it cannot pass by accident.
+                <b>Leakage is tested for, and a leak we found is written down.</b> Bust
+                thresholds are fitted on the training split only; whole forecast runs are kept
+                together so the model is never tested on a run it partly trained on; and no
+                observed day appears on both sides of the train/test split — each a test in the
+                suite. A later audit still found one input that looked at an observation from
+                after the forecast was issued; it is documented in the project’s known issues
+                and removed in the next retrain, and scores are re-measured then.
               </li>
               <li>
                 <b>Even the “truth” we score against is uncertain.</b> Two leading global
@@ -170,9 +175,11 @@ export function AboutPage({ onReplay }: { onReplay: () => void }) {
             <header className="card__head"><h3>What it does not do</h3></header>
             <ul className="notes">
               <li>
-                Coverage is <b>sampled, not continuous</b> — an archive that re-runs the
-                forecast model on a handful of past dates each year, plus live runs since
-                deployment.
+                <b>A re-run archive, not the live model’s own history.</b> The model learns
+                from NOAA’s reforecast — the forecast model re-run once a day for past years
+                with 5 ensemble members — and some variables stop early there: 10 m wind at Day
+                5, soil moisture at Day 3. Those are not scored beyond that, even though the
+                live feed carries all ten days.
               </li>
               <li>
                 <b>One geography now, not two.</b> The live feed used to sample the nearest
@@ -267,8 +274,15 @@ export function AboutPage({ onReplay }: { onReplay: () => void }) {
               today. Public domain, via NOAA&apos;s Open Data bucket on AWS S3.
             </li>
             <li>
-              <b>Observations</b> — ERA5 reanalysis, read via the Open-Meteo Historical
-              Weather API. Copernicus Climate Change Service (C3S), licensed CC-BY 4.0.
+              <b>Observations</b> — ERA5 reanalysis from the Copernicus Climate Change Service
+              (C3S), licensed CC-BY 4.0: from the Climate Data Store for training, and via the
+              Open-Meteo Historical Weather API for recent days. Some training years also
+              carry IMD–NCMRWF merged satellite-gauge rainfall (India Meteorological
+              Department).
+            </li>
+            <li>
+              <b>Other inputs</b> — the MJO index is NOAA PSL’s OLR-based MJO Index (OMI);
+              district elevation is CGIAR-CSI SRTM 250 m, via the Open-Elevation API.
             </li>
             <li>
               <b>District boundaries</b> — GADM 4.1, India admin-2 (gadm.org). Two corrections

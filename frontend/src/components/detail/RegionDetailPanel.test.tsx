@@ -34,8 +34,8 @@ describe("RegionDetailPanel opens on the leading driver", () => {
 
     const headings = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent ?? "");
     const at = (re: RegExp) => headings.findIndex((t) => re.test(t));
-    expect(at(/Leading driver/)).toBeLessThan(at(/What drove this prediction/));
-    expect(at(/What drove this prediction/)).toBeLessThan(at(/Bust probability by lead day/));
+    expect(at(/Leading driver/)).toBeLessThan(at(/What the model relies on/));
+    expect(at(/What the model relies on/)).toBeLessThan(at(/Bust probability by lead day/));
   });
 
   it("a different district opens on its own driver, not the previous tab", () => {
@@ -60,5 +60,19 @@ describe("RegionDetailPanel opens on the leading driver", () => {
     const tab = within(screen.getByRole("tablist")).getByRole("tab", { selected: true });
     expect(tab).toHaveTextContent(variableLabel(peakDriver(current)!));
     expect(tab).toHaveTextContent("driver");
+  });
+  it("says when a variable stops short of Day 10 instead of silently ending", () => {
+    // The real Purba Medinipur response, with the field the API now adds set as the API
+    // sets it for soil moisture (contracts.ARCHIVE_MAX_LEAD_DAYS). Only that field differs.
+    const base = REAL_REGION_PURBAMEDINIPUR;
+    current = {
+      ...base,
+      variables: base.variables.map((v) =>
+        v.variable === "soil_moisture_pct" ? { ...v, max_lead_day: 3 } : v),
+    };
+    render(<RegionDetailPanel regionId={current.region_id} onClose={() => {}} />);
+    fireEvent.click(within(screen.getByRole("tablist"))
+      .getByRole("tab", { name: new RegExp(`^${variableLabel("soil_moisture_pct")}`) }));
+    expect(screen.getByText(/Modelled for Days 1–3 only/)).toBeInTheDocument();
   });
 });
