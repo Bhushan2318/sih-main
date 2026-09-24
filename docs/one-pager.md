@@ -36,20 +36,25 @@ time.** They are deliberately not repeated here: a number copied into a document
 correct until the next retrain and quietly wrong afterwards, which is the exact failure
 this project claims not to have. The About page also carries the baseline ladder —
 climatology, lead-day, ensemble-spread — scored on the same held-out rows, because
-"ROC-AUC 0.84" claims nothing without "against what?".
+a bare ROC-AUC claims nothing without "against what?".
 
 What is stable enough to write down is the shape of the evidence:
 
-- The model is scored only on **forecast cycles it never trained on**, spanning two
-  decades of the GEFS reforecast archive rather than a single season — twenty independent
-  monsoons, not one.
-- A lead-day-only baseline has **no skill** on this task, because a bust is defined
-  against each variable's own error percentile rather than an absolute error — so the
-  label does not simply grow with lead time. The measured lead/bust correlation is
-  published beside the table.
-- Training happens on CI with 16 GB; the site is served from a 512 MB instance that
-  cannot train. The two see different amounts of data on purpose, and the site reports
-  both separately rather than conflating them.
+- The model is scored only on **forecast cycles it never trained on**: it trains on daily
+  reforecast cycles for 2000–2016 across all 666 districts and is tested on all of 2017 —
+  one monsoon. 2018 and 2019 are in the archive and unused by the model; scoring them is
+  the next evaluation.
+- A lead-day-only baseline has little skill on this task. Measured on 2026-09-25, part of
+  the reason is that for temperature, humidity and soil moisture most large errors are a
+  district's steady bias rather than a failure on the day. The next retrain defines busts
+  on bias-corrected error; on the serving data that makes busts grow with lead time as
+  forecast failures should. The lead/bust correlation is published beside the table.
+- Two findings from 2026-09-25 mean current scores overstate skill until that retrain: an
+  input that used an observation from after issue time, and 2016–2017 rainfall truth taken
+  from a one-day-late IMD file. Both are in `docs/known-issues.md`.
+- The 17-year model is trained on a workstation GPU and published as a release; CI pulls
+  a fresh forecast cycle every six hours; the site is served from a 512 MB instance that
+  cannot train. The site reports training data and served data separately.
 
 ## Why the numbers can be trusted
 
@@ -57,11 +62,12 @@ What is stable enough to write down is the shape of the evidence:
   number cannot be computed from real data, the interface shows an em dash **and the
   reason**. This is enforced in the product, not just claimed here.
 - **Real data end to end.** NOAA GEFS (reforecast for training, operational feed live) and
-  ERA5 reanalysis for verification, across 35 Indian regions.
-- **Leakage is tested, not asserted.** Bust thresholds are fitted on the training split
-  only, out-of-fold folds are grouped by forecast cycle so no cycle spans a fold, and no
-  observed day appears on both sides of the train/test split. Each is a test in the suite,
-  written so it cannot pass vacuously.
+  ERA5 reanalysis for verification, across all 666 districts.
+- **Leakage is tested for, and what the tests missed is written down.** Bust thresholds
+  are fitted on the training split only, out-of-fold folds are grouped by forecast cycle
+  so no cycle spans a fold, and no observed day appears on both sides of the train/test
+  split — each a test in the suite. An audit on 2026-09-25 still found one leaking input;
+  it is documented and removed in the next retrain.
 - **The ground truth's own uncertainty is measured.** Measured across ERA5 vs MERRA-2
   over **21,492** paired city-days: **24–43%** of the bust threshold, depending on the
   variable — rainfall 24%, humidity 36%, wind 38%, temperature 43%. Stated up front
@@ -76,8 +82,8 @@ What is stable enough to write down is the shape of the evidence:
 
 ## What it does not do
 
-A sampled multi-decade reforecast archive plus live cycles since deployment — not a
-continuous record. 35 city points, not full regional coverage. 5 of 31 GEFS members, so
+One held-out year so far. Some variables stop early in the reforecast archive (10 m wind
+at Day 5, soil moisture at Day 3) and are not scored beyond that. 5 of 31 GEFS members, so
 spread features are a noisy estimate of true ensemble spread. ERA5 precipitation is weak
 over India relative to IMD gauge-based products, and rainfall carries that caveat. Bust is
 defined on surface-variable error, not the synoptic Z500 criterion of Rodwell et al.

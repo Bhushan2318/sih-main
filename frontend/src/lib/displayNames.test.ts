@@ -43,7 +43,7 @@ describe("featureLabel", () => {
 
   it("names the standalone features a reader actually sees", () => {
     expect(featureLabel("historical_bust_frequency_region_season"))
-      .toBe("How often this district busts this season");
+      .toBe("How often this district's forecasts go badly wrong in this season");
     expect(featureLabel("lead_time_days")).toBe("How far ahead the forecast is");
     expect(featureLabel("region_id")).toBe("Which district");
     expect(featureLabel("jump_std")).toBe("How much the forecast has been changing");
@@ -61,5 +61,24 @@ describe("featureLabel", () => {
 
   it("returns an empty string for nothing", () => {
     expect(featureLabel(undefined)).toBe("");
+  });
+});
+
+describe("featureLabel covers every feature the live model uses", () => {
+  // Names copied from run_20260922T043925Z/feature_columns.json (2026-09-25), with the
+  // per-variable suffix shown once. None may fall through to snake_case prettifying.
+  const live = [
+    "laf_pool_mean", "laf_pool_std", "laf_pool_size", "laf_spread_ratio",
+    "laf_spread_ratio_rainfall_mm", "laf_pool_mean_rainfall_mm",
+    "jump_abs_change_rainfall_mm", "jump_std_rainfall_mm", "jump_sign_flips_rainfall_mm",
+    "mjo_amplitude", "mjo_rmm1", "mjo_rmm2",
+    "area_km2", "border_distance_km", "centroid_lat", "centroid_lon", "elevation_mean",
+  ];
+  it.each(live)("%s reads as a sentence, not a column name", (name) => {
+    const label = featureLabel(name);
+    expect(label).not.toMatch(/_|kgm2|pct|km2|laf|rmm\d/i);
+  });
+  it("names the jumpiness of one variable in words", () => {
+    expect(featureLabel("jump_std_rainfall_mm")).toBe("How much the rainfall forecast has been changing");
   });
 });

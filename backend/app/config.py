@@ -29,6 +29,12 @@ class Settings(BaseSettings):
 
     allow_local_retrain: bool = False
 
+    # Set only in the Docker image Render runs. On that box, a cycle CI did not precompute
+    # is refused (409) instead of scored - scoring one peaks at 1,406 MB on a box killed at
+    # 512 - and uploads, which write into the serving store, are refused too. Off
+    # everywhere else: CI precompute, local dev and the tests all need to score.
+    serving_read_only: bool = False
+
     warm_caches_on_startup: bool = True
 
     @property
