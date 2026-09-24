@@ -14,6 +14,17 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+# The last lead day the GEFSv12 reforecast archive holds, for variables that stop short of
+# Day 10 - 10 m wind at 120 h, soil moisture at 72 h (VAR_SPEC max_lead_h in
+# scripts/fetch_gefs_reforecast_sample.py; tests/test_archive_lead_caps.py keeps the two in
+# step). Training never saw these variables past these days, so they are not scored there
+# either, though the live feed carries all ten.
+ARCHIVE_MAX_LEAD_DAYS: dict[str, int] = {
+    "soil_moisture_pct": 3,
+    "wind_speed_ms": 5,
+    "wind_direction_deg": 5,
+}
+
 # Measured against the real 2017 store on 2026-09-10 by running
 # fe.build_training_frame over one cycle: 10,695 rows, 28 columns. Not transcribed from
 # the feature code - printed from the frame it actually produces.
