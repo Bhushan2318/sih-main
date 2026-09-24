@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { RegionDetailResponse } from "../../api/types";
+import { variableLabel } from "../../lib/displayNames";
 import { REAL_REGION_LEHLADAKH, REAL_REGION_PURBAMEDINIPUR } from "../../test/fixtures/regionDetail";
 
 let current: RegionDetailResponse | undefined;
@@ -44,7 +45,7 @@ describe("RegionDetailPanel opens on the leading driver", () => {
     );
     // Leave the first district on some other tab.
     const tabs = screen.getByRole("tablist");
-    fireEvent.click(within(tabs).getByRole("tab", { name: /^temperature_c/ }));
+    fireEvent.click(within(tabs).getByRole("tab", { name: new RegExp(`^${variableLabel("temperature_c")}`) }));
     expect(screen.getByTestId("trajectory")).toHaveTextContent("temperature_c");
 
     current = REAL_REGION_LEHLADAKH;
@@ -57,7 +58,7 @@ describe("RegionDetailPanel opens on the leading driver", () => {
     current = REAL_REGION_LEHLADAKH;
     render(<RegionDetailPanel regionId={current.region_id} onClose={() => {}} />);
     const tab = within(screen.getByRole("tablist")).getByRole("tab", { selected: true });
-    expect(tab).toHaveTextContent(peakDriver(current)!);
+    expect(tab).toHaveTextContent(variableLabel(peakDriver(current)!));
     expect(tab).toHaveTextContent("driver");
   });
 });
