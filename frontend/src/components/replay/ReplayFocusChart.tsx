@@ -3,7 +3,7 @@ import {
   Tooltip, XAxis, YAxis,
 } from "recharts";
 import type { ReplayFocusSeries } from "../../api/types";
-import { formatByMagnitude } from "../../lib/format";
+import { dayLabel, formatByMagnitude } from "../../lib/format";
 import { CHART } from "../../theme";
 
 export function ReplayFocusChart({
@@ -38,9 +38,9 @@ export function ReplayFocusChart({
         </span>
       </div>
       <ResponsiveContainer width="100%" height={220}>
-        <ComposedChart data={data} margin={{ top: 20, right: 14, bottom: 4, left: -6 }}>
+        <ComposedChart data={data} margin={{ top: 20, right: 22, bottom: 4, left: -6 }}>
           <CartesianGrid strokeDasharray="3 3" />
-          <XAxis dataKey="lead" tickFormatter={(d) => `D${d}`} />
+          <XAxis dataKey="lead" tickFormatter={dayLabel} />
           <YAxis width={58} domain={["auto", "auto"]} tickFormatter={(v: number) => formatByMagnitude(v)} />
           <Tooltip
             labelFormatter={(l) => `Lead day ${l}`}

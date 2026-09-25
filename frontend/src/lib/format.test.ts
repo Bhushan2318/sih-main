@@ -1,5 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { formatByMagnitude, formatMetric } from "./format";
+import { dayLabel, dayRange, formatByMagnitude, formatMetric } from "./format";
+
+describe("dayLabel / dayRange", () => {
+  it("names a lead day in words, never as D1", () => {
+    expect(dayLabel(1)).toBe("Day 1");
+    expect(dayLabel(10)).toBe("Day 10");
+  });
+
+  it("names a run of lead days, and a single day as itself", () => {
+    expect(dayRange(1, 3)).toBe("Days 1–3");
+    expect(dayRange(4, 4)).toBe("Day 4");
+  });
+});
 
 describe("formatMetric", () => {
   it("formats a finite number at the requested precision", () => {
