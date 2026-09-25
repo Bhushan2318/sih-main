@@ -427,22 +427,40 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 @media (max-width: 1280px) { .app__body { grid-template-columns: minmax(0, 1fr) 340px; } }
 @media (max-width: 960px) { .app__body { grid-template-columns: minmax(0, 1fr); } }
 
+/* The map card keeps the map's 620:680 shape and is as tall as the screen allows, so its
+   natural width follows the viewport's HEIGHT. With the map column at 1fr, any screen
+   wider than that left the card narrower than its column: bare page beside the map (294px
+   at 1366x768), and with the rail, an L of it around the rail's ten short rows (206px
+   wide and ~440px tall under the rail at 1920x950). So the map column asks for exactly
+   the map's width - the body height, less 28px of padding and the strip above the card
+   (lead-day buttons, legend and note: 106px measured) - and the columns beside it take
+   the rest. */
 .app__body--ops {
-  grid-template-columns: minmax(0, 1fr) clamp(440px, 36vw, 600px);
+  --map-strip: 106px;
+  --map-w: calc((100vh - var(--topbar-h) - 28px - var(--map-strip)) * 620 / 680);
+  --map-w: calc((100dvh - var(--topbar-h) - 28px - var(--map-strip)) * 620 / 680);
+  grid-template-columns: minmax(0, var(--map-w)) minmax(440px, 1fr);
   padding: 14px 1.3rem; align-items: stretch;
   height: calc(100vh - var(--topbar-h));
   height: calc(100dvh - var(--topbar-h));
 }
 
+/* The rail replaces the lead-day buttons, so only the legend and its note sit above the
+   map card. It takes whatever width the map leaves; the rail only renders at >= 1440 x 700
+   (DashboardPage). */
 .app__body--rail {
+  --map-strip: 61px;
   grid-template-columns:
-    minmax(0, 1fr) clamp(190px, 16vw, 330px) clamp(440px, 34vw, 620px);
+    minmax(0, var(--map-w)) minmax(230px, 1fr) clamp(440px, 34vw, 620px);
 }
 .app__body--ops .map-column { display: flex; flex-direction: column; min-height: 0; }
 
 .app__body--ops .map-wrap {
   flex: 1 1 0; min-height: 0;
-  align-self: start; aspect-ratio: 620 / 680; max-width: 100%;
+  /* Fill the column rather than hug the map: where the column is not exactly --map-w
+     (the note above wraps, or the screen is too narrow for it), the difference becomes
+     margin inside the card - the SVG letterboxes - instead of a strip of bare page. */
+  align-self: stretch; max-width: 100%;
   /* A column, so the map can take what the controls above it leave. */
   display: flex; flex-direction: column;
 }
@@ -482,24 +500,35 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 
 .app__below { padding: 14px 1.3rem 2rem; }
 
-.rail { display: flex; flex-direction: column; min-width: 0; padding-top: 2px; }
-.rail__title { margin-bottom: 10px; }
-.rail__rows { display: flex; flex-direction: column; gap: 2px; }
+/* A card as tall as the map and panel beside it; the ten day rows share its height, so
+   the column is filled by the days themselves rather than by empty page below them. */
+.rail {
+  display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow-y: auto;
+  background: var(--card); border: 1px solid var(--rule); border-radius: var(--r);
+  box-shadow: var(--shadow); padding: 14px 12px 12px;
+}
+.rail__title { margin: 0 7px 8px; }
+.rail__rows { display: flex; flex-direction: column; gap: 2px; flex: 1 1 auto; min-height: 0; }
 .railrow {
-  display: grid; grid-template-columns: 28px minmax(0, 1fr) 34px;
-  align-items: center; gap: 9px; width: 100%;
-  padding: 6px 7px; border: 0; border-radius: 7px; background: none;
+  display: grid; grid-template-columns: 46px minmax(0, 1fr) 36px;
+  align-items: center; align-content: center; column-gap: 10px; row-gap: 5px; width: 100%;
+  flex: 1 1 0; min-height: 40px;
+  padding: 6px 8px; border: 0; border-radius: 7px; background: none;
   cursor: pointer; text-align: left; transition: background 0.14s;
 }
 .railrow:hover { background: var(--card-2); }
-.railrow--active { background: var(--card); box-shadow: var(--shadow); }
+.railrow--active { background: var(--card-2); box-shadow: inset 3px 0 0 var(--ink); }
 .railrow__day {
-  font-family: var(--f-m); font-size: 10.5px; color: var(--ink-3);
-  font-variant-numeric: tabular-nums;
+  font-family: var(--f-m); font-size: 11px; color: var(--ink-3);
+  font-variant-numeric: tabular-nums; white-space: nowrap;
 }
 .railrow--active .railrow__day { color: var(--ink); font-weight: 500; }
+.railrow__meta {
+  grid-column: 2 / 4; font-size: 11px; line-height: 1.3; color: var(--ink-3);
+}
+.railrow--active .railrow__meta { color: var(--ink-2); }
 
-.railrow__bar { display: flex; height: 9px; border-radius: 3px; overflow: hidden; gap: 1px; }
+.railrow__bar { display: flex; height: 10px; border-radius: 3px; overflow: hidden; gap: 1px; }
 .railrow__seg { display: block; min-width: 2px; }
 .railrow__seg--low { background: var(--calm); }
 .railrow__seg--watch { background: var(--watch); }
