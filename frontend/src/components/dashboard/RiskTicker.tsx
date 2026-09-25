@@ -1,6 +1,7 @@
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { RegionSummary } from "../../api/types";
 import { isScoredRegion, riskBandForRegion, type RiskCuts } from "../../lib/riskBands";
+import { dayLabel } from "../../lib/format";
 
 /** How fast the ticker reads, in CSS pixels per second.
  *
@@ -80,7 +81,7 @@ export function RiskTicker({ regions, leadDay, onSelect, stateNames, riskCuts }:
           <span className="ticker__value">
             {((district.bust_probability as number) * 100).toFixed(0)}%
           </span>
-          <span className="ticker__unit">worst district · day {leadDay}</span>
+          <span className="ticker__unit">worst district · {dayLabel(leadDay)}</span>
         </button>
       ))}
     </div>

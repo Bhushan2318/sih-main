@@ -6,6 +6,7 @@ import {
   riskBandForRegion,
   type RiskCuts,
 } from "../../lib/riskBands";
+import { dayLabel } from "../../lib/format";
 
 export function KpiStrip({ all, day, riskCuts }: {
   all?: AllRegionsResponse;
@@ -23,7 +24,7 @@ export function KpiStrip({ all, day, riskCuts }: {
         value={stats.mean != null ? `${(stats.mean * 100).toFixed(0)}%` : "—"}
         note={
           stats.scored
-            ? <>across <b>{stats.scored}</b> scored regions · day {stats.lead}</>
+            ? <>across <b>{stats.scored}</b> scored regions · {dayLabel(stats.lead)}</>
             : "no scored regions for this lead day"
         }
       />
@@ -40,7 +41,7 @@ export function KpiStrip({ all, day, riskCuts }: {
             "—"
           )
         }
-        note={stats.scored ? <>in the bust band at day {stats.lead}</> : "nothing scored yet"}
+        note={stats.scored ? <>in the bust band on {dayLabel(stats.lead)}</> : "nothing scored yet"}
       />
       <Kpi
         cap="blue"
@@ -59,7 +60,7 @@ export function KpiStrip({ all, day, riskCuts }: {
         note={
           stats.decayPct != null && stats.decayFrom != null && stats.decayTo != null ? (
             <>
-              from day {stats.decayFrom} to day {stats.decayTo}
+              from {dayLabel(stats.decayFrom)} to {dayLabel(stats.decayTo)}
             </>
           ) : (
             "needs two or more scored lead days"

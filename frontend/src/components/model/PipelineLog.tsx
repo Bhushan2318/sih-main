@@ -67,10 +67,16 @@ export function PipelineLog() {
           </tbody>
         </table>
       </div>
+      {/* The raw detail line is for whoever is debugging the feed, and it is long - a
+        * page of HTTP 429 bodies when the observation API rate-limits. One click away,
+        * not gone: partial pulls are a documented known issue, not something to hide. */}
       {runs[0]?.detail ? (
-        <p className="muted small mono" style={{ wordBreak: "break-word" }}>
-          latest: {runs[0].detail}
-        </p>
+        <details className="pipelog__detail">
+          <summary className="muted small">
+            Latest run&apos;s raw log{/fail/i.test(runs[0].detail) ? " (it includes failed requests)" : ""}
+          </summary>
+          <p className="muted small mono" style={{ wordBreak: "break-word" }}>{runs[0].detail}</p>
+        </details>
       ) : null}
       {runs.find((r) => r.error) ? (
         <p className="muted small">

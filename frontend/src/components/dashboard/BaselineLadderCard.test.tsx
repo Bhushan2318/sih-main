@@ -7,7 +7,7 @@ import type { ModelStatusResponse } from "../../api/types";
 describe("BaselineLadderCard", () => {
   it("renders the ladder and flags the lead_day rung's negative skill", () => {
     render(<BaselineLadderCard data={REAL_MODEL_STATUS_TRAINED} />);
-    expect(screen.getAllByText("lead_day").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Lead day only").length).toBeGreaterThan(0);
     expect(screen.getAllByText("-0.0021").length).toBeGreaterThan(0);
     expect(screen.getByText(/at or below zero/)).toBeInTheDocument();
     // the served model's own row is still present
@@ -53,8 +53,22 @@ describe("BaselineLadderCard", () => {
       },
     };
     render(<BaselineLadderCard data={withoutLeadDay} />);
-    expect(screen.getByText("climatology")).toBeInTheDocument();
-    expect(screen.queryByText("lead_day")).not.toBeInTheDocument();
+    expect(screen.getByText("Climatology")).toBeInTheDocument();
+    expect(screen.queryByText("Lead day only")).not.toBeInTheDocument();
     expect(screen.queryByText(/at or below zero/)).not.toBeInTheDocument();
+  });
+
+  it("calls a lead_day skill of +0.0001 effectively zero, not a signal", () => {
+    const nearZero: ModelStatusResponse = {
+      ...REAL_MODEL_STATUS_TRAINED,
+      baselines: {
+        ...REAL_MODEL_STATUS_TRAINED.baselines,
+        models: REAL_MODEL_STATUS_TRAINED.baselines!.models!.map((m) =>
+          m.name === "lead_day" ? { ...m, bss: 0.0001 } : m),
+      },
+    };
+    render(<BaselineLadderCard data={nearZero} />);
+    expect(screen.getByText(/effectively zero/)).toBeInTheDocument();
+    expect(screen.queryByText(/carries some signal/)).not.toBeInTheDocument();
   });
 });
