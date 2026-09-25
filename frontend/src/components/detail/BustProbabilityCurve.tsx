@@ -3,6 +3,7 @@ import {
   ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 import type { BustProbabilityPoint, RiskBand } from "../../api/types";
+import { dayLabel } from "../../lib/format";
 import type { RiskCuts } from "../../lib/riskBands";
 import { CHART, bandLabel } from "../../theme";
 
@@ -30,7 +31,7 @@ export function BustProbabilityCurve({ points, cuts }: {
   return (
     <>
       <ResponsiveContainer width="100%" height={220}>
-        <ComposedChart data={data} margin={{ top: 8, right: 10, bottom: 4, left: -8 }}>
+        <ComposedChart data={data} margin={{ top: 8, right: 22, bottom: 4, left: -8 }}>
           <defs>
             <linearGradient id="bustFill" x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor={CHART.high} stopOpacity={0.2} />
@@ -49,7 +50,7 @@ export function BustProbabilityCurve({ points, cuts }: {
           ) : null}
 
           <CartesianGrid strokeDasharray="3 3" stroke={CHART.grid} vertical={false} />
-          <XAxis dataKey="lead" tickFormatter={(d) => `D${d}`} stroke={CHART.axis} tickLine={false} />
+          <XAxis dataKey="lead" tickFormatter={dayLabel} stroke={CHART.axis} tickLine={false} />
           <YAxis
             domain={[0, 100]} tickFormatter={(v: number) => `${v}%`} width={46}
             stroke={CHART.axis} tickLine={false}

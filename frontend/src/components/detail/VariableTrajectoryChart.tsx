@@ -3,6 +3,7 @@ import {
 } from "recharts";
 import type { VariableSeries } from "../../api/types";
 import { variableLabel, variableUnit } from "../../lib/displayNames";
+import { dayLabel } from "../../lib/format";
 import { CHART } from "../../theme";
 
 export function VariableTrajectoryChart({ series }: { series: VariableSeries }) {
@@ -30,10 +31,10 @@ export function VariableTrajectoryChart({ series }: { series: VariableSeries }) 
   return (
     <>
       <ResponsiveContainer width="100%" height={210}>
-        <LineChart data={data} margin={{ top: 8, right: 12, bottom: 4, left: -4 }}>
+        <LineChart data={data} margin={{ top: 8, right: 22, bottom: 4, left: -4 }}>
           <CartesianGrid strokeDasharray="3 3" />
           <XAxis
-            dataKey="lead" tickFormatter={(d) => `D${d}`}
+            dataKey="lead" tickFormatter={dayLabel}
             label={{ value: "Lead day", position: "insideBottom", offset: -2, fontSize: 10 }}
             height={34}
           />

@@ -1,5 +1,7 @@
 import { useMemo } from "react";
 import type { AllRegionsResponse, RegionsResponse } from "../../api/types";
+import { variableLabel } from "../../lib/displayNames";
+import { dayLabel, dayRange } from "../../lib/format";
 import { isScoredRegion, riskBandForRegion, type RiskCuts } from "../../lib/riskBands";
 
 export function LeadDayRail({ all, value, onChange, riskCuts }: {
@@ -29,9 +31,9 @@ export function LeadDayRail({ all, value, onChange, riskCuts }: {
             aria-pressed={r.lead === value}
             className={r.lead === value ? "railrow railrow--active" : "railrow"}
             onClick={() => onChange(r.lead)}
-            title={`Lead day ${r.lead}: ${r.bust} bust, ${r.watch} watch, ${r.low} low`}
+            title={`${dayLabel(r.lead)}: ${r.bust} bust, ${r.watch} watch, ${r.low} low`}
           >
-            <span className="railrow__day">D{r.lead}</span>
+            <span className="railrow__day">{dayLabel(r.lead)}</span>
 
             <span className="railrow__bar" aria-hidden="true">
               {r.low ? <i className="railrow__seg railrow__seg--low" style={{ flexGrow: r.low }} /> : null}
@@ -41,6 +43,10 @@ export function LeadDayRail({ all, value, onChange, riskCuts }: {
 
             <span className={r.mean >= peak - 1e-9 ? "railrow__mean railrow__mean--peak" : "railrow__mean"}>
               {(r.mean * 100).toFixed(0)}%
+            </span>
+
+            <span className="railrow__meta">
+              {r.bust} bust · {r.watch} watch{r.driver ? ` · ${variableLabel(r.driver)}` : ""}
             </span>
           </button>
         ))}
@@ -120,6 +126,6 @@ function driverRuns(rows: Row[]): string | null {
   return `Mostly driven by: ${runs.map((r) => `${pretty(r.driver)} ${span(r)}`).join(", then ")}.`;
 }
 
-const span = (r: { from: number; to: number }) => (r.from === r.to ? `at D${r.from}` : `D${r.from}–D${r.to}`);
+const span = (r: { from: number; to: number }) => (r.from === r.to ? `on ${dayLabel(r.from)}` : dayRange(r.from, r.to));
 
-const pretty = (v: string) => v.replace(/_(pct|mm|c|hpa|ms|deg|kgm2)$/, "").replace(/_/g, " ");
+const pretty = (v: string) => variableLabel(v).toLowerCase();

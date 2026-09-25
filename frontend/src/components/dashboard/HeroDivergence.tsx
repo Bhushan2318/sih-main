@@ -4,6 +4,7 @@ import {
   Scatter, Tooltip, XAxis, YAxis, ZAxis,
 } from "recharts";
 import type { EnsembleDivergenceResponse } from "../../api/types";
+import { dayLabel } from "../../lib/format";
 import { isScoredProbability, riskBandForProbability, type RiskCuts } from "../../lib/riskBands";
 import { CHART } from "../../theme";
 
@@ -149,9 +150,9 @@ function NationalChart({ data }: { data: EnsembleDivergenceResponse }) {
 
   return (
     <ResponsiveContainer width="100%" height="100%">
-      <ComposedChart data={rows} margin={{ top: 10, right: 14, bottom: 6, left: -10 }}>
+      <ComposedChart data={rows} margin={{ top: 10, right: 22, bottom: 6, left: -10 }}>
         <CartesianGrid strokeDasharray="3 3" stroke={CHART.grid} vertical={false} />
-        <XAxis dataKey="lead" tickFormatter={(d) => `D${d}`} stroke={CHART.axis} tickLine={false} />
+        <XAxis dataKey="lead" tickFormatter={dayLabel} stroke={CHART.axis} tickLine={false} />
         <YAxis
           domain={[0, 100]} width={46} stroke={CHART.axis} tickLine={false}
           tickFormatter={(v: number) => `${v}%`}
