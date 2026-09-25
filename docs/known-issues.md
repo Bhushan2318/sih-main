@@ -23,6 +23,29 @@ here rather than discovered live.
   it, and on a splash screen that will be visibly soft. Upscaling it to 512 and declaring
   it as such would only move the blur somewhere less honest — this needs a real source
   file, not a resample.
+- **The map can get calmer at longer lead days, which looks backwards.** Forecasts do get
+  worse with lead, and on the 2017 test year the model's mean bust probability rises with
+  lead within each run of days that scores the same variables (0.43 → 0.53 over Days 1-3,
+  0.45 → 0.55 over Days 6-10). The 2026-09-25 map instead falls from 0.50 on Day 1 to
+  about 0.23 on Days 6-10. SHAP on the live classifier over that cycle's served events
+  (measured 2026-09-26) splits it three ways:
+  - **The weather.** Every cycle from 21 Sep forecast an active spell to 26 Sep, then calm
+    and dry. On the 25 Sep cycle, district-mean rain goes 13.0 → 3.9 mm from Day 1 to
+    Day 3 and stays near 3 mm; wind goes 4.4 → 1.7 m/s by Day 5. Busts scale with the
+    weather: on the live run's 2017 held-out events, where the predicted rainfall error
+    was under 2 mm the rain busted 0.5-0.7% of the time at every lead, Day 10 included,
+    against 49-58% where it was over 9 mm. The wind and rainfall inputs carry most of the
+    Day 1-3 drop.
+  - **Fewer variables are scored.** Soil moisture stops after Day 3 and wind after Day 5,
+    because the training archive holds nothing past those leads (lead-cap entry under
+    Data). An event busts if any scored variable busts, so from Day 4, and again from
+    Day 6, there are fewer ways to bust. The 2017 test year steps down at the same places
+    (actual bust rate 0.52 on Day 5, 0.42 on Day 6). On this cycle, wind going unscored
+    at Day 6 is worth about -0.36 log-odds.
+  - **The season input changes on 1 October.** Leads falling in October take the next
+    season's historical bust frequency, worth about -0.11 log-odds from Day 7 here.
+  - `lead_time_days` itself contributes about 0. Earlier maps had the opposite shape: the
+    12-17 Sep cycles rose from 0.29-0.38 on Day 1 to 0.43-0.58 on Day 10.
 - **Replay offers the 10 most recent cycles**, not every cycle in the store
   (`replay_service._MAX_CYCLES`). Each candidate costs one scoring pass on first call.
 - **RESOLVED — feature and variable names used to render raw, in snake_case.**
@@ -1117,15 +1140,28 @@ here rather than discovered live.
   - Re-scoring the 2026-09-24 cycle: Days 1–3 unchanged, Days 6–10 mean |ΔP| ≈ 0.10.
   - The reforecast's soil-moisture error is also about twice the live feed's at the same
     leads (15.4 vs 8.7 points MAE). So its p90 does not transfer to live either.
-- **The live run's 2016/2017 rainfall truth is IMD-merged, not ERA5.**
+- **The live run's 2016/2017 rainfall truth is IMD-merged, not ERA5. The store is fixed
+  (2026-09-26); the live run and two training caches are not.**
   - `metadata.db` shows `imd_merged_district_observations_india_2016/2017.parquet`
     ingested 2026-09-12 19:35, after the ERA5 CDS files. The store keeps the latest row,
     so IMD won.
   - The same IMD files are documented above as one day late.
   - So validation and test rainfall were scored against a different, shifted truth from
     the one the model trained on.
-  - Fix before the next retrain: ERA5 last (or drop those batches), and refuse stale IMD
-    batches when caching a year.
+  - It was all four years, not two. `imd_merged_…_2018/2019` also came after ERA5, with
+    the same `source_column` (`precip_mm`) and `verification_status` (`final`), so they won
+    the dedupe too. Their rainfall differed from ERA5 in 72.5% (2018) and 79.8% (2019) of
+    rows; the other seven variables were identical copies.
+  - 2026-09-26: the four batches and their source files were moved (not deleted) to
+    `backend/data/canonical_backup_imd_merged_20260926/` on the training laptop. Their
+    `upload_batch` rows are `status = 'quarantined'`, with a note. Read back through
+    `parquet_store.read_dataset`, observed rainfall for 2016-2019 now comes only from the
+    `era5_cds_*` batches (243,756 / 243,090 / 243,090 / 243,090 rows). `MOVED.md` in that
+    folder says how to restore them.
+  - Still built from the IMD rows: `_pooled_cache/paired_2016.parquet` and
+    `paired_2017.parquet`, which predate the move. The serving bundle never held these
+    batches (0 IMD batches in its `metadata.db`), so the live site is unaffected.
+  - Still open: caching a year does not yet refuse stale IMD batches by itself.
 - **`forecast_error_lag` leaks** (entry above, added the same day). The classifier does not
   take it directly, but takes every regressor's output, so held-out scores are inflated by
   an unknown amount until the retrain.

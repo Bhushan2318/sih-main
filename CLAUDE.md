@@ -137,10 +137,13 @@ file's `.idx` sidecar.
 
 **Observation side.** ERA5 (CC-BY 4.0, Copernicus C3S): from the Copernicus CDS
 for the training years, via the Open-Meteo Historical Weather API for recent/live
-days. **Trap (2026-09-25):** IMD-merged rainfall files for 2016 and 2017 were ingested
+days. **Trap (2026-09-25):** IMD-merged rainfall files for 2016-2019 were ingested
 after ERA5 and won the dedupe, so the live run's validation and test rainfall truth is
-IMD (one day late), not ERA5 - fix before the next retrain. IMD gauge-based 0.25°
-rainfall as the rainfall truth is still the goal.
+IMD (one day late), not ERA5. On 2026-09-26 the four batches were moved out of the
+training store (`backend/data/canonical_backup_imd_merged_20260926/`, restore notes in
+its `MOVED.md`), so the store's 2016-2019 rainfall is ERA5 again; `_pooled_cache`'s
+`paired_2016/2017` were built before the move. IMD gauge-based 0.25° rainfall as the
+rainfall truth is still the goal.
 
 **Pipeline.** format-agnostic parsers → confidence-scored `SchemaMapper` → geo
 resolution → canonical store (hive-partitioned Parquet + SQLite lineage) →
