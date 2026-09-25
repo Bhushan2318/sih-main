@@ -1,6 +1,7 @@
 import {
   CartesianGrid, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
+import { dayLabel } from "../../lib/format";
 import type { RiskCuts } from "../../lib/riskBands";
 import { CHART } from "../../theme";
 
@@ -37,7 +38,7 @@ export function ReplayProbabilityChart({
       <ResponsiveContainer width="100%" height={132}>
         <LineChart data={points} margin={{ top: 8, right: 40, bottom: 4, left: -6 }}>
           <CartesianGrid strokeDasharray="3 3" stroke={CHART.grid} />
-          <XAxis dataKey="lead" tickFormatter={(d) => `D${d}`} stroke={CHART.axis} />
+          <XAxis dataKey="lead" tickFormatter={dayLabel} stroke={CHART.axis} />
           <YAxis width={58} domain={[0, 1]} ticks={[0, 0.25, 0.5, 0.75, 1]}
                  tickFormatter={pct} stroke={CHART.axis} />
           <Tooltip
