@@ -6,6 +6,7 @@ import { EmptyState, ErrorState, LoadingState, RiskBadge } from "../common/State
 import { retryingHint } from "../../lib/retryHint";
 import { bandLabel } from "../../theme";
 import { variableLabel } from "../../lib/displayNames";
+import { dayLabel } from "../../lib/format";
 import { alertsToCsv, csvFilename } from "../../lib/alertsCsv";
 
 const LIMIT = 200;
@@ -100,7 +101,7 @@ export function AlertsPage({ onSelect, filter, onFilter }: {
           <Stat cap="watch" label="In the watch band" value={String(stats.watch)}
             note={<>across <b>{stats.regions}</b> distinct regions</>} />
           <Stat cap="blue" label="Peak bust risk" value={`${(stats.peak.bust_probability * 100).toFixed(0)}%`}
-            note={<><b>{stats.peak.region_name ?? stats.peak.region_id}</b> · D{stats.peak.lead_time_days}</>} />
+            note={<><b>{stats.peak.region_name ?? stats.peak.region_id}</b> · {dayLabel(stats.peak.lead_time_days)}</>} />
           <Stat cap="blue" label="Most common cause" value={variableLabel(stats.topDriver?.[0]) || "—"}
             note={stats.topDriver
               ? <>the main cause in <b>{stats.topDriver[1]}</b> of {stats.total}</>
@@ -140,7 +141,7 @@ export function AlertsPage({ onSelect, filter, onFilter }: {
                     }}
                   >
                     <td className="dtable__strong">{a.region_name ?? a.region_id}</td>
-                    <td className="dtable__num mono">D{a.lead_time_days}</td>
+                    <td className="dtable__num mono">{dayLabel(a.lead_time_days)}</td>
                     <td className="dtable__opt mono muted">{a.valid_date ?? "—"}</td>
                     <td className="dtable__num mono dtable__strong">
                       {(a.bust_probability * 100).toFixed(0)}%
