@@ -82,7 +82,7 @@ export function ModelPage() {
             {data.explanation_method ? <> · explanations via <b>{data.explanation_method}</b></> : null}
           </p>
 
-          <div className="page--split">
+          <div className="page--split page--even">
             <section className="card">
               <header className="card__head"><h3>Training data</h3></header>
               {firstYear != null ? (
@@ -140,7 +140,7 @@ export function ModelPage() {
                 <header className="card__head"><h4>On this server</h4></header>
                 <dl className="metrics metrics--compact">
                   <div><dt>Rows</dt><dd>{(vol.total_rows ?? 0).toLocaleString()}</dd></div>
-                  <div><dt>Regions</dt><dd>{vol.regions ?? "—"}</dd></div>
+                  <div><dt>Region ids</dt><dd>{vol.regions ?? "—"}</dd></div>
                   <div><dt>Cycles</dt><dd>{vol.forecast_cycles ?? "—"}</dd></div>
                   <div><dt>Batches</dt><dd>{vol.batches ?? "—"}</dd></div>
                 </dl>
@@ -158,7 +158,9 @@ export function ModelPage() {
                 <p className="muted small">
                   The serving copy carries the cycles needed to score today and to replay
                   recent ones — not the full training archive, which lives where the model
-                  is trained.
+                  is trained. Region ids count every id it holds: the 666 districts, plus one
+                  point per state or UT from cycles scored before the live feed moved to
+                  districts on 23 Sep.
                   {firstYear != null ? (
                     <> The model itself was trained on data going back to{" "}
                       <b>{firstYear}</b>; this range is only what this 512&nbsp;MB box carries.</>
@@ -275,7 +277,7 @@ export function ModelPage() {
             * misses go full width underneath rather than stacked in one column: stacking
             * them made that column 338px taller than the other, which read as a hole in
             * the page, and a list of cases uses the width better than a chart would. */}
-          <div className="page--split">
+          <div className="page--split page--even">
             <EconomicValueCard data={data} />
             <CorpReliabilityCard data={data} />
           </div>

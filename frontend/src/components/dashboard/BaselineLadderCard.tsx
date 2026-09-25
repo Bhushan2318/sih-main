@@ -1,5 +1,5 @@
 import type { ModelStatusResponse } from "../../api/types";
-import { BaselineModel, leadDayIsUninformative, leadDayRung } from "../../lib/baselineLadder";
+import { BaselineModel, leadDayIsUninformative, leadDayRung, rungLabel } from "../../lib/baselineLadder";
 import { formatMetric } from "../../lib/format";
 import { BaselineLadderTable } from "../model/BaselineLadderTable";
 
@@ -31,11 +31,11 @@ function LeadDayCallout({ models }: { models: BaselineModel[] }) {
   const served = models.find((m) => m.is_model);
   return (
     <p className="muted small">
-      Guessing purely from lead time (<b>{leadDay.name}</b>, no weather input at all)
+      Guessing purely from lead time (<b title={leadDay.name}>{rungLabel(leadDay.name)}</b>, no weather input at all)
       scores <b className="mono">{formatMetric(leadDay.bss, 4)}</b> skill vs climatology —{" "}
       {uninformative ? (
         <>
-          <b>at or below zero</b>, meaning it does no better than always guessing the
+          <b>{(leadDay.bss as number) <= 0 ? "at or below zero" : "effectively zero"}</b>, meaning it does no better than always guessing the
           long-run bust rate. The classifier&apos;s <b>{formatMetric(served?.bss, 4)}</b> is
           not that trick.
         </>

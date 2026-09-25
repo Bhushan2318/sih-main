@@ -21,7 +21,7 @@ export function LeadDayRail({ all, value, onChange, riskCuts }: {
 
   return (
     <aside className="rail" aria-label="Forecast horizon">
-      <h3 className="rail__title">Horizon</h3>
+      <h3 className="rail__title">Bust risk by day</h3>
 
       <div className="rail__rows" role="group" aria-label="Lead day">
         {rows.map((r) => (
