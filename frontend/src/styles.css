@@ -572,6 +572,11 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 
 .page > .card, .page > .panel { margin-bottom: 14px; }
 .page--split > .card, .page--split > .panel { margin-bottom: 0; }
+/* Paired cards the same height, so the shorter one does not leave a hole of bare page
+   beside the taller (~120px beside "Is it worth acting on?" at 1920 wide). */
+.page--even { align-items: stretch; }
+.pipelog__detail { margin-top: 0.6rem; }
+.pipelog__detail summary { cursor: pointer; }
 
 .pagehead {
   display: flex; align-items: flex-end; justify-content: space-between;
@@ -608,6 +613,9 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 .dtable--tight td { padding: 6px 10px; }
 .dtable tbody tr:last-child td { border-bottom: 0; }
 .dtable__num { text-align: right; font-variant-numeric: tabular-nums; }
+/* `.dtable th` is more specific than `.dtable__num`, so numeric headers sat left over
+   right-aligned values - invisible in narrow columns, obvious in wide ones. */
+.dtable th.dtable__num { text-align: right; }
 .dtable__strong { font-weight: 600; color: var(--ink); }
 
 .dtable tr.is-active { background: var(--blue-wash); }
@@ -623,6 +631,17 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 
 .dtable--fill th:last-child, .dtable--fill td:last-child { width: 100%; }
 .dtable--fill th:not(:last-child), .dtable--fill td:not(:last-child) { white-space: nowrap; }
+/* Alerts: six short columns spread across the card. With the last column taking all the
+   spare width they sat in the left ~640px of a 1,880px card at 1920 wide, and every row
+   ended in ~1,250px of blank. Desktop only: a phone hides two of the six. */
+@media (min-width: 961px) {
+  .dtable--spread th:nth-child(1) { width: 30%; }
+  .dtable--spread th:nth-child(2) { width: 10%; }
+  .dtable--spread th:nth-child(3) { width: 15%; }
+  .dtable--spread th:nth-child(4) { width: 10%; }
+  .dtable--spread th:nth-child(5) { width: 12%; }
+  .dtable--spread th:nth-child(6) { width: 23%; }
+}
 
 .skill { font-variant-numeric: tabular-nums; padding: 2px 7px; border-radius: 99px; }
 .skill--up { color: #00795f; background: var(--calm-wash); }
@@ -1013,10 +1032,14 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 .app__body--replay { display: block; padding: 14px 1.3rem 2rem; }
 .replay { max-width: 1180px; margin: 0 auto; }
 .replay__intro { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.6rem 1.2rem; margin-bottom: 0.7rem; }
-.replay__pick { display: flex; align-items: center; gap: 0.4rem; }
+.replay__pick { display: flex; align-items: center; gap: 0.4rem; min-width: 0; max-width: 100%; }
 .replay__pick select {
   padding: 0.3rem 0.5rem; border: 1px solid var(--rule); border-radius: 8px;
   background: var(--card); color: var(--ink); font: inherit;
+  /* A select is as wide as its longest option, and a cycle label ("... outcome known for
+     6 days · peak risk 100%") measured 629px: wider than a phone, so the page scrolled
+     sideways. Cap it at its row; the open list still shows every label in full. */
+  min-width: 0; max-width: 100%;
 }
 .replay__summary { flex: 1 1 420px; margin: 0; color: var(--ink-2); }
 
@@ -1042,6 +1065,12 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 
 .replay__mapcol { min-width: 0; }
 .replay__sidecol { min-width: 0; display: flex; flex-direction: column; gap: 14px; }
+/* The map is taller than the step cards beside it, so they stick while you scroll down the
+   map instead of leaving the Day card behind above a column of bare page. Two-column
+   layouts only; below the breakpoint the column stacks under the map. */
+@media (min-width: 901px) {
+  .replay__sidecol { position: sticky; top: calc(var(--topbar-h) + 14px); }
+}
 .replay__body { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 14px; align-items: start; }
 .replay__step {
   background: var(--card); border: 1px solid var(--rule); border-radius: var(--r);
@@ -1055,18 +1084,32 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 .replay__narration { margin: 0.5rem 0 0.65rem; line-height: 1.55; color: var(--ink-2); }
 .replay__stats { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; font-size: 0.8rem; }
 .replay__stats .chip { cursor: default; }
-.replay__toplist { list-style: none; margin: 0.75rem 0 0; padding: 0; display: grid; gap: 0.2rem; }
-.replay__toprow {
-  width: 100%; display: flex; align-items: center; gap: 0.5rem; font-size: 0.83rem;
-  border: 1px solid transparent; border-radius: 7px; padding: 0.28rem 0.45rem;
+/* Ranked district list (TopDistrictsList): the operations panel before a district is
+   picked, and Replay's top five. Fixed columns so the risk and the cause line up down the
+   list; a long name wraps rather than hiding part of itself. */
+.toplist { list-style: none; margin: 0.5rem 0 0; padding: 0; display: grid; gap: 0.15rem; }
+.toplist__row {
+  width: 100%; display: grid; grid-template-columns: 0.7rem minmax(0, 1fr) 2.8rem 8.2rem;
+  align-items: center; column-gap: 0.6rem; font-size: 0.83rem; line-height: 1.25;
+  border: 1px solid transparent; border-radius: 7px; padding: 0.36rem 0.5rem;
   background: none; color: inherit; text-align: left; cursor: pointer; font-family: inherit;
   transition: 0.15s;
 }
-.replay__toprow:disabled { cursor: default; }
-.replay__toprow:not(:disabled):hover { background: var(--card-2); }
-.replay__toprow.is-active { border-color: var(--blue); background: var(--blue-wash); }
-.replay__toprow b { margin-left: auto; font-family: var(--f-m); }
-.replay__toprow .muted { margin-left: 0; }
+.toplist__row:disabled { cursor: default; }
+.toplist__row:not(:disabled):hover { background: var(--card-2); }
+.toplist__row.is-active { border-color: var(--blue); background: var(--blue-wash); }
+.toplist__pct { font-family: var(--f-m); text-align: right; }
+.toplist__cause {
+  color: var(--ink-3); font-size: 0.76rem;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.worst__hint { margin: 0.8rem 0 0; }
+/* On a phone the fixed cause column squeezed every name onto two lines; the cause moves
+   under the name instead. */
+@media (max-width: 600px) {
+  .toplist__row { grid-template-columns: 0.7rem minmax(0, 1fr) 2.8rem; row-gap: 0.1rem; }
+  .toplist__cause { grid-column: 2 / 3; grid-row: 2; }
+}
 
 .dot { width: 0.7rem; height: 0.7rem; border-radius: 50%; display: inline-block; background: var(--nodata); }
 .dot--low { background: var(--calm); }
