@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { MissCase, ModelStatusResponse } from "../../api/types";
 import { variableLabel, variableUnit } from "../../lib/displayNames";
+import { dayLabel } from "../../lib/format";
 
 type Mode = "missed" | "alarms";
 
@@ -94,7 +95,7 @@ function MissRow({ c, mode }: { c: MissCase; mode: Mode }) {
         <b>{c.region_name ?? c.region_id}</b>
         <span className="muted small">
           {c.valid_date}
-          {c.lead_time_days != null ? ` · day ${c.lead_time_days}` : ""}
+          {c.lead_time_days != null ? ` · ${dayLabel(c.lead_time_days)}` : ""}
         </span>
       </div>
       <p className="missrow__body">
