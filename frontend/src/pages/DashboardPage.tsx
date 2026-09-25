@@ -23,6 +23,7 @@ import { useLiveSocket } from "../hooks/useLiveSocket";
 import { stateNamesFrom } from "../lib/stateNames";
 import { parseAppState, toSearch, type View } from "../lib/urlState";
 import { useMediaQuery } from "../hooks/useMediaQuery";
+import { dayLabel } from "../lib/format";
 import { inferRiskCuts, isScoredProbability, resolveRiskCuts, riskBandForRegion } from "../lib/riskBands";
 
 // View lives in lib/urlState: it is the set of values the ?view= parameter accepts, so
@@ -179,7 +180,7 @@ export function DashboardPage() {
             {view === "live" && highCount > 0 ? (
               <span className="pill pill--alarm" title={`Regions in the bust band at lead day ${leadDay}`}>
                 <i aria-hidden="true" />
-                {highCount} bust · D{leadDay}
+                {highCount} bust · {dayLabel(leadDay)}
               </span>
             ) : null}
           </div>
