@@ -9,6 +9,7 @@ import { IndiaChoroplethMap } from "../map/IndiaChoroplethMap";
 import { MapLegend } from "../map/MapLegend";
 import { ReplayFocusChart } from "./ReplayFocusChart";
 import { ReplayProbabilityChart } from "./ReplayProbabilityChart";
+import { TopDistrictsList } from "../common/TopDistrictsList";
 
 const STEP_MS = 2200;
 
@@ -178,30 +179,13 @@ export function ReplayView({ topology }: { topology: Topology | null }) {
               <span className="chip chip--high">{step.n_high} bust</span>
               <span className="chip chip--medium">{step.n_medium} watch</span>
             </div>
-            <ol className="replay__toplist">
-              {step.regions.slice(0, 5).map((r) => {
-                const chartable = chartableRegionIds.has(r.region_id);
-                const active = shownFocus?.region_id === r.region_id;
-                return (
-                  <li key={r.region_id}>
-                    <button
-                      type="button"
-                      className={`replay__toprow ${active ? "is-active" : ""}`}
-                      disabled={!chartable}
-                      title={chartable ? "Show this region's forecast vs observed" : undefined}
-                      onClick={() => setFocusRegionId(r.region_id)}
-                    >
-                      <span className={`dot dot--${r.risk_band}`} />
-                      {r.region_name ?? r.region_id}
-                      <b>{pct(r.bust_probability)}</b>
-                      {r.dominant_variable ? (
-                        <span className="muted small">{r.dominant_variable.replace(/_/g, " ")}</span>
-                      ) : null}
-                    </button>
-                  </li>
-                );
-              })}
-            </ol>
+            <TopDistrictsList
+              items={step.regions.slice(0, 5).map((r) => ({ ...r, band: r.risk_band }))}
+              onSelect={setFocusRegionId}
+              activeId={shownFocus?.region_id}
+              isSelectable={(id) => chartableRegionIds.has(id)}
+              selectTitle="Show this region's forecast vs observed"
+            />
           </div>
 
           {shownFocus ? (

@@ -3,7 +3,7 @@ import type { Topology } from "topojson-specification";
 import type { RiskBand } from "../api/types";
 import { AlertsPage } from "../components/alerts/AlertsPage";
 import { BaselineLadderCard } from "../components/dashboard/BaselineLadderCard";
-import { BustSummaryChart } from "../components/dashboard/BustSummaryChart";
+import { WorstDistrictsPanel } from "../components/dashboard/WorstDistrictsPanel";
 import { FeedFreshness } from "../components/dashboard/FeedFreshness";
 import { HeroDivergence } from "../components/dashboard/HeroDivergence";
 import { KpiStrip } from "../components/dashboard/KpiStrip";
@@ -286,27 +286,24 @@ export function DashboardPage() {
               />
             ) : null}
 
-            <RegionDetailPanel
-              regionId={selectedRegion}
-              onClose={() => setSelectedRegion(null)}
-              riskCuts={riskCuts}
-            />
+            {selectedRegion ? (
+              <RegionDetailPanel
+                regionId={selectedRegion}
+                onClose={() => setSelectedRegion(null)}
+                riskCuts={riskCuts}
+              />
+            ) : (
+              <WorstDistrictsPanel day={regions} riskCuts={riskCuts} onSelect={setSelectedRegion} />
+            )}
           </main>
 
           {/* The ladder sits directly under the map: you look at today's risk, then
-            * immediately at the evidence that the risk is worth believing. Guarded on
-            * either child having something to draw, so this never renders as bare
-            * padding when the store has no scored regions and no baselines. */}
-          {regions?.regions.length || statusQuery.data?.baselines?.models?.length ? (
+            * immediately at the evidence that the risk is worth believing. Guarded so this
+            * never renders as bare padding when there are no baselines. The worst-districts
+            * chart that used to sit beside it is now the district panel's resting state. */}
+          {statusQuery.data?.baselines?.models?.length ? (
             <section className="app__below">
               <BaselineLadderCard data={statusQuery.data} />
-              {regions?.regions.length ? (
-                <BustSummaryChart
-                  regions={regions.regions}
-                  onSelect={setSelectedRegion}
-                  riskCuts={riskCuts}
-                />
-              ) : null}
             </section>
           ) : null}
         </>

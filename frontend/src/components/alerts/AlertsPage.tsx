@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import type { Alert, RiskBand } from "../../api/types";
 import { stamp } from "../../format";
-import { useAlerts } from "../../hooks/useDashboardData";
+import { useAlerts, useAllRegions } from "../../hooks/useDashboardData";
 import { EmptyState, ErrorState, LoadingState, RiskBadge } from "../common/States";
 import { retryingHint } from "../../lib/retryHint";
 import { bandLabel } from "../../theme";
 import { variableLabel } from "../../lib/displayNames";
 import { dayLabel } from "../../lib/format";
 import { alertsToCsv, csvFilename } from "../../lib/alertsCsv";
+import { alertTotals } from "../../lib/alertTotals";
 
 const LIMIT = 200;
 
@@ -36,6 +37,10 @@ export function AlertsPage({ onSelect, filter, onFilter }: {
   useEffect(() => setShown(PAGE), [filter]);
 
   const stats = useMemo(() => summarise(alerts), [alerts]);
+  // The summary counts every district-day, not the capped list (see lib/alertTotals). The
+  // dashboard has already fetched this, so it comes from the query cache.
+  const allRegions = useAllRegions().data;
+  const totals = useMemo(() => alertTotals(allRegions), [allRegions]);
   const visible = alerts?.slice(0, shown) ?? [];
   const remaining = (alerts?.length ?? 0) - visible.length;
 
@@ -96,23 +101,41 @@ export function AlertsPage({ onSelect, filter, onFilter }: {
 
       {stats ? (
         <div className="kpis kpis--flush">
-          <Stat cap="bust" label="In the bust band" value={String(stats.bust)}
-            note={<>of <b>{stats.total}</b> alerts shown</>} />
-          <Stat cap="watch" label="In the watch band" value={String(stats.watch)}
-            note={<>across <b>{stats.regions}</b> distinct regions</>} />
+          {totals ? (
+            <>
+              <Stat cap="bust" label="In the bust band" value={totals.bust.toLocaleString("en-IN")}
+                note={<>district-days across all <b>{totals.days}</b> lead days</>} />
+              <Stat cap="watch" label="In the watch band" value={totals.watch.toLocaleString("en-IN")}
+                note={<><b>{totals.districts}</b> districts on alert at least once</>} />
+            </>
+          ) : (
+            <>
+              <Stat cap="bust" label="In the bust band" value={String(stats.bust)}
+                note={<>of <b>{stats.total}</b> alerts shown</>} />
+              <Stat cap="watch" label="In the watch band" value={String(stats.watch)}
+                note={<>across <b>{stats.regions}</b> distinct regions</>} />
+            </>
+          )}
           <Stat cap="blue" label="Peak bust risk" value={`${(stats.peak.bust_probability * 100).toFixed(0)}%`}
             note={<><b>{stats.peak.region_name ?? stats.peak.region_id}</b> · {dayLabel(stats.peak.lead_time_days)}</>} />
-          <Stat cap="blue" label="Most common cause" value={variableLabel(stats.topDriver?.[0]) || "—"}
-            note={stats.topDriver
-              ? <>the main cause in <b>{stats.topDriver[1]}</b> of {stats.total}</>
-              : <>no dominant variable recorded</>} />
+          {totals ? (
+            <Stat cap="blue" label="Most common cause" value={variableLabel(totals.topDriver?.[0]) || "—"}
+              note={totals.topDriver
+                ? <>the main cause in <b>{totals.topDriver[1].toLocaleString("en-IN")}</b> of {(totals.bust + totals.watch).toLocaleString("en-IN")} alert district-days</>
+                : <>no dominant variable recorded</>} />
+          ) : (
+            <Stat cap="blue" label="Most common cause" value={variableLabel(stats.topDriver?.[0]) || "—"}
+              note={stats.topDriver
+                ? <>the main cause in <b>{stats.topDriver[1]}</b> of {stats.total}</>
+                : <>no dominant variable recorded</>} />
+          )}
         </div>
       ) : null}
 
       {alerts?.length ? (
         <section className="card card--table">
           <div className="tablewrap">
-            <table className="dtable dtable--fill">
+            <table className="dtable dtable--spread">
               <thead>
                 <tr>
                   <th>Region</th>

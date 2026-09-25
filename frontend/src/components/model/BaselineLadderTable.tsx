@@ -1,5 +1,5 @@
 import type { ModelStatusResponse } from "../../api/types";
-import { LEAD_DAY_RUNG_NAME } from "../../lib/baselineLadder";
+import { LEAD_DAY_RUNG_NAME, rungLabel } from "../../lib/baselineLadder";
 import { formatMetric } from "../../lib/format";
 
 type Baselines = ModelStatusResponse["baselines"];
@@ -30,7 +30,7 @@ export function BaselineLadderTable({ baselines, flagLeadDay = false }: {
               .join(" ") || undefined;
             return (
               <tr key={m.name} className={cls}>
-                <td>{m.is_model ? <b>{m.name}</b> : m.name}</td>
+                <td title={m.name}>{m.is_model ? <b>{rungLabel(m.name)}</b> : rungLabel(m.name)}</td>
                 <td className="mono">{formatMetric(m.brier, 4)}</td>
                 <td className="mono">{formatMetric(m.bss, 4)}</td>
                 <td className="mono">{formatMetric(m.roc_auc, 4)}</td>
