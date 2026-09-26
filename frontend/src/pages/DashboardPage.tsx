@@ -203,7 +203,7 @@ export function DashboardPage() {
         <AlertsPage
           filter={alertFilter}
           onFilter={setAlertFilter}
-
+          stateNames={stateNames}
           onSelect={(regionId, lead) => {
             setSelectedRegion(regionId);
             setLeadDay(lead);
@@ -303,7 +303,7 @@ export function DashboardPage() {
             * chart that used to sit beside it is now the district panel's resting state. */}
           {statusQuery.data?.baselines?.models?.length ? (
             <section className="app__below">
-              <BaselineLadderCard data={statusQuery.data} />
+              <BaselineLadderCard data={statusQuery.data} onSeeFull={() => setView("model")} />
             </section>
           ) : null}
         </>

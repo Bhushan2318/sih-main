@@ -26,3 +26,11 @@ export function stateNamesFrom(topology: Topology | null): Map<string, string> {
   });
   return out;
 }
+
+/** `IN-MH-NAGPUR` -> `IN-MH`. The region_id scheme is `IN-<state>-<district>` and the
+ * API sends no separate state field, so the prefix is the only state grouping key that
+ * exists anywhere in served data - the same derivation RiskTicker uses to roll districts
+ * up to states. */
+export function stateIdOf(regionId: string): string {
+  return regionId.split("-").slice(0, 2).join("-");
+}
