@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { RegionDetailResponse } from "../../api/types";
-import { variableLabel } from "../../lib/displayNames";
+import { featureLabel, variableLabel } from "../../lib/displayNames";
 import { REAL_REGION_LEHLADAKH, REAL_REGION_PURBAMEDINIPUR } from "../../test/fixtures/regionDetail";
 
 let current: RegionDetailResponse | undefined;
@@ -25,7 +25,9 @@ const peakDriver = (d: RegionDetailResponse) =>
 describe("RegionDetailPanel opens on the leading driver", () => {
   beforeEach(() => { current = undefined; });
 
-  it("shows the peak-risk driver's forecast-vs-actual chart first, then SHAP", () => {
+  it("puts SHAP right under the peak, above the driver's forecast-vs-actual chart", () => {
+    // The panel scrolls inside itself; SHAP at the bottom sat below the fold of that
+    // scroll, and it is the feature that explains the prediction.
     current = REAL_REGION_PURBAMEDINIPUR;
     render(<RegionDetailPanel regionId={current.region_id} onClose={() => {}} />);
 
@@ -34,8 +36,17 @@ describe("RegionDetailPanel opens on the leading driver", () => {
 
     const headings = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent ?? "");
     const at = (re: RegExp) => headings.findIndex((t) => re.test(t));
-    expect(at(/Leading driver/)).toBeLessThan(at(/What the model relies on/));
-    expect(at(/What the model relies on/)).toBeLessThan(at(/Bust probability by lead day/));
+    expect(at(/Peak bust risk/)).toBeLessThan(at(/What the model relies on/));
+    expect(at(/What the model relies on/)).toBeLessThan(at(/Leading driver/));
+    expect(at(/Leading driver/)).toBeLessThan(at(/Bust probability by lead day/));
+  });
+
+  it("sums up the top SHAP factors in one line under the peak", () => {
+    current = REAL_REGION_PURBAMEDINIPUR;
+    render(<RegionDetailPanel regionId={current.region_id} onClose={() => {}} />);
+    const top = current.top_factors.slice(0, 3).map((f) => featureLabel(f.feature));
+    const line = screen.getByText(/What the model leans on here/);
+    for (const name of top) expect(line).toHaveTextContent(name);
   });
 
   it("a different district opens on its own driver, not the previous tab", () => {

@@ -8,10 +8,11 @@ import {
 } from "../../lib/riskBands";
 import { dayLabel } from "../../lib/format";
 
-export function KpiStrip({ all, day, riskCuts }: {
+export function KpiStrip({ all, day, riskCuts, onSelectRegion }: {
   all?: AllRegionsResponse;
   day?: RegionsResponse;
   riskCuts?: RiskCuts;
+  onSelectRegion?: (regionId: string) => void;
 }) {
   const stats = useMemo(() => derive(all, day, riskCuts), [all, day, riskCuts]);
   if (!stats) return null;
@@ -20,7 +21,7 @@ export function KpiStrip({ all, day, riskCuts }: {
     <section className="kpis" aria-label="Cycle summary">
       <Kpi
         cap={stats.meanCap}
-        label="Mean bust risk"
+        label={`Mean bust risk · ${dayLabel(stats.lead)}`}
         value={stats.mean != null ? `${(stats.mean * 100).toFixed(0)}%` : "—"}
         note={
           stats.scored
@@ -30,7 +31,7 @@ export function KpiStrip({ all, day, riskCuts }: {
       />
       <Kpi
         cap="bust"
-        label="Bust-risk regions"
+        label={`Bust-risk regions · ${dayLabel(stats.lead)}`}
         value={
           stats.scored ? (
             <>
@@ -69,8 +70,9 @@ export function KpiStrip({ all, day, riskCuts }: {
       />
       <Kpi
         cap="watch"
-        label="Peak risk"
+        label={`Peak risk · ${dayLabel(stats.lead)}`}
         value={stats.peak ? `${(stats.peak.value * 100).toFixed(0)}%` : "—"}
+        onOpen={stats.peak && onSelectRegion ? () => onSelectRegion(stats.peak!.id) : undefined}
         note={
           stats.peak ? (
             <>
@@ -86,14 +88,25 @@ export function KpiStrip({ all, day, riskCuts }: {
   );
 }
 
-function Kpi({ cap, label, value, note }: {
+function Kpi({ cap, label, value, note, onOpen }: {
   cap: string;
   label: string;
   value: React.ReactNode;
   note: React.ReactNode;
+  onOpen?: () => void;
 }) {
+  const open = onOpen
+    ? {
+        role: "button",
+        tabIndex: 0,
+        onClick: onOpen,
+        onKeyDown: (e: React.KeyboardEvent) => {
+          if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpen(); }
+        },
+      }
+    : {};
   return (
-    <article className="kpi rise">
+    <article className={onOpen ? "kpi kpi--open rise" : "kpi rise"} {...open}>
       <div className={`kpi__cap kpi__cap--${cap}`} aria-hidden="true" />
       <div className="kpi__label">{label}</div>
       <div className="kpi__value">{value}</div>
@@ -135,6 +148,7 @@ function derive(all?: AllRegionsResponse, day?: RegionsResponse, riskCuts?: Risk
     high,
     peak: peakRow
       ? {
+          id: peakRow.region_id,
           name: peakRow.region_name ?? peakRow.region_id,
           value: peakRow.bust_probability as number,
           driver: peakRow.dominant_variable,
