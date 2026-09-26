@@ -26,6 +26,22 @@ export function formatByMagnitude(v: number | null | undefined): string {
   return v.toFixed(2);
 }
 
+/** The top-bar cycle chip. It used to read "2026-09-26 → 2026-09-26" on Day 1, where the
+ * issue and valid dates coincide, which looked like a typo rather than two dates. */
+export function cycleChipLabel(init: string, valid: string | null | undefined, lead: number): string {
+  const issued = `Issued ${formatDayMonthUtc(init)}`;
+  return valid ? `${issued} · valid ${formatDayMonthUtc(valid)} (${dayLabel(lead)})` : issued;
+}
+
+// Fixed names: the en-GB locale spells September "Sept" or "Sep" depending on the browser's ICU.
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+function formatDayMonthUtc(iso: string): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  if (!y || !m || !d || m > 12) return iso;
+  return `${d} ${MONTHS[m - 1]}`;
+}
+
 /** A YYYY-MM-DD date as "13 Aug 2018", read in UTC. Cycle init dates are UTC days; read in
  * the viewer's own zone, a date near midnight could print as the day before. */
 export function formatDateUtc(iso: string): string {
