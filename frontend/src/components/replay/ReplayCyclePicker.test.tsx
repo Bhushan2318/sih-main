@@ -41,7 +41,7 @@ describe("ReplayCyclePicker", () => {
 describe("ReplayEventHeader", () => {
   it("names the event, its sample, and what the model knew", () => {
     const ev = EVENTS[0];
-    render(<ReplayEventHeader cycle={ev} />);
+    render(<ReplayEventHeader cycle={ev} steps={[]} focusOptions={[]} />);
     expect(screen.getByText(ev.title as string)).toBeInTheDocument();
     expect(screen.getByText(ev.sample_note as string)).toBeInTheDocument();
     const [y, m, d] = ev.init_date.split("-").map(Number);
