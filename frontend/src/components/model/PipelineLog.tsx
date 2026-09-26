@@ -1,6 +1,12 @@
+import { useState } from "react";
 import type { IngestRunRow } from "../../api/types";
 import { stampShort } from "../../format";
 import { useIngestRuns } from "../../hooks/useDashboardData";
+
+/** Rows shown before the reader has to ask for more. A healthy pipeline's log is the
+ * same line over and over - five is enough to see that pattern (or a break in it)
+ * without the tail of near-identical successes pushing the rest of the Model tab down. */
+const VISIBLE = 5;
 
 const LABEL: Record<string, string> = {
   forecast: "GEFS cycle",
@@ -21,12 +27,14 @@ function when(iso: string | null): string {
 
 export function PipelineLog() {
   const { data, error, isLoading } = useIngestRuns(25);
+  const [showAll, setShowAll] = useState(false);
   if (isLoading) return null;
 
   if (error || !data?.runs?.length) return null;
 
   const runs: IngestRunRow[] = data.runs;
   const refused = runs.filter((r) => r.status === "failed" || r.status === "skipped").length;
+  const visible = showAll ? runs : runs.slice(0, VISIBLE);
 
   return (
     <section className="card">
@@ -48,7 +56,7 @@ export function PipelineLog() {
             </tr>
           </thead>
           <tbody>
-            {runs.map((r) => (
+            {visible.map((r) => (
               <tr key={r.id}>
                 <td className="mono small">{when(r.started_at)}</td>
                 <td>{LABEL[r.kind] ?? r.kind}</td>
@@ -67,6 +75,13 @@ export function PipelineLog() {
           </tbody>
         </table>
       </div>
+      {runs.length > VISIBLE ? (
+        <div className="tablemore">
+          <button type="button" className="chip" onClick={() => setShowAll((s) => !s)}>
+            {showAll ? "Show fewer" : `Show all ${runs.length}`}
+          </button>
+        </div>
+      ) : null}
       {/* The raw detail line is for whoever is debugging the feed, and it is long - a
         * page of HTTP 429 bodies when the observation API rate-limits. One click away,
         * not gone: partial pulls are a documented known issue, not something to hide. */}
