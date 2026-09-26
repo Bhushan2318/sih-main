@@ -68,9 +68,28 @@ def test_an_unverified_cycle_builds_no_charts_and_does_not_search_for_them():
     assert secs < 0.5, f"{secs:.2f}s to find that nothing is verified"
 
 
+def _one_old_pass(sc) -> float:
+    """The unit the old code paid 666 times: one full-table filter for one district.
+    Median of five, so one scheduler hiccup does not move the yardstick."""
+    pv = sc.per_variable
+    times = []
+    for _ in range(5):
+        t = time.perf_counter()
+        pv[(pv["region_id"].astype(str) == "IN-XX-R000")
+           & pv["observed_value"].notna() & pv["predicted_value"].notna()].copy()
+        times.append(time.perf_counter() - t)
+    return sorted(times)[2]
+
+
 def test_a_verified_cycle_charts_every_district_in_one_pass():
-    secs, (default, options) = _timed(_shape_cycle(verified=True))
+    """Budgeted in old-style passes, not seconds: a fixed 1.5 s held on the laptop but
+    not on the 16 GB Mac (2026-09-26: old code 22.9 s, new 2.5-3.5 s there). The old code
+    costs ~666 passes on any machine; one pass plus per-district chart building stays far
+    under 250."""
+    sc = _shape_cycle(verified=True)
+    unit = _one_old_pass(sc)
+    secs, (default, options) = _timed(sc)
     assert len(options) == 666
     assert default is options[0]
     assert all(len(o.points) == 10 for o in options)
-    assert secs < 1.5, f"{secs:.2f}s for 666 districts"
+    assert secs < 250 * unit, f"{secs:.2f}s = {secs / unit:.0f} old-style passes for 666 districts"
