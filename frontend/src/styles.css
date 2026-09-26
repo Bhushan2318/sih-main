@@ -1031,6 +1031,14 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 
 .app__body--replay { display: block; padding: 14px 1.3rem 2rem; }
 .replay { max-width: 1180px; margin: 0 auto; }
+.replay__event {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.2rem 0.9rem;
+  margin-bottom: 0.7rem; padding: 0.55rem 0.9rem;
+  background: var(--card); border: 1px solid var(--rule); border-left: 3px solid var(--accent);
+  border-radius: var(--r);
+}
+.replay__event-title { font-family: var(--f-d); font-variation-settings: "wdth" 96, "wght" 750; font-size: 1.05rem; }
+.replay__event-note { color: var(--ink-2); font-size: 0.85rem; }
 .replay__intro { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.6rem 1.2rem; margin-bottom: 0.7rem; }
 .replay__pick { display: flex; align-items: center; gap: 0.4rem; min-width: 0; max-width: 100%; }
 .replay__pick select {

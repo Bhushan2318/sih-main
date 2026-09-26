@@ -9,9 +9,13 @@ import { CHART } from "../../theme";
 export function ReplayFocusChart({
   focus,
   currentLead,
+  why = "biggest driver across this whole run",
 }: {
   focus: ReplayFocusSeries;
   currentLead: number;
+  /** Why this variable is the one charted. A past event charts what it is remembered for,
+   * which is not necessarily what drove the model's risk there. */
+  why?: string;
 }) {
 
   const thr = focus.bust_threshold;
@@ -34,7 +38,7 @@ export function ReplayFocusChart({
         <span className="muted small">
           {focus.variable.replace(/_/g, " ")}
           {focus.unit ? ` · ${focus.unit}` : ""}
-          <span className="muted"> · biggest driver across this whole run</span>
+          <span className="muted"> · {why}</span>
         </span>
       </div>
       <ResponsiveContainer width="100%" height={220}>
