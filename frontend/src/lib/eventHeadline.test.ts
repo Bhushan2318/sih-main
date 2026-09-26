@@ -1,44 +1,15 @@
 import { describe, expect, it } from "vitest";
 import type { ReplayFocusSeries, ReplayLeadStep } from "../api/types";
 import { REAL_REPLAY_CYCLES } from "../test/fixtures/replayCycles";
+import { REAL_KERALA_DAY3_STEP, REAL_KERALA_IDUKKI_RAINFALL } from "../test/fixtures/replayKerala";
 import { eventHeadline } from "./eventHeadline";
 
-// REAL_REPLAY_CYCLES (fetched from the live API, see that file's header) has no fixture
-// yet carrying per-lead forecast-vs-observed series or per-district step rows for an
-// event, so there is nothing real to slice for those two inputs. The event identity below
-// (id, init_date, peak_valid_date, focus_region_id, focus_variable) is the real Kerala
-// floods catalogue entry, copied from REAL_REPLAY_CYCLES itself; only the per-lead
-// predicted/observed/probability numbers are constructed round numbers, chosen to
-// exercise the sentence's formatting, not measurements of anything.
 const KERALA = REAL_REPLAY_CYCLES.find((c) => c.title?.includes("Kerala"));
 if (!KERALA) throw new Error("fixture no longer has the Kerala case");
 
-const DAY3_STEP: ReplayLeadStep = {
-  lead_time_days: 3,
-  valid_date: "2018-08-15",
-  regions: [
-    { region_id: "IN-KL-IDUKKI", region_name: "Idukki, Kerala", bust_probability: 0.62,
-      risk_band: "medium", confidence: 0.8, dominant_variable: "rainfall_mm" },
-  ],
-  n_high: 0,
-  n_medium: 1,
-  mean_bust_probability: 0.62,
-  narration: "Day 3 test narration",
-};
-
-const IDUKKI_RAINFALL: ReplayFocusSeries = {
-  region_id: "IN-KL-IDUKKI",
-  region_name: "Idukki, Kerala",
-  variable: "rainfall_mm",
-  unit: "mm",
-  bust_threshold: 40,
-  points: [
-    { lead_time_days: 1, valid_date: "2018-08-13", predicted_value: 12, observed_value: 18,
-      observed_status: "final", ensemble_spread: 2 },
-    { lead_time_days: 3, valid_date: "2018-08-15", predicted_value: 45.2, observed_value: 312.6,
-      observed_status: "final", ensemble_spread: 30 },
-  ],
-};
+// Real served values for the Kerala event's peak day (see replayKerala.ts).
+const DAY3_STEP = REAL_KERALA_DAY3_STEP;
+const IDUKKI_RAINFALL = REAL_KERALA_IDUKKI_RAINFALL;
 
 describe("eventHeadline", () => {
   it("is null for a live forecast cycle, which has no event facts to state", () => {
@@ -56,11 +27,11 @@ describe("eventHeadline", () => {
 
   it("states the peak day, the forecast-vs-observed values, and the bust risk that day", () => {
     const headline = eventHeadline(KERALA, [DAY3_STEP], [IDUKKI_RAINFALL]);
-    // 312.6 prints as "313" - formatByMagnitude (lib/format.ts) drops to 0 decimals at
-    // |v| >= 100, the same precision rule every other chart and panel in the app uses.
+    // Served: predicted 35.269 mm, observed 144.90 mm, bust probability 0.712 (medium).
+    // formatByMagnitude drops to 0 decimals at |v| >= 100, as every chart in the app does.
     expect(headline).toBe(
-      "Peak day 15 Aug 2018 (Day 3). The forecast gave Idukki, Kerala 45.2 mm; " +
-      "ERA5 recorded 313 mm. Sanket's bust risk that day: 62% (watch).",
+      "Peak day 15 Aug 2018 (Day 3). The forecast gave Idukki, Kerala 35.3 mm; " +
+      "ERA5 recorded 145 mm. Sanket's bust risk that day: 71% (watch).",
     );
   });
 
@@ -79,6 +50,6 @@ describe("eventHeadline", () => {
   it("falls back to any series for the district when the exact variable is unavailable", () => {
     const otherVariable: ReplayFocusSeries = { ...IDUKKI_RAINFALL, variable: "humidity_pct", unit: "%" };
     const headline = eventHeadline(KERALA, [DAY3_STEP], [otherVariable]);
-    expect(headline).toContain("Idukki, Kerala 45.2 %");
+    expect(headline).toContain("Idukki, Kerala 35.3 %");
   });
 });
