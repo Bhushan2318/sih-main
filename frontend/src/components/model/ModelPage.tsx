@@ -6,6 +6,7 @@ import { useLiveStore } from "../../store/liveStore";
 import { ErrorState, LoadingState } from "../common/States";
 import { retryingHint } from "../../lib/retryHint";
 import { UploadPanel } from "../upload/UploadPanel";
+import { BaselineLadderTable } from "./BaselineLadderTable";
 import { CorpReliabilityCard } from "./CorpReliabilityCard";
 import { EconomicValueCard } from "./EconomicValueCard";
 import { MissesCard } from "./MissesCard";
@@ -268,6 +269,21 @@ export function ModelPage() {
                 RMSE the same thing but weighted towards the big misses, and R² the share of
                 the variation the model accounts for.
               </p>
+            </section>
+          ) : null}
+
+          {/* The full ladder: every rung, not just the compact climatology / best baseline
+            * / classifier read on Operations. That card links here for exactly this. */}
+          {data.baselines?.models?.length ? (
+            <section className="card card--table">
+              <header className="card__head"><h3>Every baseline, compared to climatology</h3></header>
+              <p className="muted small">
+                Each baseline is fitted on the training split alone and scored on the same
+                held-out rows as the classifier. Skill vs climatology is 0.000 for simply
+                guessing the long-run bust rate every time; higher is better.
+              </p>
+              <BaselineLadderTable baselines={data.baselines} flagLeadDay />
+              <p className="muted small">↓ lower is better · ↑ higher is better</p>
             </section>
           ) : null}
 
