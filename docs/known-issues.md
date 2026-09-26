@@ -1257,6 +1257,13 @@ here rather than discovered live.
   - all 666 districts are scored on every one of lead days 1-10;
   - its year is not a training year;
   - ERA5 has the case's variable over its district on its peak day.
+- **A new model needs its cases rebuilt.** The cases live in the run directory of the
+  model that scored them, so publishing a different run without them quietly drops Replay
+  back to live cycles only. That is by design: a case must never be served by a model
+  that did not score it. Before publishing a new run, run
+  `python -m scripts.build_replay_cases --run-id <run_id>` (about a minute per case, on
+  the workstation). The serving check then confirms the cases serve. A CI-trained run
+  has no cases.
 - **What the numbers are.** Everything Replay shows for an event is read from its
   artifact. The only hand-written text is the four titles. No score for any event is
   written in this file or in source; the builder prints them, and the site serves them.
