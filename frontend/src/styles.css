@@ -147,6 +147,21 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 .screen1 > .hero .hero__grid { flex: 1 1 auto; padding-block: clamp(16px, 2.2vh, 34px); }
 .screen1 > .kpis { padding-top: 0; }
 
+/* The state ticker closes the opening screen, but measured 2026-09-27 it sat 19-109 px
+ * below the fold on every common laptop (13" to 16", browser toolbars included). Pinned to
+ * the viewport's bottom edge while the opening screen is on it, it is always visible and
+ * settles back into place as the page scrolls past. Laptops and up only: on a phone the
+ * opening screen is several screens tall and a pinned band would sit over all of it. */
+@media (min-width: 1081px) {
+  .screen1 > .ticker { position: sticky; bottom: 0; z-index: 30; }
+}
+/* Short laptop windows (13", 14" with a bookmarks bar, 1366x768): the pinned ticker would sit over the replay
+ * button. The grey note is the one part of the opening screen that is also said elsewhere
+ * (About, Model), so it gives way and the screen fits. */
+@media (min-width: 1081px) and (max-height: 860px) {
+  .screen1 .hero__why { display: none; }
+}
+
 #operations { scroll-margin-top: var(--topbar-h); }
 @media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
 
@@ -164,7 +179,7 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
  * button - so it touched the KPI strip above and the ticker below. */
 .cuerow {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 12px; padding: 26px 1.3rem 20px;
+  gap: clamp(6px, 1.2vh, 12px); padding: clamp(12px, 2.4vh, 26px) 1.3rem clamp(8px, 1.6vh, 20px);
 }
 /* The one thing on the opening screen worth clicking: replaying a real bust is the whole
  * argument, and it used to sit here as 9.5px uppercase mono in the same ink as the body
