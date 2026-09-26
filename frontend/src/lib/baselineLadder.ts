@@ -35,6 +35,23 @@ export function leadDayIsUninformative(models: BaselineModel[] | undefined): boo
   return rung.bss <= NEGLIGIBLE_SKILL;
 }
 
+/**
+ * The strongest baseline that is not the served model and not the climatology floor
+ * itself - climatology is always shown in its own row, so naming it "the best baseline"
+ * too would be circular. Ranked by bss (skill vs climatology), the metric every rung in
+ * the ladder is already compared on. A rung with no measured bss is skipped rather than
+ * treated as a skill of zero, which would let it win by default.
+ */
+export function bestBaseline(models: BaselineModel[] | undefined): BaselineModel | undefined {
+  let best: BaselineModel | undefined;
+  for (const m of models ?? []) {
+    if (m.is_model || m.name === "climatology") continue;
+    if (typeof m.bss !== "number" || !Number.isFinite(m.bss)) continue;
+    if (!best || m.bss > (best.bss as number)) best = m;
+  }
+  return best;
+}
+
 /** The ladder's rungs by name, in words. The raw name stays available as a tooltip for
  * anyone checking against baselines.json. */
 const RUNG_LABELS: Record<string, string> = {

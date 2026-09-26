@@ -1298,3 +1298,38 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
   overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
 }
 .panel__actions { display: flex; align-items: center; gap: 8px; flex: none; }
+
+/* ===========================================================================
+ * PR C: Alerts search/filter/grouping toolbar, and the compact baseline card's
+ * "full comparison" link. New block, appended rather than interleaved above,
+ * so it does not collide with edits elsewhere in this file.
+ * ======================================================================== */
+
+/* The Alerts table's own controls: search, state filter, one-row-per-district. Sits
+ * inside the table card, above the table it filters, distinct from the page-level
+ * band chips and CSV button in the header. */
+.alerts-toolbar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem;
+  padding: 0 0.25rem 0.75rem;
+}
+.alerts-search { flex: 1 1 220px; min-width: 160px; }
+.alerts-search input {
+  width: 100%; box-sizing: border-box;
+  padding: 0.45rem 0.6rem; border: 1px solid var(--rule);
+  border-radius: 8px; background: var(--card-2); color: var(--ink);
+  font: inherit; font-size: 0.82rem;
+}
+.alerts-search input:focus-visible { outline: 2px solid var(--blue); border-color: var(--blue); }
+.alerts-statefilter {
+  padding: 0.45rem 0.6rem; border: 1px solid var(--rule);
+  border-radius: 8px; background: var(--card-2); color: var(--ink);
+  font: inherit; font-size: 0.82rem; max-width: 100%;
+}
+.alerts-statefilter:focus-visible { outline: 2px solid var(--blue); border-color: var(--blue); }
+@media (max-width: 560px) {
+  .alerts-toolbar { flex-direction: column; align-items: stretch; }
+  .alerts-statefilter { width: 100%; }
+}
+
+/* The compact ladder card's link to the Model tab's full comparison. */
+.ladder__more { margin: 0.6rem 0 0; }
