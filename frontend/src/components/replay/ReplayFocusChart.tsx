@@ -3,6 +3,8 @@ import {
   Tooltip, XAxis, YAxis,
 } from "recharts";
 import type { ReplayFocusSeries } from "../../api/types";
+import { yDomainForVariable } from "../../lib/chartDomain";
+import { variableLabel } from "../../lib/displayNames";
 import { dayLabel, formatByMagnitude } from "../../lib/format";
 import { CHART } from "../../theme";
 
@@ -36,7 +38,7 @@ export function ReplayFocusChart({
       <div className="replay-focus__head">
         <strong>{focus.region_name ?? focus.region_id}</strong>
         <span className="muted small">
-          {focus.variable.replace(/_/g, " ")}
+          {variableLabel(focus.variable)}
           {focus.unit ? ` · ${focus.unit}` : ""}
           <span className="muted"> · {why}</span>
         </span>
@@ -45,7 +47,7 @@ export function ReplayFocusChart({
         <ComposedChart data={data} margin={{ top: 20, right: 22, bottom: 4, left: -6 }}>
           <CartesianGrid strokeDasharray="3 3" />
           <XAxis dataKey="lead" tickFormatter={dayLabel} />
-          <YAxis width={58} domain={["auto", "auto"]} tickFormatter={(v: number) => formatByMagnitude(v)} />
+          <YAxis width={58} domain={yDomainForVariable(focus.variable)} tickFormatter={(v: number) => formatByMagnitude(v)} />
           <Tooltip
             labelFormatter={(l) => `Lead day ${l}`}
             formatter={(v: unknown) => {
