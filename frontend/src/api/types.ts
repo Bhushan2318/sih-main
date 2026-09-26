@@ -314,6 +314,12 @@ export interface ReplayCycleSummary {
   peak_region_variable: string | null;
   peak_region_unit: string | null;
   medium_range_growth: number;
+  /** "event": a past cycle, outcome known, scored as of its init. "forecast": a recent live cycle. */
+  kind?: "event" | "forecast" | null;
+  title?: string | null;
+  sample_note?: string | null;
+  focus_region_id?: string | null;
+  focus_variable?: string | null;
 }
 
 export interface ReplayRegionStep {

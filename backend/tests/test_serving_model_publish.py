@@ -166,3 +166,26 @@ def test_the_check_reads_regions_from_the_shape_that_endpoint_actually_returns()
         == "IN-HP-SHIMLA"
     assert w.scored_regions({"days": []}) == []
     assert w.scored_regions({}) == []
+
+
+def test_the_check_refuses_a_run_whose_past_events_do_not_serve():
+    """A run that carries replay_cases/ must list them and open Replay on the first one.
+    Otherwise the site's Replay would open on an unverified live cycle again and nothing
+    would say why. Shape-only payloads; nothing here is a metric."""
+    from scripts import _serving_check_worker as w
+
+    event = {"init_date": "2018-08-13", "kind": "event", "focus_region_id": "IN-KL-IDUKKI"}
+    live = {"init_date": "2026-09-25", "kind": "forecast"}
+    opened = {"init_date": "2018-08-13", "steps": [{}] * 10,
+              "focus": {"region_id": "IN-KL-IDUKKI"}}
+
+    assert w.replay_event_problem([event, live], opened, expect_events=True) is None
+    assert "no past event" in w.replay_event_problem([live], opened, expect_events=True)
+    assert "opened on" in w.replay_event_problem(
+        [event, live], {**opened, "init_date": "2026-09-25"}, expect_events=True)
+    assert "lead days" in w.replay_event_problem(
+        [event], {**opened, "steps": [{}] * 3}, expect_events=True)
+    assert "focus" in w.replay_event_problem(
+        [event], {**opened, "focus": {"region_id": "IN-TN-CHENNAI"}}, expect_events=True)
+    # A run without cases is checked for nothing new.
+    assert w.replay_event_problem([live], {}, expect_events=False) is None

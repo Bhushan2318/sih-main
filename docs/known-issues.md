@@ -48,6 +48,9 @@ here rather than discovered live.
     12-17 Sep cycles rose from 0.29-0.38 on Day 1 to 0.43-0.58 on Day 10.
 - **Replay offers the 10 most recent cycles**, not every cycle in the store
   (`replay_service._MAX_CYCLES`). Each candidate costs one scoring pass on first call.
+  Above them it offers four past events whose outcome is known, and it opens on the first
+  of them. How those were chosen, and what they are scored with, is under "Replay's past
+  events" at the end of this file.
 - **RESOLVED — feature and variable names used to render raw, in snake_case.**
   `frontend/src/lib/displayNames.ts` now maps every modelled variable and every engineered
   feature prefix (`pred_err_`, `spread_`, `conf_`, `fc_`) to plain English, with a
@@ -1101,8 +1104,9 @@ here rather than discovered live.
 - **What it does to the numbers.** In training and in the held-out year, every row with a
   prior lead has a real observed error in this column. On a live cycle, only leads whose
   previous day has already been observed have one; the rest are NaN. Replay of a past
-  cycle has them all. So held-out regressor metrics, and replay, can look better than
-  live scoring. How much better has **not** been measured: that needs a retrain without the
+  cycle has them all, except Replay's past events, which are scored with the column
+  blanked (see "Replay's past events"). So held-out regressor metrics, and replay of a
+  recent verified cycle, can look better than live scoring. How much better has **not** been measured: that needs a retrain without the
   column and a comparison on the same 2017 rows.
 - **Not a leak:** `historical_bust_frequency_region_season`. It is computed from the
   training split only (`train_pipeline.py`, `compute_historical_bust_frequency(tr)`) and
@@ -1212,3 +1216,54 @@ here rather than discovered live.
     a date.
   - Fix: a `use_precomputed=False` path for the precompute. Land it together with 00Z-only
     ingest, so forcing a re-score does not expose the collapse.
+
+### Replay's past events, added 2026-09-26
+
+- **What they are.** Replay lists four cycles from the reforecast archive above its recent
+  live cycles, and opens on the first. Each is a whole 666-district, ten-day cycle where
+  the rain forecast over one district went badly wrong. The catalogue is
+  `backend/app/services/replay_cases.py`; the artifacts are built by
+  `scripts/build_replay_cases.py` into the run directory that scored them
+  (`data/models/<run_id>/replay_cases/`), so they ship with that model and no other.
+  - Kerala floods, cycle 2018-08-13, Idukki, peak 15 Aug.
+  - Mumbai rain, cycle 2017-08-27, Mumbai Suburban, peak 29 Aug.
+  - Cyclone Ockhi, cycle 2017-11-28, Kanniyakumari, peak 30 Nov.
+  - Cyclone Fani, cycle 2019-05-01, Khordha, peak 3 May.
+- **How they were chosen.** By what happened, before any of them was scored, and each is
+  shown whatever the model said. A miss stays in. None is from a year the model trained
+  on: the builder reads the run's own `manifest.json` and refuses a training year. Each
+  case says which kind of unseen year it is. For run_20260922T043925Z, 2017 is the
+  held-out test year, and 2018 and 2019 were never used at all.
+- **Why three famous events are absent.** Replay checks the forecast against ERA5, and
+  ERA5 barely records these. Measured on the store's ERA5 district series while choosing
+  the events:
+  - Chennai, December 2015: 57 mm in ERA5, against roughly 490 mm measured on the ground.
+  - Mumbai, 26 July 2005: 74 mm in ERA5, against 944 mm measured.
+  - Patna, September 2019: 79 mm in ERA5, only the 37th wettest district that day.
+
+  Against that truth these would read as good forecasts. They can be added once IMD gauge
+  rainfall is the truth (CLAUDE.md, Known limitations: "ERA5 precipitation is weak over
+  India").
+- **Scored as of 00 UTC on the init date.** `score_cycle(..., as_of_init=True)` blanks
+  `forecast_error_lag`, the one input built from observations after the forecast was
+  issued. Every live cycle is scored with that column mostly empty, so this is the state
+  the model is in when it is used. The observed values are kept, because they are what
+  the chart checks the forecast against.
+  - **This is not the leak fix.** The model still learned from the column in training (the
+    `forecast_error_lag` entry above), and that needs a retrain, not a serve-time blank.
+    What the blank does is stop a past event looking better than the same forecast would
+    have looked on the day.
+- **The checks a case must pass.** The builder refuses a case unless:
+  - all 666 districts are scored on every one of lead days 1-10;
+  - its year is not a training year;
+  - ERA5 has the case's variable over its district on its peak day.
+- **A new model needs its cases rebuilt.** The cases live in the run directory of the
+  model that scored them, so publishing a different run without them quietly drops Replay
+  back to live cycles only. That is by design: a case must never be served by a model
+  that did not score it. Before publishing a new run, run
+  `python -m scripts.build_replay_cases --run-id <run_id>` (about a minute per case, on
+  the workstation). The serving check then confirms the cases serve. A CI-trained run
+  has no cases.
+- **What the numbers are.** Everything Replay shows for an event is read from its
+  artifact. The only hand-written text is the four titles. No score for any event is
+  written in this file or in source; the builder prints them, and the site serves them.

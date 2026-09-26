@@ -33,6 +33,29 @@ def scored_regions(payload: dict) -> list:
     return payload.get("regions") or []
 
 
+def replay_event_problem(cycles: list, replay: dict, expect_events: bool) -> "str | None":
+    """Why Replay's past events do not serve, or None if they do (or none are expected).
+
+    A run that carries replay_cases/ must list them first, and /api/replay must open on
+    the first one, all ten lead days, charting the district the event is about.
+    """
+    if not expect_events:
+        return None
+    events = [c for c in cycles if c.get("kind") == "event"]
+    if not events:
+        return "the run carries replay_cases/ but /api/replay/cycles lists no past event"
+    first = events[0]
+    if replay.get("init_date") != first.get("init_date"):
+        return (f"/api/replay opened on {replay.get('init_date')}, not the first past event "
+                f"{first.get('init_date')}")
+    if len(replay.get("steps") or []) != 10:
+        return f"the past event has {len(replay.get('steps') or [])} lead days, not 10"
+    focus = (replay.get("focus") or {}).get("region_id")
+    if focus != first.get("focus_region_id"):
+        return f"the past event's focus is {focus}, not {first.get('focus_region_id')}"
+    return None
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--run-id", required=True)
@@ -112,6 +135,22 @@ def main() -> int:
                 print(json.dumps(observed))
                 print(f"{path} returned {r.status_code}", file=sys.stderr)
                 return 1
+
+        from app.ml import registry
+        from app.services.replay_cases import DIR_NAME
+
+        expect_events = (registry.run_dir(args.run_id) / DIR_NAME).is_dir()
+        cycles = client.get("/api/replay/cycles")
+        replay = client.get("/api/replay")
+        observed["/api/replay"] = replay.status_code
+        observed["replay_events"] = sum(1 for c in (cycles.json() if cycles.status_code == 200
+                                                    else []) if c.get("kind") == "event")
+        problem = (f"/api/replay returned {replay.status_code}" if replay.status_code != 200
+                   else replay_event_problem(cycles.json(), replay.json(), expect_events))
+        if problem:
+            print(json.dumps(observed))
+            print(problem, file=sys.stderr)
+            return 1
 
     print(json.dumps(observed))
     return 0
