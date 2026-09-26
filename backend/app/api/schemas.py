@@ -201,6 +201,13 @@ class ReplayCycleSummary(Schema):
     peak_region_variable: Optional[str] = None
     peak_region_unit: Optional[str] = None
     medium_range_growth: float = 0.0
+    # "event": a past cycle from the reforecast archive, outcome known, scored as of its
+    # init (app/services/replay_cases.py). "forecast": a recent live cycle.
+    kind: Optional[str] = None
+    title: Optional[str] = None
+    sample_note: Optional[str] = None
+    focus_region_id: Optional[str] = None
+    focus_variable: Optional[str] = None
 
 
 class ReplayRegionStep(Schema):

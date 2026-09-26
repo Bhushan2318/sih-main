@@ -196,50 +196,27 @@ _SCORING_COLUMNS = [
 ]
 
 
-def score_cycle(
-    state: Optional[ModelState] = None,
-    init_date: "Optional[pd.Timestamp | str]" = None,
-) -> Optional[ScoredCycle]:
-    state = state or load_model_state()
-    if state is None:
-        return None
+def build_scoring_frame(
+    state: ModelState, target_init: pd.Timestamp, *, as_of_init: bool = False
+) -> pd.DataFrame:
+    """Every feature row of one cycle, as the models are about to see it.
 
-    fp = parquet_store.store_fingerprint()
-    if init_date is None:
-        latest = parquet_store.latest_forecast_init_date()
-        if latest is None:
-            return None
-        target_init = pd.Timestamp(latest).normalize()
-    else:
-        target_init = pd.Timestamp(init_date).normalize()
+    `as_of_init=True` asks what the model would have said at 00 UTC on `target_init`.
+    `forecast_error_lag` is the only input built from observations - the realised error at
+    the previous lead of the same forecast, i.e. data from after the forecast was issued
+    (engineering.build_training_frame) - so it is blanked, which is the state every live
+    cycle is scored in. The observed values stay: they are what Replay checks the forecast
+    against, not something the model is told.
 
-    cache_key = (state.run_id, str(target_init), fp)
-    with _lock:
-        hit = _score_cache.get(cache_key)
-        if hit is not None:
-            return hit
-
-    # Scored in CI, read here. At 666 districts scoring a cycle peaks at 1,406 MB against a
-    # box killed at 512; reading the answer is 38 MB. Checked before any store read, because
-    # the point is not to touch the forecast rows at all. A cycle with no artifact - Replay
-    # asks for arbitrary historical ones - falls through and scores as before. See
-    # app/ml/precomputed.py.
-    ready = precomputed.read_scored_cycle(state.run_id, target_init)
-    if ready is not None:
-        with _lock:
-            _score_cache[cache_key] = ready
-        return ready
-    # On the serving box the fall-through below is the 1,406 MB path, and Replay and the
-    # ensemble endpoint accept any date. Refuse, rather than score and be killed.
-    if settings.serving_read_only:
-        raise CycleNotPrecomputed(target_init)
-
+    This recreates issue-time conditions for a replay. It is not a fix for the leak: the
+    model still learned from the lag in training (docs/known-issues.md).
+    """
     fc_rows = parquet_store.read_dataset(
         value_types=["forecast"], init_dates=[target_init.date()], columns=_SCORING_COLUMNS,
     )
     fc_rows = fe.drop_beyond_archive_leads(fc_rows)
     if fc_rows.empty:
-        return None
+        return pd.DataFrame()
     observed = parquet_store.read_dataset(
         value_types=["observed"],
         columns=_SCORING_COLUMNS,
@@ -261,6 +238,53 @@ def score_cycle(
         jump_climatology=state.jump_climatology or None,
     )
     del subset, history
+    if as_of_init and "forecast_error_lag" in frame.columns:
+        frame["forecast_error_lag"] = np.nan
+    return frame
+
+
+def score_cycle(
+    state: Optional[ModelState] = None,
+    init_date: "Optional[pd.Timestamp | str]" = None,
+    as_of_init: bool = False,
+) -> Optional[ScoredCycle]:
+    state = state or load_model_state()
+    if state is None:
+        return None
+
+    fp = parquet_store.store_fingerprint()
+    if init_date is None:
+        latest = parquet_store.latest_forecast_init_date()
+        if latest is None:
+            return None
+        target_init = pd.Timestamp(latest).normalize()
+    else:
+        target_init = pd.Timestamp(init_date).normalize()
+
+    cache_key = (state.run_id, str(target_init), fp, as_of_init)
+    with _lock:
+        hit = _score_cache.get(cache_key)
+        if hit is not None:
+            return hit
+
+    # Scored in CI, read here. At 666 districts scoring a cycle peaks at 1,406 MB against a
+    # box killed at 512; reading the answer is 38 MB. Checked before any store read, because
+    # the point is not to touch the forecast rows at all. A cycle with no artifact - Replay
+    # asks for arbitrary historical ones - falls through and scores as before. See
+    # app/ml/precomputed.py. Never for an as-of-init score: those artifacts were scored with
+    # forecast_error_lag filled in, which is the very thing as_of_init leaves out.
+    if not as_of_init:
+        ready = precomputed.read_scored_cycle(state.run_id, target_init)
+        if ready is not None:
+            with _lock:
+                _score_cache[cache_key] = ready
+            return ready
+    # On the serving box the fall-through below is the 1,406 MB path, and Replay and the
+    # ensemble endpoint accept any date. Refuse, rather than score and be killed.
+    if settings.serving_read_only:
+        raise CycleNotPrecomputed(target_init)
+
+    frame = build_scoring_frame(state, target_init, as_of_init=as_of_init)
     if frame.empty:
         return None
 
