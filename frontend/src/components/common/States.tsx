@@ -31,6 +31,19 @@ export function LoadingState({ label = "Loading…", hint }: { label?: string; h
 }
 
 
+/** Grey placeholders in the shape of what is coming, so a slow first load reads as a page
+ * filling in rather than a blank one. Decorative only: the LoadingState beside it speaks. */
+export function Skeleton({ kind }: { kind: "hero" | "kpis" | "map" }) {
+  if (kind === "kpis") {
+    return (
+      <div className="kpis" aria-hidden="true">
+        {[0, 1, 2, 3].map((i) => <div key={i} className="skel skel--kpi" />)}
+      </div>
+    );
+  }
+  return <div className={`skel skel--${kind}`} aria-hidden="true" />;
+}
+
 export function ErrorState({ error }: { error: unknown }) {
   const message = error instanceof Error ? error.message : String(error);
   return (
