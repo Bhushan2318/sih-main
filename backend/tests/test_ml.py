@@ -764,3 +764,35 @@ def test_event_case_round_trips_through_replay(_retrain, monkeypatch):
         shutil.rmtree(replay_cases.case_dir(state.run_id, case.init_date).parent,
                       ignore_errors=True)
         replay_service.invalidate()
+
+
+def test_focus_options_match_a_direct_filter(_retrain):
+    """Every chart Replay offers is exactly the verified rows of that district and
+    variable, and every district with verified rows gets one. An oracle written against
+    the per-variable table directly, so the one-pass rewrite of _build_focus cannot change
+    what is charted. Fixture: the real GEFS/ERA5 slice above."""
+    from app.ingestion.canonical_schema import CIRCULAR_VARIABLES
+    from app.ml import inference
+    from app.services import replay_service
+
+    inference.invalidate_caches()
+    state = inference.load_model_state()
+    sc = inference.score_cycle(state, inference.available_cycles()[-1])
+    default, options = replay_service._build_focus(sc, state, None)
+
+    pv_ = sc.per_variable
+    ok = pv_[pv_["observed_value"].notna() & pv_["predicted_value"].notna()
+             & ~pv_["variable"].isin(CIRCULAR_VARIABLES)]
+    assert not ok.empty, "the sample cycle must have verified rows for this to test anything"
+    assert {o.region_id for o in options} == set(ok["region_id"].astype(str))
+    for o in options:
+        sub = ok[(ok["region_id"].astype(str) == o.region_id)
+                 & (ok["variable"] == o.variable)].sort_values("lead_time_days")
+        assert [p.lead_time_days for p in o.points] == sub["lead_time_days"].tolist()
+        assert [p.predicted_value for p in o.points] == pytest.approx(
+            sub["predicted_value"].tolist(), abs=1e-6)
+        assert [p.observed_value for p in o.points] == pytest.approx(
+            sub["observed_value"].tolist(), abs=1e-6)
+    # The API rounds to 6 decimals (region_service._f), hence abs=1e-6 above.
+    # Worst district first, and the default is the first option.
+    assert default is options[0]
