@@ -109,7 +109,7 @@ def _event_cycles(state) -> list[schemas.ReplayCycleSummary]:
             continue
         s = {k: v for k, v in s.items() if k in schemas.ReplayCycleSummary.model_fields}
         s.update(kind="event", title=case.title, focus_region_id=case.focus_region_id,
-                 focus_variable=case.focus_variable)
+                 focus_variable=case.focus_variable, peak_valid_date=case.peak_valid_date)
         try:
             out.append(schemas.ReplayCycleSummary(**s))
         except ValueError:  # a malformed summary is a missing case, never a broken list
