@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dayLabel, dayRange, formatByMagnitude, formatMetric } from "./format";
+import { cycleChipLabel, dayLabel, dayRange, formatByMagnitude, formatMetric } from "./format";
 
 describe("dayLabel / dayRange", () => {
   it("names a lead day in words, never as D1", () => {
@@ -44,5 +44,16 @@ describe("formatByMagnitude", () => {
     expect(formatByMagnitude(null)).toBe("—");
     expect(formatByMagnitude(undefined)).toBe("—");
     expect(formatByMagnitude(NaN)).toBe("—");
+  });
+});
+
+describe("cycleChipLabel", () => {
+  it("names both dates, so init and valid never read as the same date twice", () => {
+    expect(cycleChipLabel("2026-09-26", "2026-09-26", 1)).toBe("Issued 26 Sep · valid 26 Sep (Day 1)");
+    expect(cycleChipLabel("2026-09-26", "2026-09-30", 5)).toBe("Issued 26 Sep · valid 30 Sep (Day 5)");
+  });
+
+  it("falls back to the issue date alone when there is no valid date", () => {
+    expect(cycleChipLabel("2026-09-26", null, 1)).toBe("Issued 26 Sep");
   });
 });

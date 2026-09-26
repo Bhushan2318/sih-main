@@ -844,6 +844,27 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
   animation: sk-pulse 1.15s ease-in-out infinite;
 }
 @keyframes sk-pulse { 0%, 100% { transform: scaleX(0.3); opacity: 0.35; } 50% { transform: scaleX(1); opacity: 1; } }
+
+/* Loading placeholders (States.tsx Skeleton). */
+.skel {
+  border-radius: var(--r); border: 1px solid var(--rule);
+  background: linear-gradient(90deg, var(--card) 0%, #e4e8f0 50%, var(--card) 100%);
+  background-size: 200% 100%;
+  animation: sk-shimmer 1.4s ease-in-out infinite;
+}
+.skel--hero { height: 360px; margin: 1.2rem 1.3rem 0; }
+.skel--kpi { height: 104px; }
+.skel--map { height: min(620px, 70vh); margin-top: 12px; }
+@keyframes sk-shimmer { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
+@media (prefers-reduced-motion: reduce) { .skel { animation: none; } }
+
+.kpi--open { cursor: pointer; }
+.kpi--open:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+
+.panel__why { margin: 0 0 0.6rem; font-weight: 600; color: var(--ink); }
+
+/* In-page cycle pills: shown only where the sticky bar drops them (phones). */
+.cyclebar { display: none; }
 .state--empty strong { font-family: var(--f-d); font-variation-settings: "wdth" 100, "wght" 700; font-size: 1rem; }
 .notice {
   background: var(--blue-wash); border-left: 3px solid var(--blue);
@@ -1027,6 +1048,22 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
   .topbar__right { gap: 6px; }
   .pill { font-size: 9.5px; letter-spacing: 0.06em; gap: 5px; padding: 3px 7px; }
   .pill i { width: 6px; height: 6px; }
+}
+
+/* Phones: one sticky row, logo glyph plus tabs. Measured 2026-09-26 at 390 px, the
+ * three-row bar (brand, tabs, pills) was ~140 px of an 844 px screen. */
+@media (max-width: 600px) {
+  .topbar__inner { flex-wrap: nowrap; gap: 8px; padding: 0.35rem 0.7rem; }
+  .brand__wordmark { display: none; }
+  .brand__glyph { height: 28px; }
+  .viewtabs {
+    width: auto; flex: 1 1 auto; min-width: 0; justify-content: flex-start;
+    overflow-x: auto; scrollbar-width: none;
+  }
+  .viewtabs::-webkit-scrollbar { display: none; }
+  .viewtab { flex: none; padding: 6px 9px; }
+  .topbar__right { display: none; }
+  .cyclebar { display: flex; flex-wrap: wrap; gap: 6px; padding: 0.7rem 0.9rem 0; }
 }
 
 .app__body--replay { display: block; padding: 14px 1.3rem 2rem; }

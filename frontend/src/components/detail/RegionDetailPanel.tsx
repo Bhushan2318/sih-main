@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useRegionDetail } from "../../hooks/useDashboardData";
-import { variableLabel } from "../../lib/displayNames";
+import { featureLabel, variableLabel } from "../../lib/displayNames";
 import { EmptyState, ErrorState, LoadingState, RiskBadge } from "../common/States";
 import { CopyLinkButton } from "../common/CopyLinkButton";
 import { retryingHint } from "../../lib/retryHint";
@@ -86,6 +86,17 @@ export function RegionDetailPanel({
       ) : null}
 
       <section className="panel__section">
+        <h3>What the model relies on in this district (SHAP)</h3>
+        {data.top_factors.length ? (
+          <p className="panel__why">
+            What the model leans on here:{" "}
+            {data.top_factors.slice(0, 3).map((f) => featureLabel(f.feature)).join(", ")}.
+          </p>
+        ) : null}
+        <ShapFactorsList factors={data.top_factors} method={data.top_factors_method} />
+      </section>
+
+      <section className="panel__section">
         <h3>
           {showingDriver
             ? <>Leading driver: {variableLabel(current.variable).toLowerCase()}</>
@@ -152,11 +163,6 @@ export function RegionDetailPanel({
             {unavailable.map((v) => variableLabel(v.variable)).join(", ")}
           </p>
         ) : null}
-      </section>
-
-      <section className="panel__section">
-        <h3>What the model relies on in this district (SHAP)</h3>
-        <ShapFactorsList factors={data.top_factors} method={data.top_factors_method} />
       </section>
 
       <section className="panel__section">
