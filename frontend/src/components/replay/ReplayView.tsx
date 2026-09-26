@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { Topology } from "topojson-specification";
 import type { RegionSummary, ReplayRegionStep } from "../../api/types";
 import { useModelStatus, useReplay, useReplayCycles } from "../../hooks/useDashboardData";
+import { initialReplayStepIndex } from "../../lib/eventLeadDay";
 import { resolveRiskCuts } from "../../lib/riskBands";
 import { EmptyState, ErrorState, LoadingState } from "../common/States";
 import { IndiaChoroplethMap } from "../map/IndiaChoroplethMap";
@@ -31,10 +32,21 @@ export function ReplayView({ topology }: { topology: Topology | null }) {
   );
   const steps = replay?.steps ?? [];
 
+  // The cycle this replay belongs to, as listed by /api/replay/cycles - the only place
+  // peak_valid_date and kind live. Derived before the reset effect below so a newly
+  // opened event can pick its own opening day instead of always Day 1.
+  const cycles = cyclesQuery.data ?? replay?.available_cycles ?? [];
+  const shownCycle = cycles.find((c) => c.init_date === replay?.init_date);
+  const event = shownCycle?.kind === "event" ? shownCycle : null;
+
   useEffect(() => {
-    setStepIdx(0);
+    const leadDays = steps.map((s) => s.lead_time_days);
+    const opening = initialReplayStepIndex(replay?.init_date, event?.peak_valid_date, leadDays);
+    setStepIdx(opening ?? 0);
     setPlaying(false);
     setFocusRegionId(null);
+    // Keyed on init_date alone: steps and event are both derived from it, so this still
+    // resets exactly once per newly selected cycle, never mid-cycle.
   }, [replay?.init_date]);
 
   const timer = useRef<number | null>(null);
@@ -80,9 +92,6 @@ export function ReplayView({ topology }: { topology: Topology | null }) {
     return <EmptyState title="Nothing to replay" message={replay?.message ?? "No scoreable cycle in the store."} />;
   }
 
-  const cycles = cyclesQuery.data ?? replay.available_cycles;
-  const shownCycle = cycles.find((c) => c.init_date === replay.init_date);
-  const event = shownCycle?.kind === "event" ? shownCycle : null;
   const scrub = (i: number) => {
     setPlaying(false);
     setStepIdx(i);
@@ -90,7 +99,9 @@ export function ReplayView({ topology }: { topology: Topology | null }) {
 
   return (
     <div className="replay">
-      {event ? <ReplayEventHeader cycle={event} /> : null}
+      {event ? (
+        <ReplayEventHeader cycle={event} steps={steps} focusOptions={focusOptions} />
+      ) : null}
       <div className="replay__intro">
         <ReplayCyclePicker
           cycles={cycles}

@@ -55,7 +55,7 @@ export function ReplayProbabilityChart({
           ) : null}
           <ReferenceLine x={currentLead} stroke={CHART.marker} strokeWidth={2} />
           <Line type="monotone" dataKey="p" name="Bust risk" stroke={CHART.forecast}
-            strokeWidth={2} activeDot={{ r: 5 }} connectNulls={false}
+            strokeWidth={2} activeDot={{ r: 5 }} connectNulls={false} isAnimationActive={false}
             dot={(props: LineDotRenderProps) => {
               const { cx, cy, payload, key } = props;
               if (cx == null || cy == null) return <g key={key} />;
