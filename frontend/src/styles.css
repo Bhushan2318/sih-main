@@ -161,6 +161,19 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 @media (min-width: 1081px) and (max-height: 860px) {
   .screen1 .hero__why { display: none; }
 }
+/* The whole opening screen - hero, KPIs, replay button and the "national map" link - has
+ * to fit above the pinned ticker. Measured 2026-09-27 the link sat up to 46 px under it
+ * (1080p Windows, 14" MacBook, 16" with a bookmarks bar). Spacing and the headline scale
+ * with viewport height instead, and the grey note wraps to three lines, not four. */
+@media (min-width: 1081px) {
+  .screen1 > .hero .hero__grid { padding-block: clamp(10px, 1.6vh, 28px); }
+  .screen1 .hero__lead { padding-top: clamp(4px, 1.2vh, 18px); }
+  .screen1 .hero__kick { margin-bottom: clamp(8px, 1.2vh, 16px); }
+  .screen1 .hero__head { font-size: clamp(36px, min(5.6vw, 8.2vh), 88px); margin-bottom: clamp(10px, 1.4vh, 20px); }
+  .screen1 .hero__why { max-width: 62ch; margin-bottom: clamp(12px, 1.8vh, 26px); }
+  .screen1 .hero__ring { width: clamp(96px, min(8vw, 13.5vh), 148px); height: clamp(96px, min(8vw, 13.5vh), 148px); }
+  .screen1 .scrollcue { padding: 2px 14px 6px; }
+}
 
 #operations { scroll-margin-top: var(--topbar-h); }
 @media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
