@@ -10,8 +10,8 @@ import { KpiStrip } from "../components/dashboard/KpiStrip";
 import { ModelPage } from "../components/model/ModelPage";
 import { RiskTicker } from "../components/dashboard/RiskTicker";
 import { RegionDetailPanel } from "../components/detail/RegionDetailPanel";
-import { EmptyState, ErrorState, LoadingState } from "../components/common/States";
-import { retryingHint } from "../lib/retryHint";
+import { EmptyState, ErrorState, LoadingState, Skeleton } from "../components/common/States";
+import { retryingHint, slowHint } from "../lib/retryHint";
 import { IndiaChoroplethMap, loadTopology } from "../components/map/IndiaChoroplethMap";
 import { LeadDayRail } from "../components/map/LeadDayRail";
 import { LeadDaySelector } from "../components/map/LeadDaySelector";
@@ -23,7 +23,8 @@ import { useLiveSocket } from "../hooks/useLiveSocket";
 import { stateNamesFrom } from "../lib/stateNames";
 import { parseAppState, toSearch, type View } from "../lib/urlState";
 import { useMediaQuery } from "../hooks/useMediaQuery";
-import { dayLabel } from "../lib/format";
+import { useElapsedSeconds } from "../hooks/useElapsedSeconds";
+import { cycleChipLabel, dayLabel } from "../lib/format";
 import { inferRiskCuts, isScoredProbability, resolveRiskCuts, riskBandForRegion } from "../lib/riskBands";
 
 // View lives in lib/urlState: it is the set of values the ?view= parameter accepts, so
@@ -128,6 +129,24 @@ export function DashboardPage() {
   );
 
   const showRail = useMediaQuery("(min-width: 1440px) and (min-height: 700px)");
+  const regionsWait = useElapsedSeconds(regionsQuery.isLoading);
+
+  const cyclePills = view === "live" ? (
+    <>
+      {regions?.model_trained && regions.init_date ? (
+        <span className="pill pill--quiet" title="The forecast cycle currently in the store">
+          <i aria-hidden="true" />
+          {cycleChipLabel(regions.init_date, regions.valid_date, regions.lead_time_days)}
+        </span>
+      ) : null}
+      {highCount > 0 ? (
+        <span className="pill pill--alarm" title={`Regions in the bust band at lead day ${leadDay}`}>
+          <i aria-hidden="true" />
+          {highCount} bust · {dayLabel(leadDay)}
+        </span>
+      ) : null}
+    </>
+  ) : null;
 
   const selectAndReveal = (regionId: string) => {
     setSelectedRegion(regionId);
@@ -169,21 +188,7 @@ export function DashboardPage() {
             ))}
           </nav>
 
-          <div className="topbar__right">
-            {view === "live" && regions?.model_trained && regions.init_date ? (
-              <span className="pill pill--quiet" title="The forecast cycle currently in the store">
-                <i aria-hidden="true" />
-                {regions.init_date}
-                {regions.valid_date ? ` → ${regions.valid_date}` : ""}
-              </span>
-            ) : null}
-            {view === "live" && highCount > 0 ? (
-              <span className="pill pill--alarm" title={`Regions in the bust band at lead day ${leadDay}`}>
-                <i aria-hidden="true" />
-                {highCount} bust · {dayLabel(leadDay)}
-              </span>
-            ) : null}
-          </div>
+          <div className="topbar__right">{cyclePills}</div>
         </div>
       </header>
 
@@ -216,9 +221,14 @@ export function DashboardPage() {
         <ModelPage />
       ) : (
         <>
+          {/* On a phone the sticky bar holds only the logo and tabs; the cycle pills sit
+            * here instead, so the bar stops covering a third of the screen. */}
+          <div className="cyclebar">{cyclePills}</div>
           <section className={heroFills ? "screen1" : undefined}>
+            {ensembleQuery.isLoading ? <Skeleton kind="hero" /> : null}
             <HeroDivergence data={ensembleQuery.data} riskCuts={riskCuts} />
-            <KpiStrip all={allRegions} day={regions} riskCuts={riskCuts} />
+            {regionsQuery.isLoading ? <Skeleton kind="kpis" /> : null}
+            <KpiStrip all={allRegions} day={regions} riskCuts={riskCuts} onSelectRegion={selectAndReveal} />
             {heroFills ? <OpeningCues onReplay={() => setView("replay")} /> : null}
             {regions?.regions.length ? (
               <RiskTicker
@@ -250,7 +260,15 @@ export function DashboardPage() {
                 {regions ? <MapLegend definitions={regions.risk_band_definitions} /> : null}
               </div>
 
-              {regionsQuery.isLoading ? <LoadingState label="Scoring the current cycle…" hint={retryingHint(regionsQuery.failureCount)} /> : null}
+              {regionsQuery.isLoading ? (
+                <>
+                  <LoadingState
+                    label="Scoring the current cycle…"
+                    hint={retryingHint(regionsQuery.failureCount) ?? slowHint(regionsWait)}
+                  />
+                  <Skeleton kind="map" />
+                </>
+              ) : null}
               {regionsQuery.error ? <ErrorState error={regionsQuery.error} /> : null}
               {topoError ? <ErrorState error={topoError} /> : null}
 
@@ -286,7 +304,7 @@ export function DashboardPage() {
               />
             ) : null}
 
-            {selectedRegion ? (
+            {regionsQuery.isLoading && !selectedRegion ? null : selectedRegion ? (
               <RegionDetailPanel
                 regionId={selectedRegion}
                 onClose={() => setSelectedRegion(null)}

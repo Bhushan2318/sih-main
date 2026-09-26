@@ -11,6 +11,19 @@
  * Retry counts are not exposed anywhere else, so this has to be read from the query and
  * passed down.
  */
+/**
+ * What to say while a first request is merely slow. A cold free-tier box does answer, so no
+ * retry fires and `retryingHint` stays silent: measured 2026-09-26, the home page sat on one
+ * grey line for ~12 s warm and longer after an idle spell.
+ */
+export function slowHint(elapsedSeconds: number): string | undefined {
+  if (elapsedSeconds < 5) return undefined;
+  return (
+    "Still working: this scores every district for all ten days. It runs on a free server " +
+    "that sleeps when idle, so the first visit after a quiet spell can take up to a minute."
+  );
+}
+
 export function retryingHint(failureCount: number): string | undefined {
   if (failureCount < 1) return undefined;
   return (

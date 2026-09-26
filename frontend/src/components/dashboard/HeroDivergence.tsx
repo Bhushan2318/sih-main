@@ -67,16 +67,17 @@ export function HeroDivergence({ data, riskCuts }: {
 
           <p className="hero__why">
             Averaged across every region scored in this forecast run — one run is all ten
-            days issued at a single hour.
+            days issued at a single hour. A bust is a forecast whose error lands in the worst
+            10% of that variable's own past errors.
           </p>
 
           {mean != null ? (
             <div className="hero__gauge">
               <Ring value={mean} cuts={riskCuts} />
               <div className="hero__gaugemeta">
-                <span className="hero__gaugelabel">Mean bust risk · 0% holds, 100% busts</span>
+                <span className="hero__gaugelabel">Average bust risk · all 10 days</span>
                 <strong className="hero__gaugebig">
-                  {data.n_high_regions} of {data.n_scored_regions} regions in the top band
+                  {data.n_high_regions} of {data.n_scored_regions} districts reach the bust band on at least one day
                 </strong>
                 {delta != null ? (
                   <span className={deltaClass(delta)}>
@@ -150,12 +151,16 @@ function NationalChart({ data }: { data: EnsembleDivergenceResponse }) {
 
   return (
     <ResponsiveContainer width="100%" height="100%">
-      <ComposedChart data={rows} margin={{ top: 10, right: 22, bottom: 6, left: -10 }}>
+      <ComposedChart data={rows} margin={{ top: 10, right: 22, bottom: 18, left: 4 }}>
         <CartesianGrid strokeDasharray="3 3" stroke={CHART.grid} vertical={false} />
-        <XAxis dataKey="lead" tickFormatter={dayLabel} stroke={CHART.axis} tickLine={false} />
+        <XAxis
+          dataKey="lead" tickFormatter={dayLabel} stroke={CHART.axis} tickLine={false}
+          label={{ value: "Lead day", position: "insideBottom", offset: -12, fontSize: 11, fill: CHART.axis }}
+        />
         <YAxis
           domain={[0, 100]} width={46} stroke={CHART.axis} tickLine={false}
           tickFormatter={(v: number) => `${v}%`}
+          label={{ value: "Bust risk", angle: -90, position: "insideLeft", offset: -2, fontSize: 11, fill: CHART.axis }}
         />
         <Tooltip
           labelFormatter={(l) => `Lead day ${l}`}
