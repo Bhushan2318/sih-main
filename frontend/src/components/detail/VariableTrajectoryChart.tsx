@@ -2,6 +2,7 @@ import {
   CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 import type { VariableSeries } from "../../api/types";
+import { yDomainForVariable } from "../../lib/chartDomain";
 import { variableLabel, variableUnit } from "../../lib/displayNames";
 import { dayLabel } from "../../lib/format";
 import { CHART } from "../../theme";
@@ -43,7 +44,7 @@ export function VariableTrajectoryChart({ series }: { series: VariableSeries }) 
             * read as bare figures. Short form here (kg/m2), full string still below,
             * because the API's unit carries detail worth keeping (TCWV, from-direction). */}
           <YAxis
-            width={58} domain={["auto", "auto"]} tickFormatter={(v: number) => formatTick(v)}
+            width={58} domain={yDomainForVariable(series.variable)} tickFormatter={(v: number) => formatTick(v)}
             label={shortUnit ? {
               value: shortUnit, angle: -90, position: "insideLeft",
               offset: 14, fontSize: 10, style: { textAnchor: "middle" },

@@ -320,6 +320,8 @@ export interface ReplayCycleSummary {
   sample_note?: string | null;
   focus_region_id?: string | null;
   focus_variable?: string | null;
+  /** The day the event peaked, so Replay can open on that lead day. null for a live forecast. */
+  peak_valid_date?: string | null;
 }
 
 export interface ReplayRegionStep {

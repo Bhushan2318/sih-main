@@ -208,6 +208,9 @@ class ReplayCycleSummary(Schema):
     sample_note: Optional[str] = None
     focus_region_id: Optional[str] = None
     focus_variable: Optional[str] = None
+    # The day the event peaked (app/services/replay_cases.ReplayCase.peak_valid_date), so
+    # the client can open on that lead day instead of Day 1. None for a live forecast.
+    peak_valid_date: Optional[date] = None
 
 
 class ReplayRegionStep(Schema):
