@@ -350,18 +350,28 @@ def _focus_variable_for(v_region: pd.DataFrame, dominant: Optional[str], state) 
     return None if ranked.empty else str(ranked.idxmax())
 
 
-def _focus_for_region(
-    sc: inference.ScoredCycle, state, region_id: str, dominant: Optional[str]
-) -> Optional[schemas.ReplayFocusSeries]:
+def _verified_by_region(sc: inference.ScoredCycle) -> "dict[str, pd.DataFrame]":
+    """The chartable rows of every district, filtered once and split once.
+
+    This used to be a filter over the whole per-variable table inside a loop over all 666
+    districts, converting every region id to a string each time. Measured 2026-09-26: 4.98
+    of get_replay's 5.25 s on the live cycle - which has nothing verified, so all 666
+    passes found nothing - and 6.2 of 6.4 s on a past event. tests/test_replay_focus_speed.py.
+    """
     pv = sc.per_variable
     if pv.empty or "observed_value" not in pv.columns:
-        return None
-    v = pv[
-        (pv["region_id"].astype(str) == region_id)
-        & pv["observed_value"].notna()
-        & pv["predicted_value"].notna()
-        & (~pv["variable"].isin(CIRCULAR_VARIABLES))
-    ].copy()
+        return {}
+    v = pv[pv["observed_value"].notna() & pv["predicted_value"].notna()
+           & ~pv["variable"].isin(CIRCULAR_VARIABLES)]
+    if v.empty:
+        return {}
+    return {str(rid): g for rid, g in v.groupby(v["region_id"].astype(str), sort=False)}
+
+
+def _focus_for_region(
+    v: pd.DataFrame, state, region_id: str, dominant: Optional[str]
+) -> Optional[schemas.ReplayFocusSeries]:
+    """`v` is this district's chartable rows, from _verified_by_region."""
     var = _focus_variable_for(v, dominant, state)
     if var is None:
         return None
@@ -411,10 +421,16 @@ def _build_focus(
     )
     order = [peak_rid] + [r for r in rest if r != peak_rid]
 
+    verified = _verified_by_region(sc)
+    if not verified:
+        return None, []
     options: list[schemas.ReplayFocusSeries] = []
     prefer_variable = prefer_variable or {}
     for rid in order:
-        fs = _focus_for_region(sc, state, rid,
+        v = verified.get(rid)
+        if v is None:
+            continue
+        fs = _focus_for_region(v, state, rid,
                                prefer_variable.get(rid) or dom_by_region.get(rid))
         if fs is not None:
             options.append(fs)
