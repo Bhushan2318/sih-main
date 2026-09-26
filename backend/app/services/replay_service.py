@@ -8,6 +8,7 @@ from app.api import schemas
 from app.ingestion.canonical_schema import CanonicalVariable
 from app.ingestion.canonical_schema import CIRCULAR_VARIABLES
 from app.ml import inference
+from app.services import replay_cases
 from app.services.region_service import (
     NOT_TRAINED_MSG,
     _f,
@@ -19,6 +20,7 @@ from app.services.region_service import (
 _MAX_CYCLES = 10
 
 _cycles_memo: "tuple[str, list[schemas.ReplayCycleSummary]] | None" = None
+_case_memo: "tuple[tuple, inference.ScoredCycle] | None" = None
 
 
 def _cycle_summary(state, init) -> Optional[schemas.ReplayCycleSummary]:
@@ -28,6 +30,12 @@ def _cycle_summary(state, init) -> Optional[schemas.ReplayCycleSummary]:
         # On the serving box a cycle CI skipped is left out of the list rather than offered
         # and then refused.
         return None
+    return summary_from_scored(state, sc, kind="forecast")
+
+
+def summary_from_scored(state, sc, **labels) -> Optional[schemas.ReplayCycleSummary]:
+    """The list entry for one scored cycle. `labels` are the fields that say what kind of
+    cycle it is (kind, title, ...); everything else is read off the scores."""
     if sc is None or sc.events.empty:
         return None
     ev = sc.events
@@ -71,7 +79,7 @@ def _cycle_summary(state, init) -> Optional[schemas.ReplayCycleSummary]:
         growth = float(far - near)
 
     return schemas.ReplayCycleSummary(
-        init_date=pd.Timestamp(init).date(),
+        init_date=pd.Timestamp(sc.init_date).date(),
         lead_days=leads,
         n_regions=int(ev["region_id"].nunique()),
         peak_bust_probability=_f(peak["bust_probability"]),
@@ -86,7 +94,27 @@ def _cycle_summary(state, init) -> Optional[schemas.ReplayCycleSummary]:
         peak_region_variable=peak_dom_var,
         peak_region_unit=_unit(peak_dom_var),
         medium_range_growth=round(growth, 4),
+        **labels,
     )
+
+
+def _event_cycles(state) -> list[schemas.ReplayCycleSummary]:
+    """The catalogued past events this run has artifacts for, in catalogue order. Read
+    from each case's summary.json; nothing is scored and no Parquet is opened. A run
+    without cases (a CI-trained model) simply lists none."""
+    out = []
+    for case in replay_cases.CASES:
+        s = replay_cases.read_case_summary(state.run_id, case)
+        if s is None:
+            continue
+        s = {k: v for k, v in s.items() if k in schemas.ReplayCycleSummary.model_fields}
+        s.update(kind="event", title=case.title, focus_region_id=case.focus_region_id,
+                 focus_variable=case.focus_variable)
+        try:
+            out.append(schemas.ReplayCycleSummary(**s))
+        except ValueError:  # a malformed summary is a missing case, never a broken list
+            continue
+    return out
 
 
 def list_cycles() -> list[schemas.ReplayCycleSummary]:
@@ -97,12 +125,18 @@ def list_cycles() -> list[schemas.ReplayCycleSummary]:
     if _cycles_memo is not None and _cycles_memo[0] == state.run_id:
         return _cycles_memo[1]
 
+    events = _event_cycles(state)
+    event_dates = {e.init_date for e in events}
     out: list[schemas.ReplayCycleSummary] = []
     for init in inference.available_cycles()[:_MAX_CYCLES]:
+        if pd.Timestamp(init).date() in event_dates:
+            continue
         s = _cycle_summary(state, init)
         if s is not None:
             out.append(s)
-    out = order_cycles(out)
+    # Events first, in catalogue order: they are the cycles whose outcome is known, and
+    # where Replay opens. The recent forecasts keep their own ordering below them.
+    out = events + order_cycles(out)
     _cycles_memo = (state.run_id, out)
     return out
 
@@ -168,7 +202,11 @@ def get_replay(
         )
 
     target = init_date or str(cycles[0].init_date)
-    sc = inference.score_cycle(state, target)
+    case = replay_cases.case_for(target)
+    sc = _read_event(state, case) if case is not None else None
+    if sc is None:
+        case = None
+        sc = inference.score_cycle(state, target)
     if sc is None or sc.events.empty:
         return schemas.ReplayResponse(
             model_trained=True, current_run_id=state.run_id, available_cycles=cycles,
@@ -209,7 +247,13 @@ def get_replay(
         prev = cur
         prev_dom = cur_dom
 
-    default_focus, focus_options = _build_focus(sc, state, focus_region)
+    if case is not None:
+        # An event opens on the district it is about, charting the variable it is about.
+        default_focus, focus_options = _build_focus(
+            sc, state, focus_region or case.focus_region_id,
+            prefer_variable={case.focus_region_id: case.focus_variable})
+    else:
+        default_focus, focus_options = _build_focus(sc, state, focus_region)
     return schemas.ReplayResponse(
         model_trained=True,
         current_run_id=state.run_id,
@@ -344,8 +388,12 @@ def _focus_for_region(
 
 
 def _build_focus(
-    sc: inference.ScoredCycle, state, want_region: Optional[str]
+    sc: inference.ScoredCycle, state, want_region: Optional[str],
+    prefer_variable: Optional[dict] = None,
 ) -> "tuple[Optional[schemas.ReplayFocusSeries], list[schemas.ReplayFocusSeries]]":
+    """`prefer_variable` maps a region to the variable to chart for it, in place of the
+    one that drove its bust risk; it still falls back if that variable has no verified
+    points there."""
     ev = sc.events
     if ev.empty:
         return None, []
@@ -364,8 +412,10 @@ def _build_focus(
     order = [peak_rid] + [r for r in rest if r != peak_rid]
 
     options: list[schemas.ReplayFocusSeries] = []
+    prefer_variable = prefer_variable or {}
     for rid in order:
-        fs = _focus_for_region(sc, state, rid, dom_by_region.get(rid))
+        fs = _focus_for_region(sc, state, rid,
+                               prefer_variable.get(rid) or dom_by_region.get(rid))
         if fs is not None:
             options.append(fs)
     if not options:
@@ -374,6 +424,18 @@ def _build_focus(
     return default, options
 
 
+def _read_event(state, case) -> Optional[inference.ScoredCycle]:
+    """A past event's trimmed artifact, holding at most one in memory at a time."""
+    global _case_memo
+    key = (state.run_id, case.init_date)
+    if _case_memo is not None and _case_memo[0] == key:
+        return _case_memo[1]
+    sc = replay_cases.read_case(state.run_id, case)
+    _case_memo = (key, sc) if sc is not None else None
+    return sc
+
+
 def invalidate() -> None:
-    global _cycles_memo
+    global _cycles_memo, _case_memo
     _cycles_memo = None
+    _case_memo = None

@@ -2,11 +2,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { Topology } from "topojson-specification";
 import type { RegionSummary, ReplayRegionStep } from "../../api/types";
 import { useModelStatus, useReplay, useReplayCycles } from "../../hooks/useDashboardData";
-import { formatByMagnitude } from "../../lib/format";
 import { resolveRiskCuts } from "../../lib/riskBands";
 import { EmptyState, ErrorState, LoadingState } from "../common/States";
 import { IndiaChoroplethMap } from "../map/IndiaChoroplethMap";
 import { MapLegend } from "../map/MapLegend";
+import { ReplayCyclePicker } from "./ReplayCyclePicker";
+import { ReplayEventHeader } from "./ReplayEventHeader";
 import { ReplayFocusChart } from "./ReplayFocusChart";
 import { ReplayProbabilityChart } from "./ReplayProbabilityChart";
 import { TopDistrictsList } from "../common/TopDistrictsList";
@@ -66,8 +67,8 @@ export function ReplayView({ topology }: { topology: Topology | null }) {
   if (replayQuery.isLoading || cyclesQuery.isLoading) {
     return (
       <LoadingState
-        label="Scoring the historical cycle…"
-        hint="Replay runs the model over all 666 districts for all ten lead days, on request rather than from a cache. The first one after an idle period takes a few seconds."
+        label="Loading the scored cycle…"
+        hint="Every cycle here was scored ahead of time over all 666 districts and ten lead days; the first one after an idle period takes a few seconds to read."
       />
     );
   }
@@ -80,6 +81,8 @@ export function ReplayView({ topology }: { topology: Topology | null }) {
   }
 
   const cycles = cyclesQuery.data ?? replay.available_cycles;
+  const shownCycle = cycles.find((c) => c.init_date === replay.init_date);
+  const event = shownCycle?.kind === "event" ? shownCycle : null;
   const scrub = (i: number) => {
     setPlaying(false);
     setStepIdx(i);
@@ -87,30 +90,13 @@ export function ReplayView({ topology }: { topology: Topology | null }) {
 
   return (
     <div className="replay">
+      {event ? <ReplayEventHeader cycle={event} /> : null}
       <div className="replay__intro">
-        <div className="replay__pick">
-          <label htmlFor="replay-cycle" className="muted small">Forecast cycle</label>
-          <select
-            id="replay-cycle"
-            value={selectedInit ?? replay.init_date ?? ""}
-            onChange={(e) => setSelectedInit(e.target.value || undefined)}
-          >
-            {cycles.map((c) => (
-              <option key={c.init_date} value={c.init_date}>
-                {c.init_date}
-                {c.verified
-                  ? ` · outcome known for ${c.verified_lead_days} day${c.verified_lead_days === 1 ? "" : "s"}`
-                  : " · outcome not yet known"}
-                {c.peak_bust_probability != null
-                  ? ` · peak risk ${(c.peak_bust_probability * 100).toFixed(0)}%`
-                  : ""}
-                {c.peak_region_abs_error != null
-                  ? ` · actual error there: ${formatByMagnitude(c.peak_region_abs_error)}${c.peak_region_unit ? ` ${c.peak_region_unit}` : ""}`
-                  : ""}
-              </option>
-            ))}
-          </select>
-        </div>
+        <ReplayCyclePicker
+          cycles={cycles}
+          value={selectedInit ?? replay.init_date ?? ""}
+          onChange={setSelectedInit}
+        />
         {replay.summary_narration ? (
           <p className="replay__summary">{replay.summary_narration}</p>
         ) : null}
@@ -190,7 +176,17 @@ export function ReplayView({ topology }: { topology: Topology | null }) {
 
           {shownFocus ? (
             <>
-              <ReplayFocusChart focus={shownFocus} currentLead={step.lead_time_days} />
+              <ReplayFocusChart
+                focus={shownFocus}
+                currentLead={step.lead_time_days}
+                why={
+                  event &&
+                  shownFocus.region_id === event.focus_region_id &&
+                  shownFocus.variable === event.focus_variable
+                    ? "what this event is remembered for"
+                    : undefined
+                }
+              />
               <ReplayProbabilityChart
                 currentLead={step.lead_time_days}
                 cuts={riskCuts}
@@ -226,7 +222,7 @@ export function ReplayView({ topology }: { topology: Topology | null }) {
                 verification chart needs observations that do not exist yet.
               </p>
               <p className="muted small">
-                Pick a cycle marked <b>outcome known</b> in the dropdown to see the model
+                Pick one of the <b>past events</b> in the dropdown to see the model
                 checked against what actually happened.
               </p>
             </div>
