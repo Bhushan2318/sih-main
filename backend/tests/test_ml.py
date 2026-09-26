@@ -620,3 +620,147 @@ def test_build_paired_in_chunks_lists_cycles_from_footers_not_a_full_column_scan
 
     unfiltered = [s for s in scans if not s.get("init_dates")]
     assert unfiltered == [], f"cycle listing still scans the whole store: {unfiltered}"
+
+
+# ------------------------------------------------------------ replay: past events
+# A past event is scored with what was known at 00 UTC that morning. The one model input
+# built from observations, forecast_error_lag, is the realised error at the previous lead
+# of the same forecast - data from after the forecast was issued - so it is blanked, the
+# same state every live cycle is scored in. Fixture: the real GEFS/ERA5 slice above.
+
+def test_as_of_init_blanks_only_the_lag_feature(_retrain):
+    from app.ml import inference
+
+    inference.invalidate_caches()
+    state = inference.load_model_state()
+    init = pd.Timestamp(inference.available_cycles()[-1])
+
+    default = inference.build_scoring_frame(state, init)
+    as_of = inference.build_scoring_frame(state, init, as_of_init=True)
+    assert not default.empty
+    # Not vacuous: on a verified cycle the default path really does carry the lag.
+    assert default["forecast_error_lag"].notna().any()
+    assert as_of["forecast_error_lag"].isna().all()
+    pd.testing.assert_frame_equal(
+        default.drop(columns="forecast_error_lag"), as_of.drop(columns="forecast_error_lag"))
+
+
+def test_as_of_init_score_keeps_the_observed_track(_retrain):
+    """Blanking the lag is about what the model is told, not what Replay checks it
+    against: the forecast-vs-observed chart still needs every observation."""
+    from app.ml import inference
+
+    inference.invalidate_caches()
+    state = inference.load_model_state()
+    init = inference.available_cycles()[-1]
+    sc = inference.score_cycle(state, init, as_of_init=True)
+    assert sc is not None and not sc.events.empty
+    assert sc.per_variable["observed_value"].notna().any()
+    assert sc.events["bust_probability"].between(0.0, 1.0).all()
+    assert sc is not inference.score_cycle(state, init)
+
+
+def _sample_case(sc, avoid_region):
+    """A case pointed at a real verified (district, variable, day) of the sample cycle,
+    away from the cycle's peak district so the focus override is what puts it on screen."""
+    from app.ingestion.canonical_schema import CIRCULAR_VARIABLES
+    from app.services import replay_cases
+
+    pv_ = sc.per_variable
+    ok = pv_[pv_["observed_value"].notna() & pv_["predicted_value"].notna()
+             & ~pv_["variable"].isin(CIRCULAR_VARIABLES)
+             & (pv_["region_id"].astype(str) != avoid_region)]
+    assert not ok.empty, "the sample cycle has no verified row outside its peak district"
+    row = ok.iloc[0]
+    return replay_cases.ReplayCase(
+        id="sample", title="Sample cycle (test)",
+        init_date=pd.Timestamp(sc.init_date).date(),
+        peak_valid_date=pd.Timestamp(row["valid_date"]).date(),
+        focus_region_id=str(row["region_id"]), focus_variable=str(row["variable"]),
+    )
+
+
+def test_builder_refuses_a_cycle_short_of_the_country(_retrain):
+    """The real sample cycle covers a handful of districts, not 666 - exactly the partial
+    cycle the builder must refuse rather than ship as a past event."""
+    from app.ml import inference
+    from app.services import replay_cases
+    from scripts import build_replay_cases as brc
+
+    inference.invalidate_caches()
+    state = inference.load_model_state()
+    sc = inference.score_cycle(state, inference.available_cycles()[-1], as_of_init=True)
+    peak = str(sc.events.loc[sc.events["bust_probability"].idxmax(), "region_id"])
+    case = _sample_case(sc, peak)
+    with pytest.raises(replay_cases.CaseRefused, match="districts"):
+        brc.check_complete(sc, case)
+
+    # ...and the check is about coverage, not about this sample: told what it really has,
+    # it passes. Also refused: a focus district with no observation on the peak day.
+    leads = sorted(int(x) for x in sc.events["lead_time_days"].unique())
+    n = sc.events["region_id"].nunique()
+    brc.check_complete(sc, case, n_regions=n, lead_days=leads)
+    import dataclasses
+    unobserved = dataclasses.replace(
+        case, peak_valid_date=case.peak_valid_date.replace(year=1990))
+    with pytest.raises(replay_cases.CaseRefused, match="observ"):
+        brc.check_complete(sc, unobserved, n_regions=n, lead_days=leads)
+
+
+def test_event_case_round_trips_through_replay(_retrain, monkeypatch):
+    """Written as the builder writes it, served as the site serves it: listed first, opened
+    by default, focused on the case district and variable, and read back from the trimmed
+    artifact without scoring anything."""
+    from app.ml import inference
+    from app.services import replay_cases, replay_service
+    from scripts import build_replay_cases as brc
+
+    inference.invalidate_caches()
+    state = inference.load_model_state()
+    sc = inference.score_cycle(state, inference.available_cycles()[-1], as_of_init=True)
+    peak = str(sc.events.loc[sc.events["bust_probability"].idxmax(), "region_id"])
+    case = _sample_case(sc, peak)
+    monkeypatch.setattr(replay_cases, "CASES", (case,))
+
+    summary = brc.case_summary(state, sc, case, note="Sample note (test)")
+    replay_cases.write_case(state.run_id, case, sc, summary)
+    try:
+        replay_service.invalidate()
+        cycles = replay_service.list_cycles()
+        assert cycles[0].kind == "event"
+        assert cycles[0].init_date == case.init_date
+        assert cycles[0].title == case.title and cycles[0].sample_note == "Sample note (test)"
+        assert cycles[0].focus_region_id == case.focus_region_id
+        rest = cycles[1:]
+        assert all(c.kind == "forecast" for c in rest)
+        assert case.init_date not in {c.init_date for c in rest}, "an event listed twice"
+
+        # The trimmed artifact carries everything the summary reads.
+        back = replay_cases.read_case(state.run_id, case)
+        assert back is not None
+        again = replay_service.summary_from_scored(state, back)
+        for k in ("peak_bust_probability", "peak_lead_day", "peak_region_id", "n_regions",
+                  "verified_lead_days", "peak_region_abs_error", "medium_range_growth"):
+            assert getattr(again, k) == getattr(cycles[0], k), k
+
+        def _must_not_score(*a, **k):
+            raise AssertionError("an event was re-scored instead of read")
+
+        monkeypatch.setattr(inference, "score_cycle", _must_not_score)
+        rep = replay_service.get_replay()
+        assert rep.init_date == case.init_date
+        assert rep.focus is not None
+        assert rep.focus.region_id == case.focus_region_id
+        assert rep.focus.variable == case.focus_variable
+        assert rep.steps and rep.summary_narration
+        # A viewer can still chart any other district of the event.
+        other = next((o.region_id for o in rep.focus_options
+                      if o.region_id != case.focus_region_id), None)
+        if other:
+            pinned = replay_service.get_replay(str(case.init_date), focus_region=other)
+            assert pinned.focus.region_id == other
+    finally:
+        import shutil
+        shutil.rmtree(replay_cases.case_dir(state.run_id, case.init_date).parent,
+                      ignore_errors=True)
+        replay_service.invalidate()

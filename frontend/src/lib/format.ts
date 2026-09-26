@@ -25,3 +25,13 @@ export function formatByMagnitude(v: number | null | undefined): string {
   if (a >= 10) return v.toFixed(1);
   return v.toFixed(2);
 }
+
+/** A YYYY-MM-DD date as "13 Aug 2018", read in UTC. Cycle init dates are UTC days; read in
+ * the viewer's own zone, a date near midnight could print as the day before. */
+export function formatDateUtc(iso: string): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  if (!y || !m || !d) return iso;
+  return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString("en-GB", {
+    day: "numeric", month: "short", year: "numeric", timeZone: "UTC",
+  });
+}
