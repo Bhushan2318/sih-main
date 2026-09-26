@@ -45,9 +45,10 @@ export function ReplayView({ topology }: { topology: Topology | null }) {
     setStepIdx(opening ?? 0);
     setPlaying(false);
     setFocusRegionId(null);
-    // Keyed on init_date alone: steps and event are both derived from it, so this still
-    // resets exactly once per newly selected cycle, never mid-cycle.
-  }, [replay?.init_date]);
+    // Also keyed on the peak date: the cycle list can land after the replay itself, and
+    // an event must still open on its peak day rather than stay on Day 1.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [replay?.init_date, event?.peak_valid_date]);
 
   const timer = useRef<number | null>(null);
   useEffect(() => {
