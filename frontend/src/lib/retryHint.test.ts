@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { retryingHint } from "./retryHint";
+import { retryingHint, slowHint } from "./retryHint";
 
 /**
  * The point of this helper is that a visitor is told *something* while a query is being
@@ -29,5 +29,18 @@ describe("retryingHint", () => {
 
   it("is not defensive about odd input", () => {
     expect(retryingHint(-1)).toBeUndefined();
+  });
+});
+
+describe("slowHint", () => {
+  it("stays quiet for a normal wait", () => {
+    expect(slowHint(0)).toBeUndefined();
+    expect(slowHint(4.9)).toBeUndefined();
+  });
+
+  it("explains a long first load before anything has failed", () => {
+    // A cold free-tier box answers, just slowly: no retry ever fires, so retryingHint
+    // alone left a visitor on a blank screen for the whole wait.
+    expect(slowHint(5)).toMatch(/free/i);
   });
 });
