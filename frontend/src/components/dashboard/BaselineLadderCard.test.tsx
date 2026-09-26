@@ -1,8 +1,32 @@
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 import { BaselineLadderCard } from "./BaselineLadderCard";
 import { REAL_MODEL_STATUS_TRAINED } from "../../test/fixtures/modelStatus";
 import type { ModelStatusResponse } from "../../api/types";
+
+describe("BaselineLadderCard, the compact Operations read", () => {
+  it("shows only climatology, the best baseline and the served classifier - not the whole ladder", () => {
+    render(<BaselineLadderCard data={REAL_MODEL_STATUS_TRAINED} />);
+    expect(screen.getByText("Climatology")).toBeInTheDocument();
+    expect(screen.getByText("Lead + spread + season")).toBeInTheDocument();
+    expect(screen.getByText("Sanket bust classifier")).toBeInTheDocument();
+    // spread scores lower than lead+spread+season on this ladder, so it is not "the best
+    // baseline" and has no row of its own in the compact table.
+    expect(screen.queryByText("Ensemble spread")).not.toBeInTheDocument();
+  });
+
+  it("hides the 'full comparison' link when there is nowhere for it to send the reader", () => {
+    render(<BaselineLadderCard data={REAL_MODEL_STATUS_TRAINED} />);
+    expect(screen.queryByRole("button", { name: /Full comparison/ })).not.toBeInTheDocument();
+  });
+
+  it("switches to the Model tab when the full-comparison link is clicked", () => {
+    const onSeeFull = vi.fn();
+    render(<BaselineLadderCard data={REAL_MODEL_STATUS_TRAINED} onSeeFull={onSeeFull} />);
+    fireEvent.click(screen.getByRole("button", { name: /Full comparison on the Model tab/ }));
+    expect(onSeeFull).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe("BaselineLadderCard", () => {
   it("renders the ladder and flags the lead_day rung's negative skill", () => {

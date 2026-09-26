@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { leadDayIsUninformative, leadDayRung, rungLabel } from "./baselineLadder";
+import { bestBaseline, leadDayIsUninformative, leadDayRung, rungLabel } from "./baselineLadder";
 import { REAL_BASELINES_RUN_20260916 } from "../test/fixtures/modelStatus";
 
 describe("leadDayRung", () => {
@@ -56,6 +56,40 @@ describe("leadDayIsUninformative, near zero", () => {
         { name: "lead_day", brier: 0.2531, bss: 0.0001, roc_auc: 0.5095, f1: null, is_model: false },
       ]),
     ).toBe(true);
+  });
+});
+
+describe("bestBaseline", () => {
+  it("picks the non-Sanket, non-climatology rung with the highest skill vs climatology", () => {
+    // In the real ladder: climatology 0, lead_day -0.0021, spread 0.0124,
+    // lead+spread+season 0.0141, Sanket classifier 0.2821 (is_model). The best baseline
+    // to hold up next to the served model is lead+spread+season.
+    const best = bestBaseline(REAL_BASELINES_RUN_20260916!.models);
+    expect(best?.name).toBe("lead+spread+season");
+  });
+
+  it("never returns climatology or the served model itself", () => {
+    const best = bestBaseline(REAL_BASELINES_RUN_20260916!.models);
+    expect(best?.name).not.toBe("climatology");
+    expect(best?.is_model).not.toBe(true);
+  });
+
+  it("is undefined when there are no baselines to compare", () => {
+    expect(bestBaseline(undefined)).toBeUndefined();
+    expect(bestBaseline([])).toBeUndefined();
+    expect(bestBaseline([
+      { name: "climatology", brier: 0.2, bss: 0, roc_auc: 0.5, f1: 0, is_model: false },
+      { name: "Sanket bust classifier", brier: 0.1, bss: 0.3, roc_auc: 0.8, f1: 0.7, is_model: true },
+    ])).toBeUndefined();
+  });
+
+  it("skips a rung with no measured skill rather than treating it as zero", () => {
+    const best = bestBaseline([
+      { name: "climatology", brier: 0.2, bss: 0, roc_auc: 0.5, f1: 0, is_model: false },
+      { name: "spread", brier: null, bss: null, roc_auc: null, f1: null, is_model: false },
+      { name: "analog", brier: 0.19, bss: 0.05, roc_auc: 0.6, f1: 0.4, is_model: false },
+    ]);
+    expect(best?.name).toBe("analog");
   });
 });
 
