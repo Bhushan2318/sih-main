@@ -86,3 +86,54 @@ def test_the_panel_still_finds_its_factors_through_the_categories(tmp_path):
     a = top_factors_for(pd.read_parquet(path), region, lead, model="classifier", k=5)
     b = top_factors_for(inf._read_shap_summary(path), region, lead, model="classifier", k=5)
     assert a == b
+
+
+# --------------------------------------------- the serving box reads the classifier's rows only
+#
+# On the box the SHAP summary is only ever asked for the classifier's factors (the district
+# panel), so it reads just those rows, in batches: measured 2026-09-27 on
+# run_20260922T043925Z (macOS), +247 MB resident for the whole summary against +73 MB for the
+# classifier's 632,795 rows read 64k at a time. Filtering after a whole-file read saves almost
+# nothing (+195 MB) - Arrow keeps the decode buffers of each million-row group.
+
+def test_one_models_rows_read_in_batches_equal_the_full_read_filtered(tmp_path, monkeypatch):
+    path = tmp_path / "shap_summary.parquet"
+    _summary().to_parquet(path, index=False)
+    monkeypatch.setattr(inf, "_SHAP_BATCH_ROWS", 997)  # many batches, none aligned to anything
+
+    full = inf._read_shap_summary(path)
+    want = full[full["model"] == "classifier"].reset_index(drop=True)
+    got = inf._read_shap_summary(path, only_model="classifier")
+
+    assert len(got) == len(want) > 0
+    for col in want.columns:
+        assert list(got[col].astype(str)) == list(want[col].astype(str)), col
+        assert got[col].dtype.name == want[col].dtype.name, col
+
+
+def test_the_panel_finds_the_same_factors_in_the_classifier_rows(tmp_path):
+    from app.ml.explain import top_factors_for
+
+    path = tmp_path / "shap_summary.parquet"
+    _summary().to_parquet(path, index=False)
+    full = inf._read_shap_summary(path)
+    only = inf._read_shap_summary(path, only_model="classifier")
+    for rid in ("IN-XX-0000", "IN-XX-0137", "IN-XX-9999"):  # the last falls back to __all__
+        for lead in (1, 5, 10):
+            assert top_factors_for(only, rid, lead, model="classifier", k=6) == \
+                top_factors_for(full, rid, lead, model="classifier", k=6)
+
+
+def test_the_site_only_ever_asks_for_the_classifiers_factors():
+    """What the box's classifier-only read relies on. A new caller that wants a regressor's
+    explanation must load the full summary, not find an empty list here."""
+    import re
+    from pathlib import Path
+
+    root = Path(inf.__file__).resolve().parents[1]
+    calls = []
+    for p in list((root / "services").rglob("*.py")) + list((root / "api").rglob("*.py")):
+        calls += re.findall(r"top_factors_for\(([^)]*)\)", p.read_text())
+    assert calls, "the district panel's call to top_factors_for has moved - update this test"
+    for args in calls:
+        assert 'model="classifier"' in args, args
