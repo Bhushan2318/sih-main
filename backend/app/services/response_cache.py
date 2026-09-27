@@ -34,11 +34,17 @@ already means "this is the serving box" (set in the Dockerfile). Its store is th
 packaged and never changes. A dev server ingests and trains, so it builds every time, as
 it always has.
 
-WHAT IS NOT PRECOMPUTED
-Requests with open-ended parameters the dashboard never sends: /api/ensemble?region_id=,
-/api/replay?focus_region=, /api/regions?lead_time_days=. They build live as before. A
-catalogued response the box had to build itself (no file for it) is kept in memory as
-compressed bytes, bounded, so it is paid for once per process rather than on every open.
+WHAT IS NOT PRECOMPUTED IS NOT SERVED ON THE BOX
+Requests with open-ended parameters the dashboard never sends - /api/ensemble?region_id=,
+/api/replay?focus_region=, a state's panel, a Replay date it does not list - loaded the
+model and built live: measured 2026-09-28 on a box-mode mirror of the live bundle, a
+254-334 MB peak apiece from ~160 MB, on a box killed at 512. On the box they are refused
+before anything is built: 409 for a parameter, 404 for a district or cycle the bundle does
+not hold. /api/regions?lead_time_days= is served as one day of the all-days map.
+
+A catalogued response the box had to build itself (CI failed to build it, or the bundle is
+for other code) is kept in memory as compressed bytes, bounded, so it is paid for once per
+process rather than on every open.
 """
 
 from __future__ import annotations
@@ -375,6 +381,34 @@ def _build_live(build: Callable, run_id: Optional[str], name: Optional[str],
         _build_gate.release()
 
 
+# Catalogue entries enumerated from the store when CI builds the bundle (districts of the
+# latest cycle, the cycles Replay lists). Every other name is a fixed screen.
+_ENUMERATED = ("region__", "replay__")
+
+NOT_SERVED = ("This deployment serves the screens the dashboard opens, built ahead of time, "
+              "and does not build others on request. Run the API locally for other parameters.")
+
+
+def _refuse_outside_the_catalogue(name: Optional[str], run_id: Optional[str]) -> None:
+    """On the box, raise before building anything the dashboard cannot have asked for.
+
+    A fixed screen missing from a matching bundle (CI failed to build it) still builds live;
+    so does everything when the bundle is for other code - there is no catalogue to go by,
+    and _build_live runs one build at a time.
+    """
+    if name is None:
+        raise HTTPException(status_code=409, detail=NOT_SERVED)
+    if not run_id or not name.startswith(_ENUMERATED):
+        return
+    m = _manifest(run_id, Path(default_dir()))
+    if m is not None and name not in m.get("files", {}):
+        what = name.split("__", 1)[1]
+        raise HTTPException(status_code=404, detail=(
+            f"No panel for {what} in the latest cycle on this deployment."
+            if name.startswith("region__") else
+            f"Cycle {what} is not one Replay offers on this deployment (see /api/replay/cycles)."))
+
+
 def respond(request: Request, name: Optional[str], build: Callable,
             patch: Optional[Callable[[object], object]] = None) -> Response:
     """Serve `name` from CI's file, else from this box's memory, else build it.
@@ -390,6 +424,8 @@ def respond(request: Request, name: Optional[str], build: Callable,
     # packaged and cannot change under it. A dev server ingests, so it always builds.
     on_the_box = settings.serving_read_only
     run_id = registry.current_run_id() if (name and on_the_box) else None
+    if on_the_box:
+        _refuse_outside_the_catalogue(name, run_id)
     body = None
     if run_id:
         body = read(name, run_id) or _memo_get((run_id, name))

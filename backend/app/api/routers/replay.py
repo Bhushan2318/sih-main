@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from typing import Optional
 
 from fastapi import APIRouter, Query, Request
@@ -19,7 +20,8 @@ def replay_cycles(request: Request):
 @router.get("/", response_model=schemas.ReplayResponse, include_in_schema=False)
 def replay(
     request: Request,
-    init_date: Optional[str] = Query(
+    # A date, not a string: a malformed one is a 422 here, not a 500 out of pandas.
+    init_date: Optional[date] = Query(
         None, description="cycle init date, YYYY-MM-DD; omit for the most demo-worthy cycle"
     ),
     focus_region: Optional[str] = Query(
@@ -27,7 +29,8 @@ def replay(
     ),
 ):
     # Every cycle Replay lists is built in CI with its default focus (services/response_cache).
-    name = response_cache.replay_name(init_date) if focus_region is None else None
+    day = init_date.isoformat() if init_date else None
+    name = response_cache.replay_name(day) if focus_region is None else None
     return response_cache.respond(
-        request, name, lambda: replay_service.get_replay(init_date, focus_region),
+        request, name, lambda: replay_service.get_replay(day, focus_region),
     )

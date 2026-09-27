@@ -286,3 +286,74 @@ def test_off_the_box_builds_are_not_gated(tmp_path, monkeypatch):
     finally:
         response_cache._build_gate.release()
     assert json.loads(gzip.decompress(r.body)) == {"ok": True}
+
+
+# ----------------------------------- on the box: the catalogue only, refused before building
+#
+# A request outside what CI built loaded the model and built live: measured 2026-09-28 on a
+# box-mode mirror of the live bundle, one such request each took a fresh server from ~160 MB
+# to a 254-334 MB peak (a state panel, a lead-day map, the hero for another region, a Replay
+# focus, an unlisted or malformed Replay date). The builders below fail the test if reached.
+
+def _never_built():
+    pytest.fail("built on request although it is outside the catalogue")
+
+
+def test_on_the_box_an_uncatalogued_request_is_refused_before_building(tmp_path, monkeypatch):
+    from fastapi import HTTPException
+
+    _box(monkeypatch, tmp_path)
+    response_cache.write_responses("run_A", _items(ensemble={"x": 1}), tmp_path)
+    with pytest.raises(HTTPException) as exc:
+        response_cache.respond(_request(), None, _never_built)
+    assert exc.value.status_code == 409
+
+
+def test_it_is_refused_without_a_matching_bundle_too(tmp_path, monkeypatch):
+    """Where every screen builds live anyway (the bundle is for other code), a request the
+    dashboard never sends is still not one more model load."""
+    from fastapi import HTTPException
+
+    _box(monkeypatch, tmp_path)
+    with pytest.raises(HTTPException) as exc:
+        response_cache.respond(_request(), None, _never_built)
+    assert exc.value.status_code == 409
+
+
+@pytest.mark.parametrize("name", ["region__IN-ZZ-NOWHERE", "replay__2020-01-01"])
+def test_on_the_box_a_district_or_cycle_the_bundle_lacks_is_404(tmp_path, monkeypatch, name):
+    """Districts and Replay cycles are enumerated from the store when CI builds the bundle,
+    so one the bundle does not hold is not one the dashboard can ask for."""
+    from fastapi import HTTPException
+
+    _box(monkeypatch, tmp_path)
+    response_cache.write_responses(
+        "run_A", _items(**{"region__IN-MH-NAGPUR": {"x": 1}, "replay__2026-09-23": {"y": 1}}),
+        tmp_path)
+    with pytest.raises(HTTPException) as exc:
+        response_cache.respond(_request(), name, _never_built)
+    assert exc.value.status_code == 404
+
+
+def test_a_district_the_bundle_holds_is_served(tmp_path, monkeypatch):
+    _box(monkeypatch, tmp_path)
+    response_cache.write_responses("run_A", _items(**{"region__IN-MH-NAGPUR": {"x": 1}}),
+                                   tmp_path)
+    r = response_cache.respond(_request(), "region__IN-MH-NAGPUR", _never_built)
+    assert json.loads(gzip.decompress(r.body)) == {"x": 1}
+
+
+def test_a_fixed_screen_ci_failed_to_build_still_builds_live(tmp_path, monkeypatch):
+    """precompute skips a screen whose build failed rather than losing the rest; the box
+    builds that one itself, as before (one at a time)."""
+    _box(monkeypatch, tmp_path)
+    response_cache.write_responses("run_A", _items(ensemble={"x": 1}), tmp_path)
+    r = response_cache.respond(_request(), "model_status", lambda: {"built": True})
+    assert json.loads(gzip.decompress(r.body)) == {"built": True}
+
+
+def test_off_the_box_uncatalogued_requests_still_build(tmp_path, monkeypatch):
+    _box(monkeypatch, tmp_path)
+    monkeypatch.setattr(settings, "serving_read_only", False)
+    r = response_cache.respond(_request(), None, lambda: {"built": True})
+    assert json.loads(gzip.decompress(r.body)) == {"built": True}
