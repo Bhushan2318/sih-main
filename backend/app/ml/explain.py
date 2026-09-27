@@ -7,11 +7,19 @@ import pandas as pd
 
 log = logging.getLogger(__name__)
 
-try:
-    import shap  # type: ignore
-    _SHAP_OK = True
-except Exception:  # noqa: BLE001
-    _SHAP_OK = False
+
+def _shap():
+    """The shap module, imported on first use rather than with this module.
+
+    Serving only reads the SHAP summary written at training time (top_factors_for); it
+    never computes a SHAP value. Importing shap anyway cost the serving box 48 MB and 3 s
+    of every start, measured 2026-09-27, on a box killed at 512 MB.
+    """
+    try:
+        import shap  # type: ignore
+    except Exception:  # noqa: BLE001
+        return None
+    return shap
 
 # Rows explained per (region_id, lead_time_days) for the per-variable regressors. Measured
 # 2026-09-11 on the 2017 district models: TreeSHAP runs ~2,830 rows/s on a 300-tree
@@ -44,7 +52,8 @@ def _prep(df: pd.DataFrame, cols: list, categorical: list) -> pd.DataFrame:
 
 
 def _shap_values(model, X: pd.DataFrame) -> np.ndarray | None:
-    if not _SHAP_OK:
+    shap = _shap()
+    if shap is None:
         return None
     try:
         explainer = shap.TreeExplainer(model)

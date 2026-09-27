@@ -5,10 +5,18 @@ here rather than discovered live.
 
 ## Behaviour a visitor could notice
 
-- **First load after a deploy is slow.** Caches are per-process and start empty; CI warms
-  the three expensive endpoints after each publish, but a visitor arriving during that
-  window pays for a cold `/api/replay/cycles` (measured 50–120 s cold against ~1 s warm on
-  the deployed instance). It is slow, never wrong.
+- **A box woken from sleep is slow to answer at all.** Render's free tier stops the
+  instance after 15 minutes without traffic, and starting it again takes tens of seconds
+  before the app sees a request. Nothing in the app can shorten that; only traffic that
+  keeps it awake can (render.yaml: an external pinger on `/api/health`).
+- **Every screen is built in CI, not on the box** (`app/services/response_cache.py`).
+  Measured 2026-09-27 against the live bundle, a cold box-mode server answered every
+  dashboard request in 2–24 ms and stayed at 176 MB, where building on the box had taken
+  11–18 s for Replay on the live site and loaded the model. The files are keyed on the
+  model run and a hash of the backend source, so a **code-only deploy between two data
+  refreshes** (a Render deploy not dispatched through `refresh-data.yml`) serves no files:
+  it builds live, correct but at the old speed, until the next refresh. Its log says so
+  ("precomputed responses ... building live instead").
 - **The opening screen is one viewport on desktop only.** On phones the KPI strip, the
   cue row and the ticker sit below the fold. The page scrolls and what is visible is
   composed; only the single-screen effect is lost.
@@ -71,8 +79,10 @@ here rather than discovered live.
   four cycles the store lacks, oldest first — and the dashboard reports which cycle is
   actually loaded rather than implying "now". Moving the schedule off the hour (`:23`)
   already reduced queueing; the remaining delay is not controllable from here.
-- **Serving memory runs close to the 512 MB ceiling.** Measured 442 MB after compaction,
-  against 490 MB before. The instance is killed rather than throttled if it is exceeded,
+- **Serving memory runs close to the 512 MB ceiling whenever the box builds live.**
+  Measured 442 MB after compaction, against 490 MB before. Serving CI's precomputed
+  responses the model is never loaded (nor xgboost, scikit-learn or shap imported):
+  176 MB locally on 2026-09-27; confirm on the instance with `/api/health`. The instance is killed rather than throttled if it is exceeded,
   so anything that increases what is held at serve time needs measuring, not estimating.
   `/api/health` reports the live figure because the platform paywalls its own metrics.
 - **The CI serving-memory harness is noisy.** The same store measured 566 MB and 510 MB

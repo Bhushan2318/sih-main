@@ -5,9 +5,10 @@ import os
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
-import xgboost as xgb
+if TYPE_CHECKING:  # imported where a model is loaded, not by every request path
+    import xgboost as xgb
 
 from app.config import settings
 from app.db.base import resolve_path
@@ -128,6 +129,8 @@ def load_feature_columns(run_id: str) -> dict:
 def load_regressors(run_id: str) -> dict:
     d = run_dir(run_id)
     cols = load_feature_columns(run_id)
+    import xgboost as xgb
+
     out = {}
     for p in sorted(d.glob("*_regressor.json")):
         var = p.name[: -len("_regressor.json")]
@@ -142,6 +145,8 @@ def load_classifier(run_id: str):
     p = run_dir(run_id) / "classifier.json"
     if not p.exists():
         return None, []
+    import xgboost as xgb
+
     m = xgb.XGBClassifier()
     m.load_model(p)
     _restore_categorical(m)
