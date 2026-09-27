@@ -137,3 +137,152 @@ def test_the_package_ships_the_responses():
     from scripts import package_for_deploy
 
     assert "data/analysis/responses" in package_for_deploy.EXTRA_PATHS
+
+
+# ------------------------------------------------ is the box serving CI's files? (health)
+
+def _box(monkeypatch, tmp_path, run_id="run_A"):
+    from app.ml import registry
+
+    monkeypatch.setattr(settings, "serving_read_only", True)
+    monkeypatch.setattr(registry, "current_run_id", lambda: run_id)
+    monkeypatch.setattr(response_cache, "default_dir", lambda: tmp_path)
+    response_cache.invalidate()
+
+
+def test_status_active_when_the_bundle_matches(tmp_path, monkeypatch):
+    _box(monkeypatch, tmp_path)
+    response_cache.write_responses("run_A", _items(ensemble={"x": 1}, replay={"y": 1}), tmp_path)
+    st = response_cache.status()
+    assert st["active"] is True
+    assert st["files"] == 2
+    assert st["built_at"]
+    assert st["reason"] is None
+
+
+def test_status_names_a_missing_bundle(tmp_path, monkeypatch):
+    _box(monkeypatch, tmp_path)
+    st = response_cache.status()
+    assert st["active"] is False
+    assert "run_A" in st["reason"]
+
+
+def test_status_names_a_bundle_built_for_other_code(tmp_path, monkeypatch):
+    """The 2026-09-27 13:00Z case: new code live on the old bundle."""
+    _box(monkeypatch, tmp_path)
+    response_cache.write_responses("run_A", _items(ensemble={"x": 1}), tmp_path)
+    monkeypatch.setattr(response_cache, "code_fingerprint", lambda: "a-newer-build")
+    response_cache.invalidate()
+    st = response_cache.status()
+    assert st["active"] is False
+    assert "code" in st["reason"]
+
+
+def test_status_off_the_box_says_so(tmp_path, monkeypatch):
+    """A dev server builds every response by design; that is not a missing bundle."""
+    _box(monkeypatch, tmp_path)
+    monkeypatch.setattr(settings, "serving_read_only", False)
+    response_cache.write_responses("run_A", _items(ensemble={"x": 1}), tmp_path)
+    st = response_cache.status()
+    assert st["active"] is False
+    assert "SERVING_READ_ONLY" in st["reason"]
+
+
+# ------------------------------------------- live builds on the box: one at a time, bounded
+
+def _request():
+    from starlette.requests import Request
+
+    return Request({"type": "http", "headers": [(b"accept-encoding", b"gzip")]})
+
+
+def test_live_builds_on_the_box_run_one_at_a_time(tmp_path, monkeypatch):
+    """Without a matching bundle every screen is built live, and each build holds the model
+    and its frames. Two at once is what the box could not hold on 2026-09-26 20:03Z and
+    2026-09-27 13:03Z. The payload is a plumbing stand-in; the sleep only widens the window
+    in which an overlap would show."""
+    import threading
+    import time
+
+    _box(monkeypatch, tmp_path)
+    active, peak = [0], [0]
+    count = threading.Lock()
+
+    def _build():
+        with count:
+            active[0] += 1
+            peak[0] = max(peak[0], active[0])
+        time.sleep(0.15)
+        with count:
+            active[0] -= 1
+        return {"ok": True}
+
+    threads = [threading.Thread(target=response_cache.respond,
+                                args=(_request(), f"region__IN-XX-D{i}", _build))
+               for i in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert peak[0] == 1
+
+
+def test_the_same_screen_asked_for_twice_at_once_is_built_once(tmp_path, monkeypatch):
+    import threading
+    import time
+
+    _box(monkeypatch, tmp_path)
+    calls = []
+
+    def _build():
+        calls.append(1)
+        time.sleep(0.15)
+        return {"ok": True}
+
+    threads = [threading.Thread(target=response_cache.respond,
+                                args=(_request(), "regions_all", _build)) for _ in range(3)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert len(calls) == 1
+
+
+def test_a_prebuilt_file_never_waits_behind_a_live_build(tmp_path, monkeypatch):
+    _box(monkeypatch, tmp_path)
+    response_cache.write_responses("run_A", _items(ensemble={"x": 1}), tmp_path)
+    assert response_cache._build_gate.acquire(timeout=1)
+    try:
+        r = response_cache.respond(_request(), "ensemble", lambda: pytest.fail("built"))
+    finally:
+        response_cache._build_gate.release()
+    assert json.loads(gzip.decompress(r.body)) == {"x": 1}
+
+
+def test_a_request_that_waits_too_long_is_told_to_retry(tmp_path, monkeypatch):
+    """A 503 with Retry-After rather than a thread parked indefinitely behind a build that
+    takes tens of seconds on a 0.1-CPU box. The dashboard retries 5xx on its own."""
+    from fastapi import HTTPException
+
+    _box(monkeypatch, tmp_path)
+    monkeypatch.setattr(response_cache, "BUILD_WAIT_S", 0.05)
+    assert response_cache._build_gate.acquire(timeout=1)
+    try:
+        with pytest.raises(HTTPException) as exc:
+            response_cache.respond(_request(), "regions_all", lambda: {"ok": True})
+    finally:
+        response_cache._build_gate.release()
+    assert exc.value.status_code == 503
+    assert exc.value.headers.get("Retry-After")
+
+
+def test_off_the_box_builds_are_not_gated(tmp_path, monkeypatch):
+    """Dev servers, tests and CI build as they always have."""
+    _box(monkeypatch, tmp_path)
+    monkeypatch.setattr(settings, "serving_read_only", False)
+    assert response_cache._build_gate.acquire(timeout=1)
+    try:
+        r = response_cache.respond(_request(), "regions_all", lambda: {"ok": True})
+    finally:
+        response_cache._build_gate.release()
+    assert json.loads(gzip.decompress(r.body)) == {"ok": True}

@@ -4,14 +4,18 @@ name: Warm the box after a push deploy
 # deploys are dispatched deliberately by refresh-data.yml's hook, not fired by a push. This
 # workflow's wait-for-new-build loop below still runs against whatever is live for any
 # backend/frontend/Dockerfile push, so a push that does NOT trigger a Render deploy just
-# times out its wait (~15 min) and warms whatever was already serving - harmless, since the
-# workflow never fails either way (see below), but it is not warming a build this push
-# caused. Caches are per-process; /api/replay/cycles was measured at 54 s cold against
-# ~0.2 s warm, and it is one of the four tabs. The judges are sent a link rather than shown
-# a demo, so the first *human* request must not be the cold one.
+# times out its wait (~15 min) and checks whatever was already serving.
+#
+# Since PR #48 the box serves responses CI built (app/services/response_cache.py), so there
+# is nothing to warm - and a box WITHOUT a matching bundle must not be warmed at all. It
+# builds every screen live, holding the model and its frames, and a warm request on top of
+# a visitor is what OOM-killed it twice: 2026-09-26 20:03Z and 2026-09-27 13:03Z, the second
+# after a manual Render deploy of c35a54c ran ahead of refresh-data's matching bundle. So
+# this reads /api/health's `prebuilt` first, and only a box serving its bundle gets the one
+# sequential pass below, which reads files and confirms the deploy answers fast.
 #
 # This workflow never fails. Nothing downstream depends on it, the data is already live
-# and correct, and a failed warm costs the next visitor some latency and nothing else.
+# and correct, and a warning is how it reports a box that needs refresh-data.yml.
 
 on:
   push:
@@ -75,22 +79,23 @@ jobs:
             *)      echo "::warning::could not confirm the new build within 15 min; warming whatever is serving" ;;
           esac
 
-          # 3. Warm, then check it actually landed. A call that takes a while IS the warm;
-          #    if the process was swapped underneath us the next pass pays it again. Stop
-          #    as soon as a pass comes back fast, which is the state we actually want.
-          # NOTE: GitHub runs this under `bash -e`, so `cmd && assignment` would abort the
-          # step whenever cmd is false. Every conditional here is an explicit if/fi.
-          for attempt in 1 2 3; do
-            slow=0
-            for ep in /api/regions/all /api/ensemble /api/replay/cycles; do
-              t=$(curl -fsS --max-time 300 -o /dev/null -w '%{time_total}' "$SITE$ep" 2>/dev/null || echo 999)
-              printf '  attempt %s  %-20s %ss\n' "$attempt" "$ep" "$t"
-              if awk -v t="$t" 'BEGIN{ exit !(t > 5) }'; then slow=1; fi
-            done
-            if [ "$slow" -eq 0 ]; then
-              echo "warm after $attempt pass(es)"
-              break
-            fi
-            if [ "$attempt" -lt 3 ]; then sleep 30; fi
+          # 3. Never send anything heavy to a box without its prebuilt bundle: it would build
+          #    live, and that is what OOM-killed it (see the header). A box whose /api/health
+          #    has no `prebuilt` key predates the field and is treated the same way.
+          prebuilt=$(curl -fsS --max-time 30 "$SITE/api/health" 2>/dev/null | python3 -c '
+          import json, sys
+          p = json.load(sys.stdin).get("prebuilt") or {}
+          print("active" if p.get("active") else "inactive: %s" % (p.get("reason") or "no prebuilt key in /api/health"))
+          ' 2>/dev/null || echo "inactive: /api/health unreadable")
+          echo "prebuilt responses: $prebuilt"
+          if [ "$prebuilt" != "active" ]; then
+            echo "::warning::$SITE is serving without a matching prebuilt bundle ($prebuilt). It builds every screen live, so this run sends it nothing. Dispatch refresh-data.yml to package and deploy a bundle that matches this code."
+            exit 0
+          fi
+
+          # 4. One sequential pass, to confirm the deploy answers fast. These are file reads.
+          for ep in /api/regions/all /api/ensemble /api/replay/cycles; do
+            t=$(curl -fsS --max-time 60 -o /dev/null -w '%{time_total}' "$SITE$ep" 2>/dev/null || echo failed)
+            printf '  %-20s %ss\n' "$ep" "$t"
           done
           exit 0

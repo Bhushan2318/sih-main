@@ -126,7 +126,19 @@ def health() -> dict:
         "commit": _build_commit(),
         "memory_mb": _rss_mb(),
         "uptime_s": round(time.monotonic() - _STARTED, 1),
+        "prebuilt": _prebuilt_status(),
     }
+
+
+def _prebuilt_status() -> dict:
+    # Render's own health check calls this endpoint, so it must answer even if the check
+    # itself breaks: a failing health check restarts the box.
+    try:
+        from app.services import response_cache
+        return response_cache.status()
+    except Exception as exc:  # noqa: BLE001
+        return {"active": False, "files": 0, "built_at": None,
+                "reason": f"status check failed: {type(exc).__name__}"}
 
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"

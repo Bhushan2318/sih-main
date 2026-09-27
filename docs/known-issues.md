@@ -13,10 +13,16 @@ here rather than discovered live.
   Measured 2026-09-27 against the live bundle, a cold box-mode server answered every
   dashboard request in 2–24 ms and stayed at 176 MB, where building on the box had taken
   11–18 s for Replay on the live site and loaded the model. The files are keyed on the
-  model run and a hash of the backend source, so a **code-only deploy between two data
-  refreshes** (a Render deploy not dispatched through `refresh-data.yml`) serves no files:
-  it builds live, correct but at the old speed, until the next refresh. Its log says so
-  ("precomputed responses ... building live instead").
+  model run and a hash of the backend source, so a **deploy that did not come from
+  `refresh-data.yml`** (Render's *Deploy latest commit*, as on 2026-09-27 13:00Z) runs
+  new code on the previous bundle and builds every screen live until the next refresh.
+  `/api/health` reports it (`prebuilt.active: false`, with the reason), warm-on-push then
+  sends it nothing, and the box builds one screen at a time. That guard is a mitigation,
+  not a fix: the opening screen plus Replay requested at once peaked at 1,060–1,211 MB
+  without it and 518–521 MB with it (macOS RSS, fresh server, 2026-09-27) - still at the
+  512 MB line. Most of that is the model load: the SHAP summary (+249 MB, which only the
+  district panel reads) and the eight regressors (+73 MB with xgboost, never used on the
+  box, which does not score).
 - **The opening screen is one viewport on desktop only.** On phones the KPI strip, the
   cue row and the ticker sit below the fold. The page scrolls and what is visible is
   composed; only the single-screen effect is lost.

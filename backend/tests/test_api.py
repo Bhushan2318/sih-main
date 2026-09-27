@@ -78,6 +78,15 @@ def test_health_reports_how_long_the_process_has_been_up(blank_client):
     assert blank_client.get("/api/health").json()["uptime_s"] >= first
 
 
+def test_health_says_whether_prebuilt_responses_are_being_served(blank_client):
+    """warm-on-push reads this to decide whether warming is safe: a box without a matching
+    bundle builds every screen live, and warming one is what OOM-killed it on 2026-09-26
+    20:03Z and 2026-09-27 13:03Z. The key is always present; a blank install serves none."""
+    p = blank_client.get("/api/health").json()["prebuilt"]
+    assert p["active"] is False
+    assert p["reason"]
+
+
 def test_health_always_reports_a_build_commit_key(blank_client, monkeypatch):
     # CI polls this to tell whether the process answering is the one it just deployed -
     # Render auto-deploys on push, which never touches the refresh workflow, so there is

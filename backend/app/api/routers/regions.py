@@ -12,9 +12,12 @@ router = APIRouter(prefix="/api/regions", tags=["regions"])
 @router.get("", response_model=schemas.RegionsResponse)
 @router.get("/", response_model=schemas.RegionsResponse, include_in_schema=False)
 def list_regions(
+    request: Request,
     lead_time_days: int = Query(1, ge=1, le=10, description="forecast lead day, 1-10"),
-) -> schemas.RegionsResponse:
-    return region_service.get_regions(lead_time_days)
+):
+    # Not prebuilt (the dashboard reads /all), but still one of the builds the box gates.
+    return response_cache.respond(
+        request, None, lambda: region_service.get_regions(lead_time_days))
 
 
 @router.get("/all", response_model=schemas.AllRegionsResponse)
