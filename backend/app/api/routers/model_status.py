@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
 from app.api import schemas
 from app.ml import inference, registry
 from app.realtime.broadcaster import manager
-from app.services import upload_service
+from app.services import response_cache, upload_service
 from app.services.region_service import _last_trained_at
 from app.storage import parquet_store
 
@@ -38,7 +38,21 @@ def _training_data(manifest: dict) -> dict:
 
 
 @router.get("/status", response_model=schemas.ModelStatusResponse)
-def model_status() -> schemas.ModelStatusResponse:
+def model_status(request: Request):
+    # Built in CI (services/response_cache); the fields that are live by nature are set
+    # here on every request, however the rest was obtained.
+    return response_cache.respond(request, "model_status", lambda: build_status(),
+                                  patch=_live_fields)
+
+
+def _live_fields(body: dict) -> dict:
+    body["websocket_clients"] = manager.connection_count
+    body["training_in_progress"] = upload_service.training_in_progress()
+    body["last_training_error"] = upload_service.last_training_error()
+    return body
+
+
+def build_status() -> schemas.ModelStatusResponse:
     data_volume = parquet_store.dataset_summary()
     state = inference.load_model_state()
 

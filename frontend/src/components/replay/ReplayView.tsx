@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Topology } from "topojson-specification";
 import type { RegionSummary, ReplayRegionStep } from "../../api/types";
-import { useModelStatus, useReplay, useReplayCycles } from "../../hooks/useDashboardData";
+import {
+  useModelStatus, usePrefetchReplay, useReplay, useReplayCycles,
+} from "../../hooks/useDashboardData";
 import { initialReplayStepIndex } from "../../lib/eventLeadDay";
 import { resolveRiskCuts } from "../../lib/riskBands";
 import { EmptyState, ErrorState, LoadingState } from "../common/States";
@@ -31,6 +33,8 @@ export function ReplayView({ topology }: { topology: Topology | null }) {
     replay?.risk_band_definitions,
   );
   const steps = replay?.steps ?? [];
+  // With one cycle on screen, fetch the rest of the list behind it, so switching is instant.
+  usePrefetchReplay(replay ? "all" : null);
 
   // The cycle this replay belongs to, as listed by /api/replay/cycles - the only place
   // peak_valid_date and kind live. Derived before the reset effect below so a newly

@@ -4,6 +4,7 @@ import asyncio
 import logging
 import os
 import threading
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -21,6 +22,9 @@ from app.realtime.broadcaster import manager
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("forecastguard")
+
+# Read by /api/health: a young process after a slow page means a restart, not a slow endpoint.
+_STARTED = time.monotonic()
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -121,6 +125,7 @@ def health() -> dict:
         "websocket_clients": manager.connection_count,
         "commit": _build_commit(),
         "memory_mb": _rss_mb(),
+        "uptime_s": round(time.monotonic() - _STARTED, 1),
     }
 
 

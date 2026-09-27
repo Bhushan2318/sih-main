@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 import numpy as np
 import pandas as pd
-import xgboost as xgb
+
+if TYPE_CHECKING:  # loaded with the model (registry), not with this module
+    import xgboost as xgb
 
 from app.config import settings
 from app.features import engineering as fe
@@ -167,6 +169,8 @@ def invalidate_caches() -> None:
         replay_service.invalidate()
         from app.services import ensemble_service
         ensemble_service.invalidate()
+        from app.services import response_cache
+        response_cache.invalidate()
     except Exception:  # noqa: BLE001 - never let cache cleanup break an ingest
         pass
 

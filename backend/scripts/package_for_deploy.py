@@ -22,7 +22,7 @@ from pathlib import Path
 # What the box needs to answer a request, and nothing else: the canonical store it scores
 # against, the geo index for region resolution, the metadata db, and one model.
 EXTRA_PATHS = ("data/canonical", "data/geo", "data/summary.json", "metadata.db",
-               "data/analysis/scored_cycles")
+               "data/analysis/scored_cycles", "data/analysis/responses")
 
 
 def _replay_window() -> int:
@@ -149,6 +149,17 @@ def main() -> int:
             n, nbytes = precompute_cycles(state)
             print(f"precomputed {n} cycle(s) - the national map's latest and Replay's "
                   f"window of {PRECOMPUTE_CYCLES} - {nbytes / 1_048_576:.2f} MB")
+
+            # Then the step after scoring: every response the dashboard opens with, built
+            # as the box would build it and gzipped, so the box reads a file instead of
+            # loading the model and building on a 0.1-CPU share. After the scored cycles,
+            # because it reads them. See app/services/response_cache.py.
+            from app.services import response_cache
+            rep = response_cache.precompute(run_id)
+            for name, why in rep["skipped"]:
+                print(f"note: response {name} not precomputed ({why})", file=sys.stderr)
+            print(f"precomputed {rep['written']} response(s), "
+                  f"{rep['bytes'] / 1_048_576:.2f} MB gzipped")
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     with tarfile.open(args.out, "w:gz") as tar:

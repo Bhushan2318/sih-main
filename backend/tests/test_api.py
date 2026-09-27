@@ -69,6 +69,15 @@ def test_health_reports_its_own_memory(blank_client):
         assert mem is not None and mem > 0, "/proc/self/status should be readable on Linux"
 
 
+def test_health_reports_how_long_the_process_has_been_up(blank_client):
+    """Render's free tier stops the box after 15 idle minutes, and an out-of-memory restart
+    looks the same from outside: one slow page. Uptime tells a fresh process from a slow
+    endpoint with a single request."""
+    first = blank_client.get("/api/health").json()["uptime_s"]
+    assert isinstance(first, (int, float)) and first >= 0
+    assert blank_client.get("/api/health").json()["uptime_s"] >= first
+
+
 def test_health_always_reports_a_build_commit_key(blank_client, monkeypatch):
     # CI polls this to tell whether the process answering is the one it just deployed -
     # Render auto-deploys on push, which never touches the refresh workflow, so there is
@@ -442,6 +451,91 @@ def test_ensemble_pins_to_the_requested_region(trained_client):
     # the scope claim has to follow the pin rather than overstating it
     assert "for this region" in (pinned["subject_reason"] or "")
     assert "in this cycle" in (auto["subject_reason"] or "")
+
+
+# ------------------------------------------- precomputed responses: built in CI, read on the box
+
+# Stamped with the time they were built, so they legitimately differ between two builds.
+_BUILD_TIME_FIELDS = {"generated_at", "created_at"}
+
+
+def _without_build_times(o):
+    if isinstance(o, dict):
+        return {k: _without_build_times(v) for k, v in o.items() if k not in _BUILD_TIME_FIELDS}
+    if isinstance(o, list):
+        return [_without_build_times(v) for v in o]
+    return o
+
+
+def test_precomputed_responses_match_what_the_box_would_build(trained_client, tmp_path,
+                                                              monkeypatch):
+    """Every screen the dashboard opens, served from what CI built, must be exactly what
+    the serving box would have built itself - and with the files present the box must
+    build nothing at all.
+
+    "What the box would build" is taken in box mode (SERVING_READ_ONLY, scored cycles
+    precomputed), because that is the comparison that matters: the box already serves
+    precomputed *scores*, and this only moves the step after them.
+
+    The no-build half is asserted by making every builder raise. A test that only compared
+    bodies would pass whether or not the files were used.
+    """
+    from app.api.routers import model_status as ms
+    from app.config import settings
+    from app.ml import inference, precomputed, registry
+    from app.services import (alert_service, ensemble_service, region_service,
+                              replay_service, response_cache)
+    from scripts import package_for_deploy
+
+    monkeypatch.setattr(precomputed, "default_dir", lambda: tmp_path / "scored")
+    monkeypatch.setattr(response_cache, "default_dir", lambda: tmp_path / "responses")
+    inference.invalidate_caches()
+    state = inference.load_model_state()
+    written, _ = package_for_deploy.precompute_cycles(state)
+    assert written > 0
+
+    monkeypatch.setattr(settings, "serving_read_only", True)
+    inference.invalidate_caches()
+    cycles = trained_client.get("/api/replay/cycles").json()
+    assert cycles, "the trained slice should offer at least one Replay cycle"
+    rid = trained_client.get("/api/regions?lead_time_days=1").json()["regions"][0]["region_id"]
+    paths = [
+        "/api/ensemble", "/api/regions/all", "/api/model/status", "/api/replay/cycles",
+        "/api/replay", f"/api/regions/{rid}",
+        "/api/alerts?limit=200", "/api/alerts?limit=200&risk_band=high",
+        "/api/alerts?limit=3&risk_band=medium", "/api/alerts",
+    ] + [f"/api/replay?init_date={c['init_date']}" for c in cycles]
+    built_on_the_box = {p: trained_client.get(p).json() for p in paths}
+
+    report = response_cache.precompute(registry.current_run_id())
+    assert not report["skipped"], report["skipped"]
+    assert settings.serving_read_only is True
+    inference.invalidate_caches()  # drops the box's in-memory copies too
+
+    def _must_not_build(*_a, **_k):
+        raise AssertionError("built on request although CI had precomputed it")
+
+    for mod, fn in [(ensemble_service, "get_divergence"), (region_service, "get_all_regions"),
+                    (region_service, "get_region_detail"), (replay_service, "get_replay"),
+                    (replay_service, "list_cycles"), (alert_service, "get_alerts"),
+                    (ms, "build_status")]:
+        monkeypatch.setattr(mod, fn, _must_not_build)
+
+    for p in paths:
+        r = trained_client.get(p)
+        assert r.status_code == 200, p
+        assert _without_build_times(r.json()) == _without_build_times(built_on_the_box[p]), p
+
+
+def test_precomputed_responses_are_sent_compressed_only_when_asked(trained_client):
+    """Sent gzipped as stored when the client accepts it (every browser does), and inflated
+    for one that does not, so no client ever receives bytes it cannot read."""
+    gz = trained_client.get("/api/regions/all", headers={"Accept-Encoding": "gzip"})
+    plain = trained_client.get("/api/regions/all", headers={"Accept-Encoding": "identity"})
+    assert gz.status_code == plain.status_code == 200
+    assert gz.headers.get("content-encoding") == "gzip"
+    assert "content-encoding" not in plain.headers
+    assert gz.json() == plain.json()
 
 
 def test_pipeline_log_shows_refused_runs_not_only_successes(blank_client):

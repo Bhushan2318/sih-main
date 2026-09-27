@@ -18,7 +18,9 @@ import { LeadDaySelector } from "../components/map/LeadDaySelector";
 import { MapLegend } from "../components/map/MapLegend";
 import { AboutPage } from "../components/about/AboutPage";
 import { ReplayView } from "../components/replay/ReplayView";
-import { useAllRegions, useEnsembleDivergence, useModelStatus } from "../hooks/useDashboardData";
+import {
+  useAllRegions, useEnsembleDivergence, useModelStatus, usePrefetchReplay,
+} from "../hooks/useDashboardData";
 import { useLiveSocket } from "../hooks/useLiveSocket";
 import { stateNamesFrom } from "../lib/stateNames";
 import { parseAppState, toSearch, type View } from "../lib/urlState";
@@ -127,6 +129,10 @@ export function DashboardPage() {
       && ensemble.n_scored_regions > 0
       && (ensemble.national?.length ?? 0) > 0,
   );
+
+  // Once the opening screen has what it needs, fetch Replay's past events in the
+  // background, so the Replay tab opens from memory.
+  usePrefetchReplay(heroFills && regionsQuery.isSuccess ? "events" : null);
 
   const showRail = useMediaQuery("(min-width: 1440px) and (min-height: 700px)");
   const regionsWait = useElapsedSeconds(regionsQuery.isLoading);
