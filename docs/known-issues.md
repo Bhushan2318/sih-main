@@ -509,6 +509,19 @@ here rather than discovered live.
 
 ## Data
 
+- **A packaged cycle verifies as its observations arrive; what the model said does not
+  change.** Each CI run re-reads the observations of every cycle in Replay's window and
+  keeps each prediction exactly as first packaged (`inference.refresh_observations`).
+  Before 2026-09-28 the first artifact was re-packaged unchanged, so a live cycle - scored
+  before its days had happened - never verified (09-21 and 09-22 held 0 observations while
+  the store had 284 of each one's cells). Two exceptions, both deliberate:
+  - The retired 36-city-point cycles (live feed before 07d9835, up to 22 Sep) keep the
+    observations they were scored with. The store now holds district area means for those
+    days, and pairing them would verify a point forecast against a polygon mean. They
+    leave Replay's window by about 2 Oct.
+  - A newly promoted model has no artifacts, so it scores the window fresh, and a fresh
+    score fills `forecast_error_lag` from whatever observations have arrived by then - the
+    leak above, on cycles that are days old. It does not arise while the model is pinned.
 - **`docs/results.md` is generated, not committed.** Baselines are written into the model
   run that produced them and served from there, so the numbers cannot describe a different
   model than the one answering requests. The repo previously held a results file naming a

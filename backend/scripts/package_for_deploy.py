@@ -48,10 +48,20 @@ def _available_cycles():
 
 
 def _score_and_write(state, init) -> int:
-    """Score one cycle and write it; returns bytes written. Raises if it cannot score."""
+    """Score one cycle and write it; returns bytes written. Raises if it cannot score.
+
+    A cycle an earlier run packaged is not scored again. Its observations are re-read from
+    the store and its predictions kept as issued (inference.refresh_observations), so a
+    cycle packaged before its days happened verifies as they do. If that fails, the raise
+    leaves the previous artifact as it was.
+    """
     from app.ml import inference, precomputed
 
-    scored = inference.score_cycle(state, init_date=init)
+    ready = precomputed.read_scored_cycle(state.run_id, init)
+    if ready is not None:
+        scored = inference.refresh_observations(ready)
+    else:
+        scored = inference.score_cycle(state, init_date=init)
     if scored is None:
         raise RuntimeError("no scoreable rows")
     out = precomputed.write_scored_cycle(scored)
@@ -149,6 +159,11 @@ def main() -> int:
             n, nbytes = precompute_cycles(state)
             print(f"precomputed {n} cycle(s) - the national map's latest and Replay's "
                   f"window of {PRECOMPUTE_CYCLES} - {nbytes / 1_048_576:.2f} MB")
+            from app.ml import precomputed
+            gone = precomputed.prune(precomputed.default_dir(), run_id,
+                                     _available_cycles()[:PRECOMPUTE_CYCLES])
+            print(f"pruned {len(gone)} packaged cycle(s) outside that window"
+                  + (f": {', '.join(p.name for p in gone)}" if gone else ""))
 
             # Then the step after scoring: every response the dashboard opens with, built
             # as the box would build it and gzipped, so the box reads a file instead of

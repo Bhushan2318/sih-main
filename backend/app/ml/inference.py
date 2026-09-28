@@ -419,6 +419,83 @@ def _dominant_variable(events: pd.DataFrame, bust_threshold: dict) -> list:
     return ratios.idxmax(axis=1, skipna=True).where(ratios.notna().any(axis=1)).tolist()
 
 
+def _is_retired_city_point_cycle(init: pd.Timestamp) -> bool:
+    """Was this cycle ingested by the live feed while it sampled 36 city points?
+
+    Until 07d9835 the live feed took the nearest grid point to each of 36 cities, and the
+    rows found their district by name or by the point's polygon. It has written district
+    area means, keyed by district id, since - and the observations in the store for those
+    earlier days were re-pulled as district area means too. Pairing one of those cycles
+    anew would verify a point forecast against a polygon mean.
+
+    Told apart by the feed's own files and how their rows were placed. The method alone
+    does not say point or area: the reforecast district store's area means found their
+    districts by point_in_polygon too.
+    """
+    # Undeduplicated: only which files and methods occur matters, not which row wins.
+    fc = parquet_store.read_dataset(value_types=["forecast"], init_dates=[init.date()],
+                                    columns=["source_file", "region_resolution_method"],
+                                    dedupe=False)
+    if fc.empty:
+        return False
+    live = fc["source_file"].astype(str).str.startswith("gefs_operational_forecast")
+    return bool((live & (fc["region_resolution_method"].astype(str) != "region_id")).any())
+
+
+def refresh_observations(scored: ScoredCycle) -> ScoredCycle:
+    """`scored` with its observed values re-read from the store, every prediction as issued.
+
+    A live cycle is scored in the CI run that ingests it, before any of its days have
+    happened, and score_cycle returns an existing artifact as it stands - so every later
+    run packaged the first answer again and a cycle never verified. This is not a re-score:
+    that would fill forecast_error_lag from the very observations the cycle is being
+    checked against, and change after the fact what the model is shown to have said.
+
+    Observations are read over the window build_scoring_frame reads and paired by the same
+    rule (engineering.observed_means), so they are exactly what a fresh score would pair; a
+    cell still unobserved is NaN, never zero. A cycle from the retired city-point feed is
+    returned as it was (_is_retired_city_point_cycle).
+    """
+    init = pd.Timestamp(scored.init_date).normalize()
+    if _is_retired_city_point_cycle(init):
+        return scored
+    observed = parquet_store.read_dataset(
+        value_types=["observed"],
+        columns=_SCORING_COLUMNS,
+        valid_date_min=(init - pd.Timedelta(days=_OBS_PAD_DAYS)).date(),
+        valid_date_max=(init + pd.Timedelta(days=_MAX_LEAD_DAYS + _OBS_PAD_DAYS)).date(),
+    )
+    ob = fe.observed_means(observed[observed["region_id"].notna()])
+    keys = ["region_id", "valid_date", "variable"]
+
+    def _keyed(df: pd.DataFrame) -> pd.DataFrame:
+        return pd.DataFrame({"region_id": df["region_id"].astype(str),
+                             "valid_date": pd.to_datetime(df["valid_date"]),
+                             "variable": df["variable"].astype(str)})
+
+    ob = pd.concat([_keyed(ob), ob["observed_value"]], axis=1)
+    pv = scored.per_variable.copy()
+    paired = _keyed(pv).merge(ob, on=keys, how="left", validate="many_to_one")
+    pv["observed_value"] = pd.to_numeric(paired["observed_value"], errors="coerce").to_numpy()
+
+    # The event frame's actual_err_<var> is |forecast mean - observed| (pivot.build_event_frame),
+    # and the forecast mean is per_variable's predicted_value; restated from the refreshed
+    # observations so the two tables describe the same ones. No classifier input reads it.
+    err = pv.assign(region_id=pv["region_id"].astype(str), variable=pv["variable"].astype(str),
+                    actual_err=(pv["predicted_value"] - pv["observed_value"]).abs())
+    err = err.pivot(index=["region_id", "lead_time_days"], columns="variable",
+                    values="actual_err")
+    ev = scored.events.drop(columns=[c for c in scored.events.columns
+                                     if c.startswith("actual_err_")])
+    at = err.reindex(pd.MultiIndex.from_arrays(
+        [ev["region_id"].astype(str), ev["lead_time_days"].astype(int)]))
+    for var in at.columns:
+        ev[f"actual_err_{var}"] = at[var].to_numpy()
+
+    return ScoredCycle(run_id=scored.run_id, init_date=scored.init_date, events=ev,
+                       per_variable=pv, n_rows_scored=scored.n_rows_scored)
+
+
 def _per_variable_table(scored: pd.DataFrame, state: ModelState) -> pd.DataFrame:
     g = (
         scored.groupby(["region_id", "lead_time_days", "variable", "valid_date"],
