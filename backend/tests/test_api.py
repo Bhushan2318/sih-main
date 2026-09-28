@@ -439,6 +439,59 @@ def test_ensemble_divergence_draws_real_members(trained_client):
     assert body["headline_note"]
 
 
+def test_a_cycle_packaged_before_its_observations_arrived_is_verified_by_a_later_run(
+        trained_client, tmp_path, monkeypatch):
+    """Real sample store (GEFS reforecast + ERA5). A live cycle is scored in the CI run that
+    ingests it, before any of its days have happened, and every later run packaged that
+    first artifact again unchanged - so Replay never saw it verify (cycle 2026-09-21 held 0
+    observations while the store had them for 284 of its cells, 2026-09-28).
+
+    A later run must pick the observations up, and must not re-score: that would fill
+    forecast_error_lag from the very observations being verified against, and change what
+    the model is shown to have said after the fact."""
+    from app.ml import inference, precomputed
+    from app.storage import parquet_store
+    from scripts import package_for_deploy
+
+    monkeypatch.setattr(precomputed, "default_dir", lambda: tmp_path / "scored")
+    inference.invalidate_caches()
+    state = inference.load_model_state()
+    init = inference.available_cycles()[0]
+
+    real_read = parquet_store.read_dataset
+
+    def before_any_observation(*a, **k):
+        rows = real_read(*a, **k)
+        return rows[rows["value_type"] != "observed"] if "value_type" in rows else rows
+
+    monkeypatch.setattr(parquet_store, "read_dataset", before_any_observation)
+    package_for_deploy._score_and_write(state, init)
+    monkeypatch.setattr(parquet_store, "read_dataset", real_read)
+    issued = precomputed.read_scored_cycle(state.run_id, init)
+    assert issued.per_variable["observed_value"].isna().all()
+
+    inference.invalidate_caches()
+    package_for_deploy._score_and_write(state, init)
+    later = precomputed.read_scored_cycle(state.run_id, init)
+
+    # What the model said, unchanged ...
+    pd.testing.assert_frame_equal(
+        later.events[issued.events.columns], issued.events, check_like=False)
+    pd.testing.assert_frame_equal(
+        later.per_variable.drop(columns="observed_value"),
+        issued.per_variable.drop(columns="observed_value"))
+    # ... and what happened, exactly as a fresh read of the same store pairs it.
+    fresh = inference.score_cycle(state, init, as_of_init=True).per_variable
+    keys = ["region_id", "lead_time_days", "variable", "valid_date"]
+    got = later.per_variable.astype({"region_id": str}).set_index(keys)["observed_value"]
+    want = fresh.astype({"region_id": str}).set_index(keys)["observed_value"]
+    assert got.notna().sum() > 0
+    # Means of the same values taken in another order: equal to float precision.
+    pd.testing.assert_series_equal(got.sort_index(), want.reindex(got.index).sort_index(),
+                                   check_exact=False, rtol=1e-12)
+    inference.invalidate_caches()
+
+
 def test_ensemble_pins_to_the_requested_region(trained_client):
     """Clicking a region must chart that region. If the pin silently fell back to the
     auto-picked subject the hero would show one place while the UI claimed another."""

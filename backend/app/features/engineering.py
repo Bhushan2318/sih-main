@@ -76,6 +76,28 @@ def _season(month: pd.Series) -> pd.Series:
     return month.map(_SEASONS).astype("category")
 
 
+def observed_means(df: pd.DataFrame) -> pd.DataFrame:
+    """One observation per (region, valid date, variable) from the observed rows of `df`:
+    the mean of the rows held for it, and "provisional" if any of them is.
+
+    The one pairing rule for both sides of a bust label. build_training_frame pairs with it,
+    and inference.refresh_observations re-reads a packaged cycle's observations with it, so
+    a cycle is verified later against exactly what it would have been scored against.
+    """
+    ob_cols = ["region_id", "valid_date", "variable", "value"]
+    has_vs = "verification_status" in df.columns
+    if has_vs:
+        ob_cols.append("verification_status")
+    ob = df[df["value_type"] == OBSERVED][ob_cols].copy()
+    agg = {"value": "mean"}
+    if has_vs:
+        agg["verification_status"] = (
+            lambda s: "provisional" if (s == "provisional").any() else "final"
+        )
+    return (ob.groupby(["region_id", "valid_date", "variable"], as_index=False)
+              .agg(agg).rename(columns={"value": "observed_value"}))
+
+
 def build_training_frame(
     canonical: pd.DataFrame,
     historical_bust_freq: dict | None = None,
@@ -102,18 +124,7 @@ def build_training_frame(
     jumps = compute_jumpiness(all_trajectories)
     laf = compute_time_lagged_ensemble(fc, all_trajectories)
     del all_trajectories
-    ob_cols = ["region_id", "valid_date", "variable", "value"]
-    has_vs = "verification_status" in df.columns
-    if has_vs:
-        ob_cols.append("verification_status")
-    ob = df[df["value_type"] == OBSERVED][ob_cols].copy()
-    agg = {"value": "mean"}
-    if has_vs:
-        agg["verification_status"] = (
-            lambda s: "provisional" if (s == "provisional").any() else "final"
-        )
-    ob = (ob.groupby(["region_id", "valid_date", "variable"], as_index=False)
-            .agg(agg).rename(columns={"value": "observed_value"}))
+    ob = observed_means(df)
 
     fc = fc.rename(columns={"value": "forecast_value"})
     fc = fc.drop(columns=["verification_status"], errors="ignore")

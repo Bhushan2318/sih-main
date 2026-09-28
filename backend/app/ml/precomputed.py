@@ -35,6 +35,8 @@ docs/known-issues.md rather than silently fixed here.
 from __future__ import annotations
 
 import json
+import re
+import shutil
 from pathlib import Path
 
 import pandas as pd
@@ -52,6 +54,9 @@ def default_dir() -> Path:
     """Where the packaged artifacts live. A function, not a constant, so a test can point
     it somewhere else without reaching into module state."""
     return Path(resolve_path(settings.data_dir)) / "analysis" / DIR_NAME
+
+
+_CYCLE_DIR = re.compile(r"^.+__\d{8}$")
 
 
 def cycle_dir(base: Path, run_id: str, init_date) -> Path:
@@ -104,3 +109,22 @@ def read_scored_cycle(run_id: str, init_date, base: Path | None = None):
         per_variable=per_variable,
         n_rows_scored=int(meta.get("n_rows_scored", len(events))),
     )
+
+
+def prune(base: Path, run_id: str, keep_inits) -> list:
+    """Remove every packaged cycle except this run's `keep_inits`; returns what was removed.
+
+    CI restores the previous bundle before packaging, so without this the directory only
+    grew - 14 cycles on 2026-09-28 against Replay's window of 10 - and a promoted model left
+    the previous one's cycles behind for good.
+    """
+    base = Path(base)
+    if not base.is_dir():
+        return []
+    keep = {cycle_dir(base, run_id, i).name for i in keep_inits}
+    removed = []
+    for d in sorted(base.iterdir()):
+        if d.is_dir() and _CYCLE_DIR.match(d.name) and d.name not in keep:
+            shutil.rmtree(d)
+            removed.append(d)
+    return removed
