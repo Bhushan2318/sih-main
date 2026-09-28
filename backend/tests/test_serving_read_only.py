@@ -114,3 +114,88 @@ def test_box_refuses_uploads(monkeypatch):
     assert r.status_code == 409, r.text
     r = client.post("/api/upload/some-batch/confirm-mapping", json={"mappings": []})
     assert r.status_code == 409, r.text
+
+
+# ------------------------- on the box, only what the dashboard asks for, and nothing that builds
+#
+# Each request below loaded the model and built live on a box-mode mirror of the live bundle
+# (2026-09-28, fresh server each): +95 to +175 MB apiece, on a box killed at 512 that idles
+# near 240. The dashboard sends none of them. Builders that are reached fail the test.
+
+def _on_the_box(monkeypatch, tmp_path):
+    from app.ml import registry
+    from app.services import response_cache
+
+    monkeypatch.setattr(settings, "serving_read_only", True)
+    monkeypatch.setattr(registry, "current_run_id", lambda: "run_PLUMBING")
+    monkeypatch.setattr(response_cache, "default_dir", lambda: tmp_path)
+    response_cache.invalidate()
+
+
+def _must_not_build(*a, **k):
+    raise AssertionError("built on request although the dashboard never asks for it")
+
+
+def test_box_refuses_parameters_the_dashboard_never_sends(monkeypatch, tmp_path):
+    from app.main import app
+    from app.services import ensemble_service, replay_service
+
+    _on_the_box(monkeypatch, tmp_path)
+    monkeypatch.setattr(ensemble_service, "get_divergence", _must_not_build)
+    monkeypatch.setattr(replay_service, "get_replay", _must_not_build)
+    client = TestClient(app)
+    for url in ("/api/ensemble?region_id=zzz", "/api/ensemble?init_date=2017-12-01",
+                "/api/replay?focus_region=zzz"):
+        r = client.get(url)
+        assert r.status_code == 409, (url, r.status_code, r.text)
+
+
+def test_box_refuses_a_state_panel(monkeypatch, tmp_path):
+    """State ids pass the unknown-region check, but CI builds district panels only and the
+    dashboard never opens a state's (a click on a state drills the map into it)."""
+    from app.main import app
+    from app.services import region_service
+
+    _on_the_box(monkeypatch, tmp_path)
+    monkeypatch.setattr(region_service, "get_region_detail", _must_not_build)
+    r = TestClient(app).get("/api/regions/IN-MH")
+    assert r.status_code == 404, r.text
+
+
+def test_box_serves_one_lead_day_as_a_slice_of_the_all_days_map(monkeypatch, tmp_path):
+    """The payload is a plumbing stand-in shaped like AllRegionsResponse."""
+    from app.main import app
+    from app.services import region_service
+
+    _on_the_box(monkeypatch, tmp_path)
+    monkeypatch.setattr(region_service, "get_regions", _must_not_build)
+    monkeypatch.setattr(region_service, "get_all_regions", lambda: {
+        "model_trained": True,
+        "days": [{"lead_time_days": d, "regions": [{"region_id": f"R{d}"}]} for d in range(1, 11)],
+    })
+    r = TestClient(app).get("/api/regions?lead_time_days=3")
+    assert r.status_code == 200, r.text
+    assert r.json() == {"lead_time_days": 3, "regions": [{"region_id": "R3"}]}
+
+
+@pytest.mark.parametrize("box", [True, False])
+def test_a_malformed_replay_date_is_a_422_not_a_500(monkeypatch, tmp_path, box):
+    from app.main import app
+    from app.services import replay_service
+
+    _on_the_box(monkeypatch, tmp_path)
+    monkeypatch.setattr(settings, "serving_read_only", box)
+    monkeypatch.setattr(replay_service, "get_replay", _must_not_build)
+    r = TestClient(app).get("/api/replay?init_date=garbage")
+    assert r.status_code == 422, r.text
+
+
+def test_a_path_with_a_null_byte_is_a_404_not_a_500(tmp_path):
+    """`GET /%00` raised ValueError (embedded null byte) out of the SPA fallback."""
+    from app import main
+
+    (tmp_path / "index.html").write_text("<!doctype html>")
+    assert main._static_file(tmp_path, "\x00") is None
+    assert main._static_file(tmp_path, "a\x00b.js") is None
+    assert main._static_file(tmp_path, "index.html") == tmp_path / "index.html"
+    assert main._static_file(tmp_path, "../etc/passwd") is None

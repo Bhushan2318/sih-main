@@ -25,6 +25,15 @@ here rather than discovered live.
   screens identical. Not yet measured on Linux, whose Arrow allocator (jemalloc) differs
   from macOS's (mimalloc); the numbers may not transfer. Deploying through
   `refresh-data.yml` avoids the path entirely.
+- **The live site answers only what the dashboard asks for.** On the serving box
+  (`SERVING_READ_ONLY`) every write is refused with a 409 before its body is read, and a
+  read carrying a body with a 413 (`app/api/box_guard.py`). Parameters the dashboard never
+  sends are refused rather than built: `/api/ensemble?region_id=` or `?init_date=` and
+  `/api/replay?focus_region=` get a 409, a state's panel (`/api/regions/IN-MH`) and a
+  Replay date the bundle does not hold get a 404. `/api/regions?lead_time_days=N` is one day
+  cut from `/api/regions/all`. Each of these had loaded the model on the box: measured
+  2026-09-28 on a box-mode mirror, a 254-334 MB peak from about 160 MB per request, and a
+  single 15 MB upload body 161 to 424 MB. Run the API locally for any of them.
 - **The opening screen is one viewport on desktop only.** On phones the KPI strip, the
   cue row and the ticker sit below the fold. The page scrolls and what is visible is
   composed; only the single-screen effect is lost.

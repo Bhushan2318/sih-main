@@ -7,12 +7,14 @@ import threading
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from app.api.box_guard import BoxRequestGuard
 from app.api.routers import alerts, ensemble, ingest, model_status, regions, replay, upload, ws
 from app.config import settings
 from app.db.base import init_db
@@ -75,6 +77,8 @@ app = FastAPI(
     ),
 )
 
+# Innermost of the two, so a refusal still carries CORS headers. See app/api/box_guard.py.
+app.add_middleware(BoxRequestGuard)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list,
@@ -143,6 +147,20 @@ def _prebuilt_status() -> dict:
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
 
+
+def _static_file(root: Path, full_path: str) -> Optional[Path]:
+    """The built file `full_path` names under `root`, or None - never a path outside it, and
+    never an exception for a path the OS cannot represent (`GET /%00` was a 500)."""
+    if not full_path or "\x00" in full_path:
+        return None
+    try:
+        candidate = (root / full_path).resolve()
+        ok = candidate.is_file() and candidate.is_relative_to(root.resolve())
+    except (OSError, ValueError):
+        return None
+    return candidate if ok else None
+
+
 if _STATIC_DIR.is_dir():
     app.mount("/assets", StaticFiles(directory=_STATIC_DIR / "assets"), name="assets")
 
@@ -151,10 +169,10 @@ if _STATIC_DIR.is_dir():
         if full_path.startswith(("api/", "ws")):
             raise HTTPException(status_code=404, detail=f"No such endpoint: /{full_path}")
 
-        candidate = (_STATIC_DIR / full_path).resolve()
-        if full_path and candidate.is_file() and candidate.is_relative_to(_STATIC_DIR):
-            return FileResponse(candidate)
-        return FileResponse(_STATIC_DIR / "index.html")
+        if "\x00" in full_path:
+            raise HTTPException(status_code=404, detail="No such file")
+        candidate = _static_file(_STATIC_DIR, full_path)
+        return FileResponse(candidate or _STATIC_DIR / "index.html")
 
     log.info("serving built frontend from %s", _STATIC_DIR)
 else:
