@@ -128,6 +128,49 @@ def test_the_gate_question_leaves_this_checkouts_registry_pointing_where_it_was(
     assert (registry.MODEL_DIR, registry.CURRENT_JSON) == (before, before_json)
 
 
+def _incumbent_scores(tmp_path, *, run_id="run_live", year=2017, as_of_issue=True):
+    """A scripts.score_run_on_year output with a ROC-AUC of exactly 0.75: three of its four
+    bust/no-bust pairs rank the right way round."""
+    import pandas as pd
+
+    path = tmp_path / f"{run_id}_on_{year}_as_of_issue.parquet"
+    pd.DataFrame({"y_bust": [0, 0, 1, 1], "model_proba": [0.10, 0.40, 0.35, 0.80],
+                  "scored_run_id": run_id, "scored_year": year,
+                  "as_of_issue": as_of_issue}).to_parquet(path)
+    return path
+
+
+def test_like_for_like_the_gate_compares_against_the_served_runs_as_of_issue_score(tmp_path):
+    """A served run trained with forecast_error_lag recorded its test score with the lag filled
+    in (docs/known-issues.md). A run trained without it is refused against that figure for
+    being honest, and promoted against the served run's own skill as of issue time."""
+    root, _ = _live_root(tmp_path, 0.8435)
+    new = {"classifier": {"test": {"roc_auc": 0.74}}}
+    assert pub.gate_decision(new, root, "run_live")[0] is False
+
+    honest = pub.incumbent_as_of_issue(_incumbent_scores(tmp_path), "run_live", 2017)
+    assert honest["roc_auc"] == pytest.approx(0.75)
+    promote, why = pub.gate_decision(new, root, "run_live", incumbent=honest)
+    assert promote is True, why
+    assert "0.7500" in why
+
+
+def test_the_like_for_like_question_leaves_the_downloaded_metrics_as_they_were(tmp_path):
+    root, d = _live_root(tmp_path, 0.8435)
+    before = (d / "metrics.json").read_bytes()
+    honest = pub.incumbent_as_of_issue(_incumbent_scores(tmp_path), "run_live", 2017)
+    pub.gate_decision({"classifier": {"test": {"roc_auc": 0.74}}}, root, "run_live", incumbent=honest)
+    assert (d / "metrics.json").read_bytes() == before
+
+
+@pytest.mark.parametrize("kw, says", [({"run_id": "run_other"}, "run_other"),
+                                      ({"year": 2018}, "2018"),
+                                      ({"as_of_issue": False}, "as of issue time")])
+def test_a_score_for_another_run_year_or_mode_is_refused(tmp_path, kw, says):
+    with pytest.raises(ValueError, match=says):
+        pub.incumbent_as_of_issue(_incumbent_scores(tmp_path, **kw), "run_live", 2017)
+
+
 def test_the_serving_check_runs_without_a_gpu(tmp_path, monkeypatch):
     """The box it stands in for has none, and a training run may be using the one here.
 

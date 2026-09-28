@@ -68,20 +68,69 @@ def fetch_live_bundle(dest: Path) -> "tuple[Path, str | None]":
     return dest, (json.loads(current.read_text()).get("run_id") if current.is_file() else None)
 
 
-def gate_decision(new_metrics: dict, live_root: Path, live_run_id: "str | None") -> tuple:
+def incumbent_as_of_issue(scores: Path, live_run_id: "str | None", test_year: int) -> dict:
+    """The served run's held-out skill as the site actually delivers it, for a like-for-like
+    gate.
+
+    A run trained with `forecast_error_lag` recorded its test score with the lag filled in,
+    an input no live forecast has (docs/known-issues.md). A run trained without it is
+    therefore refused against that figure for being honest. `scripts.score_run_on_year
+    --as-of-issue` scores the served run on the new run's test year the way live scoring
+    sees it, so the gate compares the two runs on the same year and on the same terms.
+    Refuses a file for another run, for another year, or one scored with the inputs filled in.
+    """
+    import pandas as pd
+    from app.ml import classifier as clf_mod
+
+    ev = pd.read_parquet(scores, columns=["y_bust", "model_proba", "scored_run_id",
+                                          "scored_year", "as_of_issue"])
+    runs = sorted(set(ev["scored_run_id"].astype(str)))
+    if runs != [str(live_run_id)]:
+        raise ValueError(f"{scores} scores {runs}, not the served run {live_run_id}")
+    years = sorted(set(ev["scored_year"].astype(int)))
+    if years != [int(test_year)]:
+        raise ValueError(f"{scores} is scored on {years}, not the new run's test year {test_year}")
+    if not ev["as_of_issue"].astype(bool).all():
+        raise ValueError(f"{scores} was not scored as of issue time "
+                         f"(scripts.score_run_on_year --as-of-issue)")
+    return clf_mod._evaluate(ev["y_bust"], ev["model_proba"])
+
+
+def gate_decision(new_metrics: dict, live_root: Path, live_run_id: "str | None",
+                  incumbent: "dict | None" = None) -> tuple:
     """The training pipeline's own promotion gate, asked about this model against the
     model the site serves. The gate reads the registry, so the registry is pointed at the
-    downloaded live bundle for the length of the question - the gate itself is untouched."""
+    downloaded live bundle for the length of the question - the gate itself is untouched.
+
+    With `incumbent` (see incumbent_as_of_issue), the downloaded copy of the served run's
+    metrics carries that score as its held-out figure for the length of the question, with
+    the recorded one kept beside it, and goes back byte for byte afterwards. The published
+    artifact is never touched."""
     from app.ml import registry
     from app.ml.train_pipeline import _promotion_decision
 
     saved_dir, saved_json = registry.MODEL_DIR, registry.CURRENT_JSON
+    metrics_path = live_root / "data" / "models" / str(live_run_id) / "metrics.json"
+    existed = metrics_path.is_file()
+    original = metrics_path.read_bytes() if existed else None
     try:
         registry.MODEL_DIR = live_root / "data" / "models"
         registry.CURRENT_JSON = registry.MODEL_DIR / "current.json"
+        if incumbent is not None:
+            m = json.loads(original) if original else {}
+            clf = m.setdefault("classifier", {})
+            recorded = (clf.get("test") or {}).get("roc_auc")
+            clf["test"] = {**incumbent, "roc_auc_as_recorded": recorded}
+            metrics_path.parent.mkdir(parents=True, exist_ok=True)
+            metrics_path.write_text(json.dumps(m))
         return _promotion_decision(new_metrics)
     finally:
         registry.MODEL_DIR, registry.CURRENT_JSON = saved_dir, saved_json
+        if incumbent is not None:
+            if existed:
+                metrics_path.write_bytes(original)
+            else:
+                metrics_path.unlink(missing_ok=True)
 
 
 def serving_check(live_root: Path, run_dir: Path) -> dict:
@@ -128,6 +177,10 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true", help="check and pack, upload nothing")
     ap.add_argument("--deploy", action="store_true",
                     help="after uploading, dispatch the refresh workflow so the site picks it up")
+    ap.add_argument("--incumbent-score", type=Path, default=None,
+                    help="scripts.score_run_on_year --as-of-issue output for the served run on this "
+                         "run's test year: the gate compares against that instead of the score the "
+                         "served run recorded (see incumbent_as_of_issue)")
     args = ap.parse_args()
 
     from app.ml import registry
@@ -147,7 +200,18 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as td:
         td = Path(td)
         live_root, live_run_id = fetch_live_bundle(td / "live")
-        promote, why = gate_decision(metrics, live_root, live_run_id)
+        incumbent = None
+        if args.incumbent_score is not None:
+            man = run_dir / "manifest.json"
+            test_year = json.loads(man.read_text()).get("test_year") if man.is_file() else None
+            if test_year is None:
+                print(f"--incumbent-score needs {args.run_id}'s test_year in its manifest.json",
+                      file=sys.stderr)
+                return 1
+            incumbent = incumbent_as_of_issue(args.incumbent_score, live_run_id, int(test_year))
+            print(f"served run {live_run_id} as of issue time on {test_year}: "
+                  f"roc_auc {incumbent.get('roc_auc', float('nan')):.4f}")
+        promote, why = gate_decision(metrics, live_root, live_run_id, incumbent)
         print(f"currently served: {live_run_id}")
         print(f"gate: {why}")
         if not promote:
@@ -166,6 +230,8 @@ def main() -> int:
             "held_out": ((metrics.get("classifier") or {}).get("test")
                          or (metrics.get("classifier") or {}).get("val") or {}),
             "replaces": live_run_id,
+            "compared_against": ({"run_id": live_run_id, "as_of_issue": incumbent}
+                                 if incumbent is not None else None),
         }
         (td / MANIFEST_NAME).write_text(json.dumps(manifest, indent=2))
         print(json.dumps(manifest, indent=2))

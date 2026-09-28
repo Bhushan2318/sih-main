@@ -36,7 +36,13 @@ here rather than discovered live.
   lead within each run of days that scores the same variables (0.43 → 0.53 over Days 1-3,
   0.45 → 0.55 over Days 6-10). The 2026-09-25 map instead falls from 0.50 on Day 1 to
   about 0.23 on Days 6-10. SHAP on the live classifier over that cycle's served events
-  (measured 2026-09-26) splits it three ways:
+  (measured 2026-09-26) splits it three ways, and misses the main cause:
+  - **The model's own leak (found 2026-09-28).** The 2017 test-year figures above were
+    scored with `forecast_error_lag` filled in. Scored as live, with it blank, the same
+    September 2017 cycles fall from 0.399 on Day 1 to 0.313 on Day 10, while the real bust
+    rate rises from 0.371 to 0.495. See the `forecast_error_lag` entry. SHAP on the
+    classifier cannot show this: the leak acts inside the regressors, so it arrives as
+    lower `pred_err_*` inputs, which the split below reads as weather.
   - **The weather.** Every cycle from 21 Sep forecast an active spell to 26 Sep, then calm
     and dry. On the 25 Sep cycle, district-mean rain goes 13.0 → 3.9 mm from Day 1 to
     Day 3 and stays near 3 mm; wind goes 4.4 → 1.7 m/s by Day 5. Busts scale with the
@@ -1116,8 +1122,25 @@ here rather than discovered live.
   previous day has already been observed have one; the rest are NaN. Replay of a past
   cycle has them all, except Replay's past events, which are scored with the column
   blanked (see "Replay's past events"). So held-out regressor metrics, and replay of a
-  recent verified cycle, can look better than live scoring. How much better has **not** been measured: that needs a retrain without the
-  column and a comparison on the same 2017 rows.
+  recent verified cycle, can look better than live scoring.
+- **Measured 2026-09-28.** The served run was scored twice on September 2017 (inits 09-19
+  to 09-28, 666 districts, 66,600 events per mode), a year it never trained on: once as
+  live, with the lag blanked, and once with the lag filled in, as in training.
+
+  | lead | real bust rate | predicted, live | predicted, lag filled |
+  |---|---|---|---|
+  | 1 | 0.371 | 0.399 | 0.399 |
+  | 5 | 0.490 | 0.385 | 0.550 |
+  | 10 | 0.495 | 0.313 | 0.555 |
+
+  ROC-AUC was 0.699 live and 0.797 with the lag filled. Day 1 was 0.840 in both, because
+  Day 1 never has a lag. In training the lag is missing only on Day 1, so the model learned
+  that a missing lag means a Day-1-sized error. Live it is missing at every lead, so the
+  bust probability falls with lead day while real busts do not. This is the main reason
+  the live map calms at longer leads; the weather and the archive's lead caps are the rest
+  ("The map can get calmer at longer lead days", near the top). The
+  served run's recorded test score, in its metrics.json, was measured with the lag filled
+  in.
 - **Not a leak:** `historical_bust_frequency_region_season`. It is computed from the
   training split only (`train_pipeline.py`, `compute_historical_bust_frequency(tr)`) and
   shipped with the run, like a climatology.
@@ -1125,6 +1148,24 @@ here rather than discovered live.
   in front of a model trained with it only changes what the served model sees. It does
   not remove what the model learned. An attempted serve-time NaN-fill (2026-09-25) was
   parked on `parked/opencode-nemotron` for that reason.
+- **Removed from training, 2026-09-29.** The regressors no longer take it
+  (`regressors.NUMERIC_FEATURES`), and `regressors.feature_columns` refuses any input in
+  `contracts.OBSERVATION_DERIVED`, so a later feature cannot bring it back
+  (`tests/test_no_observation_inputs.py`). The engineered frame still carries the column,
+  because the served run was trained with it and scores with its own saved feature list.
+  It can go when a run trained without it is served.
+- **Promotion compares like with like (decided 2026-09-29).** A run trained without the lag
+  would be refused by the 0.05 gate against the served run's lag-filled test score.
+  Instead, the served run is scored on the new run's test year as of issue time, and the
+  gate compares against that. The gate's code and thresholds are unchanged:
+
+      python -m scripts.score_run_on_year --run-id run_20260922T043925Z --year 2017
+      python -m scripts.score_run_on_year --run-id run_20260922T043925Z --year 2017 --as-of-issue
+      python -m scripts.publish_serving_model --run-id <new run> --dry-run \
+          --incumbent-score data/analysis/cross_year_scores/run_20260922T043925Z_on_2017_as_of_issue.parquet
+
+  The first command should reproduce the served run's recorded test score. That checks the
+  method before the second is trusted.
 
 ### Found in the 2026-09-25 audit (each re-checked against data, not only read in code)
 
