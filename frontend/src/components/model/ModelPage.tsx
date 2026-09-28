@@ -1,7 +1,7 @@
 import type { ModelStatusResponse } from "../../api/types";
 import { stamp } from "../../format";
 import { useModelStatus } from "../../hooks/useDashboardData";
-import { variableLabel } from "../../lib/displayNames";
+import { variableLabel, variableUnit } from "../../lib/displayNames";
 import { useLiveStore } from "../../store/liveStore";
 import { ErrorState, LoadingState } from "../common/States";
 import { retryingHint } from "../../lib/retryHint";
@@ -33,8 +33,13 @@ export function ModelPage() {
     ?? (td.first_train_date ? Number(String(td.first_train_date).slice(0, 4)) : null);
   const lastYear = td.last_train_year ?? firstYear;
   const trainYears = firstYear != null && lastYear != null ? lastYear - firstYear + 1 : null;
+  // Train and validation cycles both come from firstYear..lastYear; the held-out year is
+  // after it. Dividing the train count alone by the span read "about 343" for a daily archive.
   const cyclesPerYear = trainYears && typeof td.train_cycles === "number"
-    ? Math.round(td.train_cycles / trainYears) : null;
+    ? Math.round((td.train_cycles + (td.val_cycles ?? 0)) / trainYears) : null;
+  const bustVars = Object.keys(data.thresholds?.bust_threshold ?? {}).length;
+  const pctile = data.thresholds?.threshold_percentile;
+  const q = typeof pctile === "number" ? (pctile <= 1 ? pctile : pctile / 100) : null;
 
   return (
     <main className="page page--wide">
@@ -120,16 +125,29 @@ export function ModelPage() {
               </dl>
               {typeof td.cycles === "number" && td.cycles > 0 ? (
                 <p className="muted small">
-                  Trained on <b>{td.cycles.toLocaleString()}</b> forecast cycles
-                  {firstYear != null ? <> from {firstYear}{lastYear != null && lastYear !== firstYear ? <> to {lastYear}</> : null}</> : null}
+                  {/* It read "Trained on 6,558 forecast cycles from 2000 to 2016": that count
+                    * includes the validation and held-out cycles, and a pooled run fits its
+                    * models on a sample of the training ones. */}
+                  <b>{td.cycles.toLocaleString()}</b> forecast cycles
                   {typeof td.train_cycles === "number" && typeof td.val_cycles === "number" ? (
-                    <>{" "}— {td.train_cycles.toLocaleString()} train · {td.val_cycles.toLocaleString()} validation ·{" "}
-                      {td.held_out_cycles?.toLocaleString()} held out</>
+                    <>: {td.train_cycles.toLocaleString()} to train and{" "}
+                      {td.val_cycles.toLocaleString()} to validate
+                      {firstYear != null ? <>, from {firstYear}–{lastYear ?? firstYear}</> : null}
+                      {typeof td.held_out_cycles === "number" ? (
+                        <>, and {td.held_out_cycles.toLocaleString()} held out
+                          {td.test_year != null ? <> from {td.test_year}</> : null}</>
+                      ) : null}</>
+                  ) : null}.
+                  {typeof td.fit_cycles === "number" && typeof td.train_cycles === "number" ? (
+                    <> The models were fit on a sample of <b>{td.fit_cycles.toLocaleString()}</b>{" "}
+                      of the {td.train_cycles.toLocaleString()} training cycles
+                      {typeof td.classifier_cycles === "number" && td.classifier_cycles !== td.fit_cycles
+                        ? <> (the bust classifier on {td.classifier_cycles.toLocaleString()})</> : null}.</>
                   ) : null}
                   {cyclesPerYear != null ? (
-                    <>. That is about <b>{cyclesPerYear}</b> initialisations per training year
-                      of the GEFSv12 reforecast (one 00 UTC cycle per day at most).</>
-                  ) : "."}
+                    <> About <b>{cyclesPerYear}</b> initialisations per year of the GEFSv12
+                      reforecast (one 00 UTC cycle per day at most).</>
+                  ) : null}
                 </p>
               ) : (
                 <p className="muted small">
@@ -186,9 +204,12 @@ export function ModelPage() {
             <section className="card">
               <header className="card__head"><h3>What counts as a bust</h3></header>
               <p className="muted small">
-                A forecast busts when its error exceeds this variable&apos;s own threshold, set at
-                the <b>{pct(data.thresholds?.threshold_percentile)}</b> percentile of historical
-                error. The p90 column is the error only one forecast in ten exceeds.
+                A forecast busts when its error exceeds this variable&apos;s own threshold, the{" "}
+                <b>{pct(data.thresholds?.threshold_percentile)}</b> percentile of its error on the
+                training data. <b>Bust above</b> is taken over the ensemble average&apos;s error per
+                district and day, which is what a bust is judged on. <b>p90 error</b> is the same
+                percentile for a single member&apos;s forecast, used only to scale the confidence
+                figures. One member misses by more than the ensemble average does, so it is the larger.
               </p>
               <div className="tablewrap">
                 <table className="dtable dtable--tight">
@@ -197,6 +218,7 @@ export function ModelPage() {
                       <th>Variable</th>
                       <th className="dtable__num">Bust above</th>
                       <th className="dtable__num">p90 error</th>
+                      <th>Unit</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -207,11 +229,22 @@ export function ModelPage() {
                         <td className="dtable__num mono muted">
                           {num(data.thresholds?.p90_error?.[v], 2)}
                         </td>
+                        <td className="muted">{variableUnit(v) ?? ""}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
+              {bustVars > 0 && q != null && typeof clf.bust_rate === "number" ? (
+                <p className="muted small">
+                  {/* Why "the worst 10%" makes about half of all forecasts busts. */}
+                  A district-day is a bust if any one of its {bustVars} variables busts, and each
+                  does on {Math.round((1 - q) * 100)}% of training forecasts by construction. Were the{" "}
+                  {bustVars} independent, {Math.round((1 - q ** bustVars) * 100)}% of district-days
+                  would bust; they move together, and on the held-out year{" "}
+                  <b>{Math.round(clf.bust_rate * 100)}%</b> did.
+                </p>
+              ) : null}
               {cuts ? (
                 <p className="muted small">
                   A region is flagged <b>watch</b> above{" "}
@@ -225,7 +258,7 @@ export function ModelPage() {
           {Object.keys(regressors).length ? (
             <section className="card card--table">
               <header className="card__head">
-                <h3>Error per variable, against a baseline that just says “tomorrow is like today”</h3>
+                <h3>Error per variable, against a baseline that always predicts the average error</h3>
               </header>
               <div className="tablewrap">
                 <table className="dtable">
@@ -264,8 +297,10 @@ export function ModelPage() {
                 </table>
               </div>
               <p className="muted small">
-                Skill = 1 − MAE ÷ baseline MAE: the share of the naive forecast&apos;s error the
-                model removes. Positive is better than the baseline. MAE is the average miss,
+                The baseline predicts the same error for every forecast - the average over the
+                rows being scored - so it cannot tell one forecast from another. Skill = 1 − MAE ÷
+                baseline MAE: the share of its error the model removes. Positive is better than
+                the baseline. MAE is the average miss,
                 RMSE the same thing but weighted towards the big misses, and R² the share of
                 the variation the model accounts for.
               </p>

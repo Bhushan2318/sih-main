@@ -10,9 +10,10 @@ export function ShapFactorsList({ factors, method }: { factors: TopFactor[]; met
       <ul className="factors">
         {factors.map((f) => (
           <li key={f.feature}>
-            {/* The raw column name stays as the title: it is what the model calls this,
-              * and anyone checking the feature list needs to be able to find it. */}
-            <span className="factors__name" title={f.feature}>{featureLabel(f.feature)}</span>
+            {/* The raw column name stays in the title: it is what the model calls this,
+              * and anyone checking the feature list needs to be able to find it - but
+              * labelled as such, not shown bare as if it were the name. */}
+            <span className="factors__name" title={`Model input: ${f.feature}`}>{featureLabel(f.feature)}</span>
             <span className="factors__bar" aria-hidden="true">
               <i style={{ width: `${(f.importance / max) * 100}%` }} />
             </span>

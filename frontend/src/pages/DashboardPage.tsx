@@ -186,7 +186,12 @@ export function DashboardPage() {
                 role="tab"
                 aria-selected={view === t.id}
                 className={view === t.id ? "viewtab is-active" : "viewtab"}
-                onClick={() => setView(t.id)}
+                onClick={() => {
+                  setView(t.id);
+                  // A tab is a new page: it opens at its top, not wherever the last one
+                  // was scrolled to. Instant - there is nothing on the way to show.
+                  window.scrollTo({ top: 0 });
+                }}
               >
                 {t.label}
                 {t.tail ? <span className="viewtab__tail">{t.tail}</span> : null}

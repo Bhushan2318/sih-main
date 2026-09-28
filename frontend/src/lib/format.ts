@@ -26,6 +26,13 @@ export function formatByMagnitude(v: number | null | undefined): string {
   return v.toFixed(2);
 }
 
+/** One axis tick. formatByMagnitude picks precision per value, which on one axis read
+ * "0.00 / 50.0 / 100"; ticks are round numbers, so show them without padding zeros. */
+export function axisTick(v: number): string {
+  if (!Number.isFinite(v)) return "";
+  return Math.abs(v) >= 100 ? v.toFixed(0) : String(Number(v.toFixed(2)));
+}
+
 /** The top-bar cycle chip. It used to read "2026-09-26 → 2026-09-26" on Day 1, where the
  * issue and valid dates coincide, which looked like a typo rather than two dates. */
 export function cycleChipLabel(init: string, valid: string | null | undefined, lead: number): string {

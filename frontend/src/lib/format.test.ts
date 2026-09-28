@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cycleChipLabel, dayLabel, dayRange, formatByMagnitude, formatMetric } from "./format";
+import { axisTick, cycleChipLabel, dayLabel, dayRange, formatByMagnitude, formatMetric } from "./format";
 
 describe("dayLabel / dayRange", () => {
   it("names a lead day in words, never as D1", () => {
@@ -55,5 +55,20 @@ describe("cycleChipLabel", () => {
 
   it("falls back to the issue date alone when there is no valid date", () => {
     expect(cycleChipLabel("2026-09-26", null, 1)).toBe("Issued 26 Sep");
+  });
+});
+
+describe("axisTick", () => {
+  it("labels one axis in one style, without padding zeros", () => {
+    // formatByMagnitude per tick read "0.00 / 50.0 / 100" on one Replay axis.
+    expect([0, 50, 100, 150].map(axisTick)).toEqual(["0", "50", "100", "150"]);
+    expect([0, 2.5, 5, 7.5].map(axisTick)).toEqual(["0", "2.5", "5", "7.5"]);
+    expect([0.25, 0.5].map(axisTick)).toEqual(["0.25", "0.5"]);
+  });
+
+  it("keeps whole numbers whole at any size, and signs", () => {
+    expect(axisTick(1012)).toBe("1012");
+    expect(axisTick(-5)).toBe("-5");
+    expect(axisTick(-0.5)).toBe("-0.5");
   });
 });

@@ -3,6 +3,7 @@ import {
   ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 import type { BustProbabilityPoint, RiskBand } from "../../api/types";
+import { variableLabel } from "../../lib/displayNames";
 import { dayLabel } from "../../lib/format";
 import type { RiskCuts } from "../../lib/riskBands";
 import { CHART, bandLabel } from "../../theme";
@@ -57,7 +58,7 @@ export function BustProbabilityCurve({ points, cuts }: {
           />
           <Tooltip
             formatter={(v: number, _n, item) =>
-              [`${v}%  (${bandLabel(item.payload.band)})`, item.payload.driver ? `mostly driven by: ${item.payload.driver}` : "Bust risk"]
+              [`${v}%  (${bandLabel(item.payload.band)})`, item.payload.driver ? `mostly driven by: ${variableLabel(item.payload.driver).toLowerCase()}` : "Bust risk"]
             }
             labelFormatter={(l) => `Lead day ${l}`}
           />

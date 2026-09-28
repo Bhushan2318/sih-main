@@ -28,6 +28,11 @@ def _training_data(manifest: dict) -> dict:
         "train_cycles": counts["train"],
         "val_cycles": counts["val"],
         "held_out_cycles": counts["test"],
+        # A pooled run fits the regressors and the classifier on a bounded sample of its
+        # training cycles (pooled_training.MAX_FIT_CYCLES); absent when it fit on all.
+        "fit_cycles": splits.get("fit") if isinstance(splits.get("fit"), int) else None,
+        "classifier_cycles": (splits.get("classifier")
+                              if isinstance(splits.get("classifier"), int) else None),
         "canonical_rows": manifest.get("data_rows"),
         "paired_rows": manifest.get("paired_rows"),
         "first_train_date": train_dates[0] if train_dates else None,

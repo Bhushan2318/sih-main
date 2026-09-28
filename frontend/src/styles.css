@@ -803,6 +803,9 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
   background: var(--ink); color: #fff;
   padding: 0.5rem 0.65rem; border-radius: 8px;
   font-size: 0.76rem; line-height: 1.45; max-width: 240px;
+  /* Its content's width, not what is left of the wrap: near the right edge the box shrank
+     to 107 px and wrapped every word. Placement flips it instead (lib/mapTooltip). */
+  width: max-content;
   box-shadow: 0 12px 26px -12px rgba(11, 18, 32, 0.6);
 }
 .map-tooltip strong { font-family: var(--f-d); font-variation-settings: "wdth" 100, "wght" 700; }
