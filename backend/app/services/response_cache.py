@@ -58,7 +58,7 @@ from pathlib import Path
 from typing import Callable, Iterable, Iterator, Optional
 
 import pydantic_core
-from fastapi import Request
+from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 
 from app.config import settings
@@ -83,7 +83,16 @@ _MEMO_MAX_BYTES = 16 * 1024 * 1024
 _memo: "OrderedDict[tuple, bytes]" = OrderedDict()
 _memo_bytes = 0
 _lock = threading.Lock()
-_manifest_cache: "dict[Path, tuple[int, Optional[dict]]]" = {}
+_manifest_cache: "dict[Path, tuple[int, Optional[dict], Optional[str]]]" = {}
+
+# On the box, a response with no prebuilt file is built one at a time. Each build holds the
+# model and its frames; two at once is what the 512 MB box could not hold on 2026-09-26
+# 20:03Z and 2026-09-27 13:03Z, both times a deploy running without a matching bundle.
+# A request that cannot start within BUILD_WAIT_S is told to retry (503 + Retry-After)
+# rather than parked indefinitely behind a build that takes tens of seconds at 0.1 CPU.
+BUILD_WAIT_S = 45.0
+RETRY_AFTER_S = 30
+_build_gate = threading.Lock()
 
 
 def default_dir() -> Path:
@@ -159,26 +168,60 @@ def write_responses(run_id: str, items: Iterable[tuple[str, bytes]],
     return d
 
 
-def _manifest(run_id: str, base: Path) -> Optional[dict]:
+def _manifest_checked(run_id: str, base: Path) -> "tuple[Optional[dict], Optional[str]]":
+    """(manifest, None) when this run's bundle matches this code, else (None, why not)."""
     path = base / run_id / MANIFEST
     try:
         mtime = path.stat().st_mtime_ns
     except OSError:
-        return None
+        held = sorted(p.name for p in base.glob("*") if p.is_dir()) if base.is_dir() else []
+        return None, (f"no prebuilt responses for run {run_id}"
+                      + (f" (the bundle holds {', '.join(held)})" if held else ""))
     hit = _manifest_cache.get(path)
     if hit is not None and hit[0] == mtime:
-        return hit[1]
+        return hit[1], hit[2]
+    why = None
     try:
         m = json.loads(path.read_text())
     except (OSError, ValueError):
-        m = None
+        m, why = None, f"the manifest in {path.parent.name} is unreadable"
     if m is not None and (m.get("run_id") != run_id or m.get("code") != code_fingerprint()):
-        log.warning("precomputed responses in %s were built for run %s / code %s, this is "
-                    "run %s / code %s; building live instead", path.parent, m.get("run_id"),
-                    m.get("code"), run_id, code_fingerprint())
+        why = (f"the bundle was built for run {m.get('run_id')} / code {m.get('code')}; "
+               f"this is run {run_id} / code {code_fingerprint()}")
+        log.warning("precomputed responses in %s: %s; building live instead", path.parent, why)
         m = None
-    _manifest_cache[path] = (mtime, m)
-    return m
+    _manifest_cache[path] = (mtime, m, why)
+    return m, why
+
+
+def _manifest(run_id: str, base: Path) -> Optional[dict]:
+    return _manifest_checked(run_id, base)[0]
+
+
+def status() -> dict:
+    """Whether this process serves CI's prebuilt responses right now, and if not, why.
+
+    Reported by /api/health. warm-on-push reads it before sending anything heavy: a box
+    without a matching bundle builds every screen live, and warming one on top of a visitor
+    is what OOM-killed it on 2026-09-26 20:03Z and 2026-09-27 13:03Z. Cheap by design - the
+    platform's health check calls it: one stat, and a parse only when the manifest changes.
+    """
+    from app.ml import registry
+
+    out = {"active": False, "files": 0, "built_at": None, "reason": None}
+    if not settings.serving_read_only:
+        out["reason"] = "SERVING_READ_ONLY is off: not the serving box, every response is built live"
+        return out
+    run_id = registry.current_run_id()
+    if not run_id:
+        out["reason"] = "no current model run"
+        return out
+    m, why = _manifest_checked(run_id, Path(default_dir()))
+    if m is None:
+        out["reason"] = why
+        return out
+    out.update(active=True, files=len(m.get("files", {})), built_at=m.get("built_at"))
+    return out
 
 
 def read(name: str, run_id: str, base: Optional[Path] = None) -> Optional[bytes]:
@@ -306,6 +349,32 @@ def invalidate() -> None:
         _manifest_cache.clear()
 
 
+def _build_live(build: Callable, run_id: Optional[str], name: Optional[str],
+                on_the_box: bool) -> bytes:
+    """Build a response and gzip it - on the box, one build at a time (see _build_gate)."""
+    if not on_the_box:
+        return gzip.compress(_to_json(build()), compresslevel=6)
+    if not _build_gate.acquire(timeout=BUILD_WAIT_S):
+        raise HTTPException(
+            status_code=503,
+            detail=("This server is building a screen it has no prebuilt copy of, one at a "
+                    "time to stay inside its memory. Try again in a moment."),
+            headers={"Retry-After": str(RETRY_AFTER_S)},
+        )
+    try:
+        # Whoever held the gate may have just built this very screen.
+        if run_id:
+            body = _memo_get((run_id, name))
+            if body is not None:
+                return body
+        body = gzip.compress(_to_json(build()), compresslevel=6)
+        if run_id:
+            _memo_put((run_id, name), body)
+        return body
+    finally:
+        _build_gate.release()
+
+
 def respond(request: Request, name: Optional[str], build: Callable,
             patch: Optional[Callable[[object], object]] = None) -> Response:
     """Serve `name` from CI's file, else from this box's memory, else build it.
@@ -325,9 +394,7 @@ def respond(request: Request, name: Optional[str], build: Callable,
     if run_id:
         body = read(name, run_id) or _memo_get((run_id, name))
     if body is None:
-        body = gzip.compress(_to_json(build()), compresslevel=6)
-        if run_id:
-            _memo_put((run_id, name), body)
+        body = _build_live(build, run_id, name, on_the_box)
 
     if patch is not None:
         return JSONResponse(patch(json.loads(gzip.decompress(body))))

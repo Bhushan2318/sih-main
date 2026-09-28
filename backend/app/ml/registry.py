@@ -126,6 +126,13 @@ def load_feature_columns(run_id: str) -> dict:
     return json.loads(path.read_text()) if path.exists() else {}
 
 
+def regressor_names(run_id: str) -> list:
+    """The variables this run has a regressor for - exactly the keys load_regressors would
+    return, without loading a model (or importing xgboost)."""
+    return sorted(p.name[: -len("_regressor.json")]
+                  for p in run_dir(run_id).glob("*_regressor.json"))
+
+
 def load_regressors(run_id: str) -> dict:
     d = run_dir(run_id)
     cols = load_feature_columns(run_id)

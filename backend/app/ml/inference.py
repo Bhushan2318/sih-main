@@ -35,10 +35,13 @@ class ModelState:
     shap_summary: pd.DataFrame = field(default_factory=pd.DataFrame)
     manifest: dict = field(default_factory=dict)
     metrics: dict = field(default_factory=dict)
+    # Set instead of `regressors` on the serving box, which loads the models' names and not
+    # the models (see _models_stay_off_this_box).
+    regressor_names: list = field(default_factory=list)
 
     @property
     def variables(self) -> list:
-        return sorted(self.regressors)
+        return sorted(self.regressors) if self.regressors else sorted(self.regressor_names)
 
 
 @dataclass
@@ -95,11 +98,20 @@ _SCORE_CACHE_MAX = 24
 # rows, though that would be smaller again: top_factors_for takes a `model` argument, so
 # a caller may legitimately ask for a regressor's explanation, and a loader that silently
 # dropped those rows would answer such a caller with nothing.
+#
+# The one exception is the serving box, and it is deliberate (2026-09-27): the site only ever
+# asks for the classifier's factors (the district panel; pinned by
+# tests/test_shap_summary_memory.py), so the box reads the classifier's rows alone, in
+# batches. Measured on run_20260922T043925Z (macOS RSS): +247 MB resident for the whole
+# summary, +195 MB for a whole-file read filtered afterwards - Arrow keeps the decode buffers
+# of each million-row group - and +73 MB for the classifier's 632,795 rows read 64k at a time.
 _SHAP_LABEL_COLUMNS = ("model", "group_region_id", "feature", "method")
+_SHAP_BATCH_ROWS = 65_536
 
 
-def _read_shap_summary(path) -> pd.DataFrame:
-    """The run's SHAP summary, in the smallest representation that loses nothing."""
+def _read_shap_summary(path, only_model: Optional[str] = None) -> pd.DataFrame:
+    """The run's SHAP summary, in the smallest representation that loses nothing - or, with
+    `only_model`, that model's rows alone, read a batch at a time."""
     if not path.exists():
         return pd.DataFrame()
     # read_dictionary, not astype("category") afterwards: converting after the fact
@@ -111,12 +123,45 @@ def _read_shap_summary(path) -> pd.DataFrame:
 
     present = [c for c in _SHAP_LABEL_COLUMNS
                if c in pq.ParquetFile(path).schema_arrow.names]
-    df = pq.read_table(path, read_dictionary=present).to_pandas()
+    if only_model is None:
+        df = pq.read_table(path, read_dictionary=present).to_pandas()
+    else:
+        df = _read_one_models_rows(path, present, only_model)
     if "mean_abs_shap" in df.columns:
         df["mean_abs_shap"] = df["mean_abs_shap"].astype("float32")
     if "group_lead_time_days" in df.columns:
         df["group_lead_time_days"] = df["group_lead_time_days"].astype("int16")
     return df
+
+
+def _read_one_models_rows(path, dictionary_columns: list, model: str) -> pd.DataFrame:
+    import pyarrow as pa
+    import pyarrow.compute as pc
+    import pyarrow.parquet as pq
+
+    f = pq.ParquetFile(path, read_dictionary=dictionary_columns)
+    parts = []
+    for batch in f.iter_batches(batch_size=_SHAP_BATCH_ROWS):
+        m = batch.column("model")
+        if pa.types.is_dictionary(m.type):
+            m = m.dictionary_decode()
+        parts.append(batch.filter(pc.equal(m, model)))
+    if not parts:
+        return pd.DataFrame(columns=f.schema_arrow.names)
+    return pa.Table.from_batches(parts, schema=parts[0].schema).to_pandas()
+
+
+def _models_stay_off_this_box() -> bool:
+    """True on the serving box, which loads the models' names and not the models.
+
+    The box never scores - it refuses to (settings.serving_read_only, score_cycle) and CI
+    scores for it - so the XGBoost models would sit unused: measured +73 MB with xgboost for
+    the eight regressors (macOS RSS, 2026-09-27). With them go their SHAP rows. On a
+    fresh box-mode server building the opening screen and Replay at once, peak RSS went from
+    518-527 MB to 363-386 MB, every one of the 689 screens identical (tests/test_api.py).
+    Only reached when the box builds live - a deploy without its prebuilt bundle.
+    """
+    return settings.serving_read_only
 
 
 def load_model_state(run_id: Optional[str] = None) -> Optional[ModelState]:
@@ -125,17 +170,32 @@ def load_model_state(run_id: Optional[str] = None) -> Optional[ModelState]:
     if rid is None:
         return None
 
+    # Keyed on the mode as well: a state loaded without its models must never be handed to
+    # a caller that scores. A full state is a superset, so it serves the box as it is.
+    lean = _models_stay_off_this_box()
     with _lock:
-        if _state_cache and _state_cache[0] == rid:
-            return _state_cache[1]
+        if _state_cache and _state_cache[0] == rid and (lean or not _state_cache[1]):
+            return _state_cache[2]
 
-    regressors = registry.load_regressors(rid)
-    clf, clf_cols = registry.load_classifier(rid)
     thr = registry.load_thresholds(rid)
-    if not regressors or clf is None or thr is None:
-        return None
-
-    shap_summary = _read_shap_summary(registry.run_dir(rid) / "shap_summary.parquet")
+    if lean:
+        names = registry.regressor_names(rid)
+        has_clf = (registry.run_dir(rid) / "classifier.json").exists()
+        if not names or not has_clf or thr is None:
+            return None
+        regressors, clf, clf_cols, names_only = {}, None, [], names
+        freq, jump = {}, {}
+        shap_summary = _read_shap_summary(registry.run_dir(rid) / "shap_summary.parquet",
+                                          only_model="classifier")
+    else:
+        regressors = registry.load_regressors(rid)
+        clf, clf_cols = registry.load_classifier(rid)
+        if not regressors or clf is None or thr is None:
+            return None
+        names_only = []
+        freq = registry.load_historical_bust_freq(rid)
+        jump = registry.load_jump_climatology(rid)
+        shap_summary = _read_shap_summary(registry.run_dir(rid) / "shap_summary.parquet")
 
     import json
     def _read(name):
@@ -148,14 +208,15 @@ def load_model_state(run_id: Optional[str] = None) -> Optional[ModelState]:
         classifier=clf,
         classifier_columns=clf_cols,
         thresholds=thr,
-        historical_bust_freq=registry.load_historical_bust_freq(rid),
-        jump_climatology=registry.load_jump_climatology(rid),
+        historical_bust_freq=freq,
+        jump_climatology=jump,
         shap_summary=shap_summary,
         manifest=_read("manifest.json"),
         metrics=_read("metrics.json"),
+        regressor_names=names_only,
     )
     with _lock:
-        _state_cache = (rid, state)
+        _state_cache = (rid, lean, state)
     return state
 
 
@@ -292,6 +353,13 @@ def score_cycle(
     if frame.empty:
         return None
 
+    # A state the serving box loaded - its models' names but not the models - would predict
+    # nothing and return None: an empty map that reads as "no cycle to score". Say what
+    # actually happened instead.
+    if getattr(state, "regressor_names", None) and not getattr(state, "regressors", None):
+        raise RuntimeError(
+            f"model state {state.run_id} was loaded without its models (the serving box's "
+            "load) and cannot score; load it off the box")
     pred = pd.Series(np.nan, index=frame.index, dtype=float)
     for var, (model, cols) in state.regressors.items():
         mask = frame["variable"] == var

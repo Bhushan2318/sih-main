@@ -487,7 +487,14 @@ GitHub Actions (16 GB, every 6 h)          Render Free (512 MB, serve only)
    (Settings → Secrets and variables → Actions). Without it the workflow still publishes
    the artifact — only the automatic redeploy stops.
 
-4. **Keep it warm.** Render Free spins down after 15 minutes idle (~30–50 s cold start).
+4. **Deploy only through the workflow.** Actions → *Refresh model and data* (or
+   `gh workflow run refresh-data.yml --ref main`), never Render's *Deploy latest commit*.
+   The workflow packages every dashboard response for the code it deploys; a deploy from
+   Render's dashboard runs that code against the previous bundle, which does not match it,
+   so the box builds every screen live, one at a time, near its memory limit.
+   `/api/health` → `prebuilt.active` says which state it is in.
+
+5. **Keep it warm.** Render Free spins down after 15 minutes idle (~30–50 s cold start).
    Point an external pinger (UptimeRobot, every 5 min) at `/api/health`. A browser tab
    will *not* work: polling pauses when the tab is backgrounded.
 

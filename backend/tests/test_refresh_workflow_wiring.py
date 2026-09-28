@@ -60,3 +60,18 @@ def test_the_memory_measurement_can_measure_the_pinned_model():
     assert "use_serving_model" in doc[True]["workflow_dispatch"]["inputs"]
     install = [s for s in steps if "install_serving_model" in str(s.get("run", ""))]
     assert len(install) == 1 and install[0].get("if") == "inputs.use_serving_model"
+
+
+def test_warm_on_push_never_warms_a_box_without_its_prebuilt_bundle():
+    """A box running new code on an old bundle builds every screen live, and a warm request
+    on top of a visitor is what OOM-killed it on 2026-09-26 20:03Z and 2026-09-27 13:03Z.
+    The workflow must read /api/health's `prebuilt` before sending anything heavy, and say
+    what to do instead of warming."""
+    _, steps = _steps(WORKFLOWS / "warm-on-push.yml")
+    script = "\n".join(s.get("run", "") for s in steps)
+    assert "prebuilt" in script
+    assert "refresh-data.yml" in script
+    first_check = script.index("prebuilt")
+    for ep in ("/api/regions/all", "/api/ensemble", "/api/replay"):
+        if ep in script:
+            assert script.index(ep) > first_check, f"{ep} is requested before the check"

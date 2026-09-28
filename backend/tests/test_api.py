@@ -8,6 +8,7 @@ placeholder number.
 
 from __future__ import annotations
 
+import json
 import shutil
 
 import pandas as pd
@@ -76,6 +77,15 @@ def test_health_reports_how_long_the_process_has_been_up(blank_client):
     first = blank_client.get("/api/health").json()["uptime_s"]
     assert isinstance(first, (int, float)) and first >= 0
     assert blank_client.get("/api/health").json()["uptime_s"] >= first
+
+
+def test_health_says_whether_prebuilt_responses_are_being_served(blank_client):
+    """warm-on-push reads this to decide whether warming is safe: a box without a matching
+    bundle builds every screen live, and warming one is what OOM-killed it on 2026-09-26
+    20:03Z and 2026-09-27 13:03Z. The key is always present; a blank install serves none."""
+    p = blank_client.get("/api/health").json()["prebuilt"]
+    assert p["active"] is False
+    assert p["reason"]
 
 
 def test_health_always_reports_a_build_commit_key(blank_client, monkeypatch):
@@ -525,6 +535,94 @@ def test_precomputed_responses_match_what_the_box_would_build(trained_client, tm
         r = trained_client.get(p)
         assert r.status_code == 200, p
         assert _without_build_times(r.json()) == _without_build_times(built_on_the_box[p]), p
+
+
+def test_the_serving_box_loads_the_models_names_not_the_models(trained_client, monkeypatch):
+    """The box never scores, so it never needs the XGBoost models: measured +73 MB for the
+    eight regressors with xgboost, on a box killed at 512. It needs their names (the panel
+    and model status list the modelled variables) and the classifier's SHAP rows."""
+    from app.config import settings
+    from app.ml import inference
+
+    inference.invalidate_caches()
+    full = inference.load_model_state()
+    monkeypatch.setattr(settings, "serving_read_only", True)
+    inference.invalidate_caches()
+    box = inference.load_model_state()
+
+    assert box.regressors == {} and box.classifier is None
+    assert box.variables == full.variables and box.variables
+    assert box.thresholds.risk_band_cuts == full.thresholds.risk_band_cuts
+    assert box.metrics == full.metrics and box.manifest == full.manifest
+    want = full.shap_summary[full.shap_summary["model"] == "classifier"]
+    assert len(box.shap_summary) == len(want) > 0
+    assert set(box.shap_summary["model"].astype(str)) == {"classifier"}
+    inference.invalidate_caches()
+
+
+def test_a_state_loaded_without_its_models_refuses_to_score(trained_client, monkeypatch):
+    """Scoring with no models would return no rows - an empty map that reads as "nothing to
+    score". It must fail loudly instead (refuse rather than patch)."""
+    from app.config import settings
+    from app.ml import inference
+
+    monkeypatch.setattr(settings, "serving_read_only", True)
+    inference.invalidate_caches()
+    box = inference.load_model_state()
+    monkeypatch.setattr(settings, "serving_read_only", False)
+    monkeypatch.setattr(inference.precomputed, "read_scored_cycle", lambda *a, **k: None)
+    inference._score_cache.clear()
+    with pytest.raises(RuntimeError, match="without its models"):
+        inference.score_cycle(box)
+    inference.invalidate_caches()
+
+
+def test_the_box_builds_every_screen_exactly_as_the_full_model_would(trained_client, tmp_path,
+                                                                     monkeypatch):
+    """The lean load changes what is held, never what is served: every screen the dashboard
+    asks for, built live on the box, is identical to the same build with the models loaded."""
+    from app.config import settings
+    from app.ml import inference, precomputed
+    from app.services import response_cache
+    from scripts import package_for_deploy
+
+    monkeypatch.setattr(precomputed, "default_dir", lambda: tmp_path / "scored")
+    monkeypatch.setattr(response_cache, "default_dir", lambda: tmp_path / "no-prebuilt")
+    inference.invalidate_caches()
+    assert package_for_deploy.precompute_cycles(inference.load_model_state())[0] > 0
+
+    def build_all():
+        inference.invalidate_caches()
+        return {name: json.loads(response_cache._to_json(build))
+                for name, build in ((n, b()) for n, b in response_cache.catalogue())}
+
+    monkeypatch.setattr(settings, "serving_read_only", True)
+    monkeypatch.setattr(inference, "_models_stay_off_this_box", lambda: False)
+    with_models = build_all()
+    monkeypatch.setattr(inference, "_models_stay_off_this_box", lambda: True)
+    lean = build_all()
+    assert inference.load_model_state().classifier is None, "the lean path did not run"
+
+    assert set(lean) == set(with_models) and any(n.startswith("region__") for n in lean)
+    for name in with_models:
+        assert _without_build_times(lean[name]) == _without_build_times(with_models[name]), name
+    inference.invalidate_caches()
+
+
+def test_loading_the_model_on_the_box_imports_neither_xgboost_nor_shap(trained_client):
+    """Checked in a fresh interpreter: an import made anywhere earlier in this test process
+    would hide one made by the loader."""
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    code = ("import sys; from app.ml import inference; s = inference.load_model_state(); "
+            "print(s is not None, 'xgboost' in sys.modules, 'shap' in sys.modules)")
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
+                         cwd=Path(__file__).resolve().parents[1], timeout=300,
+                         env={**os.environ, "SERVING_READ_ONLY": "true"})
+    assert out.stdout.strip().splitlines()[-1] == "True False False", out.stderr[-2000:]
 
 
 def test_precomputed_responses_are_sent_compressed_only_when_asked(trained_client):
