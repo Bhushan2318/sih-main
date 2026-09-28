@@ -186,6 +186,9 @@ export interface ModelStatusResponse {
     train_cycles?: number | null;
     val_cycles?: number | null;
     held_out_cycles?: number | null;
+    /** A pooled run fits on a sample of its training cycles; null when it fit on all. */
+    fit_cycles?: number | null;
+    classifier_cycles?: number | null;
     canonical_rows?: number | null;
     paired_rows?: number | null;
     first_train_date?: string | null;

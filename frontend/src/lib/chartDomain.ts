@@ -19,3 +19,20 @@ export type ChartYDomain = [number | "auto", "auto"];
 export function yDomainForVariable(variable: string | null | undefined): ChartYDomain {
   return [variable && NON_NEGATIVE_VARIABLES.has(variable) ? 0 : "auto", "auto"];
 }
+
+/**
+ * Replay's "close enough - not a bust" band: observed plus and minus the bust threshold,
+ * floored at 0 where the variable cannot be negative. yDomainForVariable's floor does not
+ * hold against data below it - Recharts widens the axis to fit - so a rainfall band of
+ * observed - threshold pulled every event's axis to -50 to -95 mm.
+ */
+export function closeEnoughBand(
+  variable: string | null | undefined,
+  observed: number | null | undefined,
+  threshold: number | null | undefined,
+): [number, number] | null {
+  if (observed == null || threshold == null) return null;
+  const lo = observed - threshold;
+  const floor = yDomainForVariable(variable)[0];
+  return [typeof floor === "number" ? Math.max(floor, lo) : lo, observed + threshold];
+}

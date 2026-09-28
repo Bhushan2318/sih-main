@@ -47,3 +47,18 @@ def test_manifest_without_split_dates_says_nothing():
     assert td["first_train_date"] is None
     assert td["first_train_year"] is None
     assert td["test_year"] is None
+
+
+def test_the_cycles_the_models_were_fit_on_are_served():
+    """A pooled run fits on a bounded sample of its training cycles (MAX_FIT_CYCLES). The
+    Model page said "Trained on 6,558 forecast cycles" - a count that includes the
+    validation and held-out years - while the models saw 2,000. Served, so the page can
+    say so without writing the number down."""
+    td = _training_data(POOLED_MANIFEST)
+    assert td["fit_cycles"] == 2000
+    assert td["classifier_cycles"] == 2000
+
+
+def test_a_run_that_fit_on_every_training_cycle_says_nothing_extra():
+    td = _training_data({"split_cycles": {"train": 3, "val": 1, "test": 1}})
+    assert td["fit_cycles"] is None and td["classifier_cycles"] is None

@@ -1,5 +1,6 @@
 import { geoMercator, geoPath } from "d3-geo";
-import { useDeferredValue, useEffect, useMemo, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import type { MouseEvent } from "react";
 import { feature, merge } from "topojson-client";
 import type { Feature, FeatureCollection, Geometry, MultiPolygon, Polygon } from "geojson";
 import type {
@@ -12,6 +13,7 @@ import topoData from "../../assets/geo/india_districts.topojson?url";
 import claimedTerritoryUrl from "../../assets/geo/claimed_territory.geojson?url";
 import type { RegionSummary, RiskBand } from "../../api/types";
 import { bandLabel } from "../../theme";
+import { districtTooltipLines, tooltipPlacement } from "../../lib/mapTooltip";
 import {
   inferRiskCuts,
   isScoredRegion,
@@ -105,6 +107,11 @@ function districtLabel(p: DistrictProps): string {
     : `${p.region_name}, ${p.state_name}`;
 }
 
+/** What the cursor is over. Only the id is kept: the text is built at render from the
+ * current data, so it follows a Replay step or a refetch instead of freezing at the
+ * moment the mouse last moved. */
+type HoverTarget = { kind: "claimed" } | { kind: "state"; id: string } | { kind: "district"; id: string };
+
 function bandFor(p: number | null, cuts?: RiskCuts | null) {
   return riskBandForProbability(p, cuts);
 }
@@ -122,10 +129,19 @@ export function IndiaChoroplethMap({
   topology: Topology | null;
   riskCuts?: RiskCuts;
 }) {
-  const [hover, setHover] = useState<{ x: number; y: number; title: string; body: string[] } | null>(null);
+  const [hover, setHover] = useState<{ x: number; y: number; w: number; target: HoverTarget } | null>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const track = (target: HoverTarget) => (e: MouseEvent<SVGPathElement>) => {
+    // Measured from .map-wrap, the box the tooltip is positioned in - not the SVG inside it.
+    const r = wrapRef.current?.getBoundingClientRect();
+    if (r) setHover({ x: e.clientX - r.left, y: e.clientY - r.top, w: r.width, target });
+  };
   const [query, setQuery] = useState("");
   const [activeState, setActiveState] = useState<string | null>(null);
   const [aggregation, setAggregation] = useState<Aggregation>("worst");
+  // Drilling in or out swaps every path under a resting cursor without a mouseleave, and
+  // the previous level's tooltip stayed up over the new one.
+  useEffect(() => setHover(null), [activeState]);
   const deferredQuery = useDeferredValue(query);
 
   // Gilgit-Baltistan, Aksai Chin, the Shaksgam Valley and Siachen: territory India
@@ -315,8 +331,47 @@ export function IndiaChoroplethMap({
     ? states.find((s) => s.properties.state_id === activeState)?.properties.state_name
     : null;
 
+  const tip = hover ? tooltipFor(hover.target) : null;
+  function tooltipFor(t: HoverTarget): { title: string; body: string[] } | null {
+    if (t.kind === "claimed") {
+      return {
+        title: "Claimed territory",
+        body: [
+          "Not scored - no forecast or observation data",
+          "Shown so India's outline is complete",
+          "Shaded like Jammu and Kashmir, not measured",
+        ],
+      };
+    }
+    if (t.kind === "state") {
+      const f = states.find((x) => x.properties.state_id === t.id);
+      if (!f) return null;
+      const roll = stateRollup.get(t.id);
+      return {
+        title: f.properties.state_name,
+        body: roll
+          ? [
+              `${aggregation === "worst" ? "Worst district" : "Mean of districts"}: ${(roll.value * 100).toFixed(1)}%`,
+              roll.worst ? `Worst: ${roll.worst.region_name}` : "",
+              `${roll.n} district${roll.n === 1 ? "" : "s"} scored`,
+              "Click to open districts",
+            ].filter(Boolean)
+          : ["No district in this state is scored yet"],
+      };
+    }
+    const f = shown.find((x) => x.properties.region_id === t.id);
+    if (!f) return null;
+    const region = byRegionId.get(t.id);
+    const scored = region ? isScoredRegion(region) : false;
+    const band = scored && region ? riskBandForRegion(region, cuts) : null;
+    return {
+      title: districtLabel(f.properties),
+      body: scored && region ? districtTooltipLines(region, band) : ["No forecast data for this district"],
+    };
+  }
+
   return (
-    <div className="map-wrap">
+    <div className="map-wrap" ref={wrapRef}>
       <div className="map-controls">
         <div className="map-search">
           <input
@@ -409,19 +464,7 @@ export function IndiaChoroplethMap({
               // colour is inherited from Jammu and Kashmir rather than measured here.
               // Saying so on hover is the whole point - otherwise this reads as a
               // scored region.
-              onMouseMove={(e) => {
-                const rect = (e.currentTarget.ownerSVGElement as SVGSVGElement).getBoundingClientRect();
-                setHover({
-                  x: e.clientX - rect.left,
-                  y: e.clientY - rect.top,
-                  title: "Claimed territory",
-                  body: [
-                    "Not scored - no forecast or observation data",
-                    "Shown so India's outline is complete",
-                    "Shaded like Jammu and Kashmir, not measured",
-                  ],
-                });
-              }}
+              onMouseMove={track({ kind: "claimed" })}
               onMouseLeave={() => setHover(null)}
             />
           ) : null}
@@ -444,22 +487,7 @@ export function IndiaChoroplethMap({
                         setActiveState(f.properties.state_id);
                       }
                     }}
-                    onMouseMove={(e) => {
-                      const rect = (e.currentTarget.ownerSVGElement as SVGSVGElement).getBoundingClientRect();
-                      setHover({
-                        x: e.clientX - rect.left,
-                        y: e.clientY - rect.top,
-                        title: f.properties.state_name,
-                        body: roll
-                          ? [
-                              `${aggregation === "worst" ? "Worst district" : "Mean of districts"}: ${(roll.value * 100).toFixed(1)}%`,
-                              roll.worst ? `Worst: ${roll.worst.region_name}` : "",
-                              `${roll.n} district${roll.n === 1 ? "" : "s"} scored`,
-                              "Click to open districts",
-                            ].filter(Boolean)
-                          : ["No district in this state is scored yet"],
-                      });
-                    }}
+                    onMouseMove={track({ kind: "state", id: f.properties.state_id })}
                     onMouseLeave={() => setHover(null)}
                   />
                 );
@@ -488,21 +516,7 @@ export function IndiaChoroplethMap({
                         if (scored) onSelect(p.region_id);
                       }
                     }}
-                    onMouseMove={(e) => {
-                      const rect = (e.currentTarget.ownerSVGElement as SVGSVGElement).getBoundingClientRect();
-                      setHover({
-                        x: e.clientX - rect.left,
-                        y: e.clientY - rect.top,
-                        title: districtLabel(p),
-                        body: scored && region
-                          ? [
-                              `Bust probability: ${((region.bust_probability ?? 0) * 100).toFixed(1)}% (${bandLabel(band)})`,
-                              region.dominant_variable ? `Driver: ${region.dominant_variable}` : "",
-                              region.confidence != null ? `Mean confidence: ${(region.confidence * 100).toFixed(0)}%` : "",
-                            ].filter(Boolean)
-                          : ["No forecast data for this district"],
-                      });
-                    }}
+                    onMouseMove={track({ kind: "district", id: p.region_id })}
                     onMouseLeave={() => setHover(null)}
                   />
                 );
@@ -510,14 +524,19 @@ export function IndiaChoroplethMap({
         </g>
       </svg>
 
-      {hover ? (
-        <div className="map-tooltip" style={{ left: hover.x + 12, top: hover.y + 12 }}>
-          <strong>{hover.title}</strong>
-          {hover.body.map((line) => (
-            <div key={line}>{line}</div>
-          ))}
-        </div>
-      ) : null}
+      {tip && hover ? (() => {
+        const at = tooltipPlacement(hover.x, hover.y, hover.w);
+        return (
+          <div className="map-tooltip" style={{
+            left: at.left, top: at.top, transform: at.flip ? "translateX(-100%)" : undefined,
+          }}>
+            <strong>{tip.title}</strong>
+            {tip.body.map((line) => (
+              <div key={line}>{line}</div>
+            ))}
+          </div>
+        );
+      })() : null}
     </div>
   );
 }
