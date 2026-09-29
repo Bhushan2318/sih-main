@@ -163,20 +163,21 @@ the serving store.
 ## How well it works
 
 **The live figures are served, not written here.** The deployed model reports them at
-[`/api/model/status`](https://sanket-a0dd.onrender.com/api/model/status), and the site's
-**Model** and **About** tabs render them beside the baseline ladder. A number copied into
-a README is right until the next retrain and quietly wrong afterwards, which is the
-failure this project exists to avoid. This README once had exactly that problem: it
-claimed a ROC-AUC from a 17-cycle run long after the deployed model had moved on.
+[`/api/model/status`](https://sanket-a0dd.onrender.com/api/model/status). The site's
+**Model** tab renders them, and its **About** tab sets them beside the baseline ladder. A
+number copied into a README is right until the next retrain and quietly wrong afterwards,
+which is the failure this project exists to avoid. This README once had exactly that
+problem: it claimed a ROC-AUC from a 17-cycle run long after the deployed model had moved
+on.
 
 What is stable enough to write down is how the evidence is built:
 
 - **Held-out years.** The served model trains on daily reforecast cycles for 2000–2016
   across all 666 districts and is tested on all of 2017, which it never saw. 2018 and 2019
   are the next evaluation.
-- **Against what?** Every score sits beside seven baselines fitted on the same training
-  rows and scored on the same held-out rows: climatology, lead day, ensemble spread, lead
-  day with spread and season, EMOS, IDR and analogs.
+- **Against what?** Every score sits beside seven baselines, fitted on the training split
+  and scored on the same held-out rows: climatology, lead day, ensemble spread, lead day
+  with spread and season, EMOS, IDR and analogs.
 - **Verification, done properly.** Brier skill score; ROC-AUC with a block bootstrap over
   whole forecast cycles; the binormal Z-AUC of Shanker, Sarkar & Mamgain (NCMRWF, QJRMS
   2024); the CORP reliability decomposition; SEDI; relative economic value; and conformal
@@ -205,8 +206,8 @@ What is stable enough to write down is how the evidence is built:
 
 ## Quick start
 
-You need **Python 3.11 or 3.12** (3.9 also works; 3.13 does not yet, because one pinned
-dependency has no wheel for it) and **Node 18 or newer**. Everything installs from
+You need **Python 3.11 or 3.12**, the versions CI tests (3.13 does not work yet, because
+one pinned dependency has no wheel for it), and **Node 18 or newer**. Everything installs from
 prebuilt wheels, so no compiler is needed. Use `git clone` rather than GitHub's "Download
 ZIP", which extracts as a doubled `sih-main-main/sih-main-main/` folder.
 
