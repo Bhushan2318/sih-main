@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Known issues and limitations
+    url: https://github.com/Bhushan2318/sih-main/blob/main/docs/known-issues.md
+    about: Check here first. Every caveat we know about is written down, with what was measured.
+  - name: Report a security problem privately
+    url: https://github.com/Bhushan2318/sih-main/security/advisories/new
+    about: Please do not open a public issue for security problems.

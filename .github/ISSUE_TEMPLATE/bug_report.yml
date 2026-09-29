@@ -1,0 +1,55 @@
+name: Bug report
+description: Something in the site, the API or the pipeline does not work as it should.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. If the problem is a number that looks wrong rather than
+        something that breaks, the "A number looks wrong" form asks for exactly what we
+        need to check it. Security problems go through SECURITY.md, not here.
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where did it happen?
+      options:
+        - Live site (sanket-a0dd.onrender.com)
+        - Local run
+        - CI / GitHub Actions
+        - Somewhere else
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you saw, including any error message or status code.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: How can we reproduce it?
+      description: The tab, the district, the forecast cycle and what you clicked, or the command you ran.
+      placeholder: |
+        1. Open the Replay tab
+        2. Choose "Cyclone Fani · May 2019"
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Browser and OS for the site; OS, Python and Node versions for a local run.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or screenshots
+      description: Paste logs as text where you can.
