@@ -2,7 +2,7 @@
 
 **Predicting where tomorrow's weather forecast will be wrong, and saying why.**
 
-Smart India Hackathon 2026 · Problem Statement 26079 · NCMRWF, Ministry of Earth Sciences
+Smart India Hackathon 2026 · Problem Statement 26079 · Ministry of Earth Sciences
 **Live: https://sanket-a0dd.onrender.com**
 
 > **Open the site and click _Replay_ first.** It takes a real historical forecast cycle,

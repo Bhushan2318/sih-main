@@ -294,8 +294,7 @@ export function AboutPage({ onReplay }: { onReplay: () => void }) {
             </li>
             <li>
               <b>The project.</b> Built for Smart India Hackathon 2026, Problem Statement
-              26079, set by NCMRWF (National Centre for Medium Range Weather Forecasting),
-              Ministry of Earth Sciences.
+              26079, set by the Ministry of Earth Sciences.
             </li>
           </ul>
         </section>

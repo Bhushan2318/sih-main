@@ -19,11 +19,13 @@ uvicorn app.main:app --reload --port 8000
 
 | Method | Path | Purpose |
 |---|---|---|
-| `GET` | `/api/health` | liveness + whether a model exists |
+| `GET` `HEAD` | `/api/health` | liveness, the served run, build commit, memory in use, uptime, and whether prebuilt responses are active (`prebuilt.active`) |
 | `POST` | `/api/upload` | multipart file upload → ingest (+ background retrain) |
 | `POST` | `/api/upload/{batch_id}/confirm-mapping` | resolve ambiguous columns, then ingest |
 | `GET` | `/api/regions?lead_time_days=N` | choropleth payload: one row per region for lead day N |
-| `GET` | `/api/regions/{region_id}` | detail panel: per-variable series, bust curve, top factors |
+| `GET` | `/api/regions/all` | every region for every lead day of the current cycle, in one payload: what the map, the lead-day rail and the KPIs open with |
+| `GET` | `/api/regions/{region_id}` | detail panel: per-variable series, bust curve, top factors. Takes a district (`IN-MH-NAGPUR`) or a state (`IN-MH`) |
+| `GET` | `/api/ensemble?init_date&region_id` | the hero's ensemble divergence across lead days; both parameters optional (latest cycle, a chartable region) |
 | `GET` | `/api/alerts?limit&risk_band` | medium/high-risk (region, lead) events, riskiest first |
 | `GET` | `/api/model/status` | what is trained, on how much data, and how well it scored |
 | `GET` | `/api/model/runs` | every persisted run id + the current one |
@@ -81,7 +83,28 @@ WS payloads are intentionally small and carry no measurements. The frontend reac
 `['regions', id]`, `['alerts']`, `['modelStatus']`) and refetching over REST — that keeps
 the socket and REST shapes decoupled.
 
-## Performance
+## On the serving box
+
+The deployed instance runs with `SERVING_READ_ONLY` (set in the Dockerfile) and behaves
+differently from a development server in three ways:
+
+- **Every write is refused at the door.** `app/api/box_guard.py` rejects uploads, ingest
+  and retrain requests as plain ASGI, before routing and before a byte of the body is
+  read. So a large body cannot use up the box's 512 MB just by being parsed.
+- **Responses are files built in CI.** `scripts.package_for_deploy` builds every response
+  the dashboard opens with (the hero, the map, the model page, the alerts, Replay's list
+  and every cycle on it, each district's panel) using the same service code, and gzips
+  them. The box reads a file; it does not load the model, score or build
+  (`app/services/response_cache.py`).
+- **What was not built is not served.** A request with parameters the dashboard never
+  sends gets a 409. A district panel or Replay cycle outside the bundle gets a 404 that
+  says so. If the bundle was built for different code, for example after a code-only
+  deploy, the box builds responses live, one at a time: slow, but right.
+
+A development server does none of this: it uploads, ingests, trains and builds every
+response itself.
+
+## Performance (development server)
 
 `/api/regions` and `/api/regions/{id}` are served from an in-process cache of the scored
 forecast cycle (~0.2 s warm; ~1.7 s on the first request after a retrain). The cache key is

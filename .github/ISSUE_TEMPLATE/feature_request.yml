@@ -1,0 +1,22 @@
+name: Idea or feature request
+description: Something Sanket should do, show or explain.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: Who needs this, and for what decision?
+      description: For example a duty forecaster before a bulletin, a district disaster officer, or an agromet advisory unit.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like Sanket to do?
+    validations:
+      required: true
+  - type: textarea
+    id: data
+    attributes:
+      label: Data it would need
+      description: Sanket uses real data only. If the idea needs a new source, name it and link it if you can.

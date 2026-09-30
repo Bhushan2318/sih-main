@@ -1,0 +1,29 @@
+cff-version: 1.2.0
+message: "If you use Sanket or build on it, please cite it as below."
+type: software
+title: "Sanket: AI-based detection of medium-range weather forecast busts across India"
+abstract: >-
+  Sanket predicts the probability that a medium-range weather forecast will bust (its
+  error landing above the 90th percentile of that variable's own historical errors) for
+  each of India's 666 districts, eight surface variables and lead days 1 to 10, and
+  explains every prediction with SHAP. It is trained on NOAA GEFSv12 ensemble reforecasts
+  verified against ERA5, compared against a ladder of statistical baselines on held-out
+  years, and served at zero hosting cost. Built for Smart India Hackathon 2026, problem
+  statement SIH26079 (Ministry of Earth Sciences).
+authors:
+  - name: "Team Winging It"
+repository-code: "https://github.com/Bhushan2318/sih-main"
+url: "https://sanket-a0dd.onrender.com"
+license: MIT
+keywords:
+  - weather forecasting
+  - forecast verification
+  - forecast bust
+  - ensemble forecasting
+  - explainable AI
+  - SHAP
+  - XGBoost
+  - GEFSv12
+  - ERA5
+  - India
+  - Smart India Hackathon

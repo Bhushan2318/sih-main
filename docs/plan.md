@@ -2,7 +2,7 @@
 
 ## Context
 
-This is Smart India Hackathon 2026 Problem Statement 26079 (NCMRWF / Ministry of Earth
+This is Smart India Hackathon 2026 Problem Statement 26079 (Ministry of Earth
 Sciences): detect where and when medium-range (Day 1–10) NWP forecasts are likely to "bust"
 (show large error) across Indian regions, and explain why. The deliverable is a working
 full-stack prototype — FastAPI backend running two XGBoost heads (error regression +
