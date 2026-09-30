@@ -1,0 +1,111 @@
+# Copyright and licence for every file in this repository, in the REUSE format
+# (https://reuse.software). Check it with `reuse lint`. The full text of every licence
+# named here is in LICENSES/.
+#
+# Everything is the Sanket contributors' own work under MIT, except the data files below:
+# each keeps its source's terms, and the MIT licence does not change them. When several
+# annotations match one file, the last one wins.
+
+version = 1
+SPDX-PackageName = "Sanket"
+SPDX-PackageSupplier = "Team Winging It"
+SPDX-PackageDownloadLocation = "https://github.com/Bhushan2318/sih-main"
+
+[[annotations]]
+path = "**"
+precedence = "closest"
+SPDX-FileCopyrightText = "2026 The Sanket contributors (Team Winging It)"
+SPDX-License-Identifier = "MIT"
+
+# District boundaries from GADM 4.1, and the tables computed from them.
+[[annotations]]
+path = [
+  "backend/data/geo/india_districts.geojson",
+  "backend/data/geo/india_districts.json",
+  "backend/data/geo/district_grid_weights.parquet",
+  "frontend/src/assets/geo/india_districts.topojson",
+]
+precedence = "override"
+SPDX-FileCopyrightText = [
+  "GADM (https://gadm.org)",
+  "2026 The Sanket contributors (Team Winging It)",
+]
+SPDX-License-Identifier = "LicenseRef-GADM"
+
+# Elevation from CGIAR-CSI hole-filled SRTM v4, through the Open-Elevation API.
+[[annotations]]
+path = "backend/data/geo/grid_elevation_m.parquet"
+precedence = "override"
+SPDX-FileCopyrightText = [
+  "International Centre for Tropical Agriculture (CIAT), CGIAR-CSI SRTM v4",
+  "2026 The Sanket contributors (Team Winging It)",
+]
+SPDX-License-Identifier = "LicenseRef-CIAT-SRTM"
+
+# District descriptors: computed from the GADM geometry and the SRTM elevation above.
+[[annotations]]
+path = "backend/data/geo/district_descriptors.parquet"
+precedence = "override"
+SPDX-FileCopyrightText = [
+  "GADM (https://gadm.org)",
+  "International Centre for Tropical Agriculture (CIAT), CGIAR-CSI SRTM v4",
+  "2026 The Sanket contributors (Team Winging It)",
+]
+SPDX-License-Identifier = "LicenseRef-GADM AND LicenseRef-CIAT-SRTM"
+
+# Claimed-territory overlay from Natural Earth's disputed-areas layer.
+[[annotations]]
+path = "frontend/src/assets/geo/claimed_territory.geojson"
+precedence = "override"
+SPDX-FileCopyrightText = [
+  "Natural Earth (https://www.naturalearthdata.com), public domain",
+  "2026 The Sanket contributors (Team Winging It)",
+]
+SPDX-License-Identifier = "LicenseRef-NaturalEarth"
+
+# NOAA data: the GEFSv12 reforecast sample and NOAA PSL's MJO index (OMI), both aggregated
+# here, so neither is original, unaltered NOAA data.
+[[annotations]]
+path = [
+  "backend/data/samples/gefs_reforecast_india_2019.parquet",
+  "backend/data/mjo_omi_index.parquet",
+]
+precedence = "override"
+SPDX-FileCopyrightText = [
+  "NOAA, a U.S. Government work (GEFSv12 reforecast; PSL OLR MJO Index)",
+  "2026 The Sanket contributors (Team Winging It)",
+]
+SPDX-License-Identifier = "LicenseRef-NOAA-Open-Data"
+
+# ERA5 observations, through Open-Meteo's Historical Weather API.
+[[annotations]]
+path = "backend/data/samples/era5_observations_india_2019.parquet"
+precedence = "override"
+SPDX-FileCopyrightText = [
+  "Contains modified Copernicus Climate Change Service information 2026",
+  "Weather data by Open-Meteo.com (https://open-meteo.com), CC-BY 4.0",
+  "2026 The Sanket contributors (Team Winging It)",
+]
+SPDX-License-Identifier = "CC-BY-4.0"
+
+# The ground-truth comparison: ERA5 (via Open-Meteo) against MERRA-2 (via NASA POWER).
+[[annotations]]
+path = "docs/analysis/*.csv"
+precedence = "override"
+SPDX-FileCopyrightText = [
+  "Contains modified Copernicus Climate Change Service information 2026",
+  "Weather data by Open-Meteo.com (https://open-meteo.com), CC-BY 4.0",
+  "NASA Langley Research Center POWER Project (MERRA-2)",
+  "2026 The Sanket contributors (Team Winging It)",
+]
+SPDX-License-Identifier = "CC-BY-4.0 AND LicenseRef-NASA-POWER"
+
+# Screenshots that show the district map, which is drawn from GADM geometry.
+[[annotations]]
+path = ["docs/images/operations.png", "docs/images/replay.png"]
+precedence = "override"
+SPDX-FileCopyrightText = [
+  "2026 The Sanket contributors (Team Winging It)",
+  "Map geometry: GADM (https://gadm.org)",
+]
+SPDX-License-Identifier = "MIT AND LicenseRef-GADM"

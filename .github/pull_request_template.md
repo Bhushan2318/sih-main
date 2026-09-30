@@ -16,4 +16,5 @@ plumbing evidence, not proof of correctness (see CONTRIBUTING.md). -->
 - [ ] SHAP explanations still work.
 - [ ] New caveats are written in `docs/known-issues.md`.
 - [ ] `frontend/src/api/types.ts` still mirrors `backend/app/api/schemas.py`.
+- [ ] `reuse lint` passes; any third-party file is annotated in `REUSE.toml`, and the notices are regenerated if dependencies changed.
 - [ ] Changes to `.github/workflows/`, the promotion gate or `valid_date` are called out above, or there are none.

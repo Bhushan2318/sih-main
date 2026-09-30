@@ -1,0 +1,28 @@
+CGIAR-CSI SRTM (hole-filled SRTM v4) terms
+
+Source: https://srtm.csi.cgiar.org/disclaimer/ (retrieved 2026-09-30). Quoted verbatim (excerpt):
+
+  DISTRIBUTION
+  Users are prohibited from any commercial, non-free resale, or redistribution without
+  explicit written permission from CIAT. Users should acknowledge CIAT as the source used
+  in the creation of any reports, publications, new data sets, derived products, or
+  services resulting from the use of this data set. CIAT also request reprints of any
+  publications and notification of any redistributing efforts.
+
+  CIAT provides these data without any warranty of any kind whatsoever, either express or
+  implied, including warranties of merchantability and fitness for a particular purpose.
+  CIAT shall not be liable for incidental, consequential, or special damages arising out
+  of the use of any data.
+
+  ACKNOWLEDGMENT AND CITATION
+  We kindly ask any users to cite this data in any published material produced using
+  this data, and if possible link web pages to the CIAT-CSI SRTM website
+  ( https://srtm.csi.cgiar.org ).
+  Citations should be made as follows: Jarvis A., H.I. Reuter, A. Nelson, E. Guevara,
+  2008, Hole-filled seamless SRTM data V4, International Centre for Tropical Agriculture
+  (CIAT), available from https://srtm.csi.cgiar.org.
+
+In this repository these terms apply to the per-cell elevation table and the district
+descriptors computed from it, fetched through the Open-Elevation API. Acknowledgement:
+elevation derived from CGIAR-CSI SRTM data (International Centre for Tropical
+Agriculture, CIAT).

@@ -1,0 +1,22 @@
+NOAA open data (NOAA Open Data Dissemination, NODD)
+
+Source: https://registry.opendata.aws/noaa-gefs-reforecast/ (retrieved 2026-09-30).
+Quoted verbatim:
+
+  NOAA data disseminated through NODD are open to the public and can be used as desired.
+
+  NOAA makes data openly available to ensure maximum use of our data, and to spur and
+  encourage exploration and innovation throughout the industry. NOAA requests attribution
+  for the use or dissemination of unaltered NOAA data. However, it is not permissible to
+  state or imply endorsement by or affiliation with NOAA. If you modify NOAA data, you may
+  not state or imply that it is original, unaltered NOAA data.
+
+NOAA's data are works of the United States Government. In this repository these terms
+apply to the GEFSv12 reforecast sample and to the NOAA Physical Sciences Laboratory MJO
+index (OMI); both are modified (aggregated) here, so they are not original NOAA data.
+
+For the MJO index, NOAA PSL asks users to cite (https://psl.noaa.gov/mjo/mjoindex/):
+  Kiladis G.N., J. Dias, K.H. Straub, M.C Wheeler, S.N. Tulich, K. Kikuchi,
+  K.M. Weickmann, M.J. Ventrice. A comparison of OLR and circulation based indices for
+  tracking the MJO. Monthly Weather Review, May 2014, 142 1697-1715.
+  https://doi.org/10.1175/MWR-D-13-00301.1

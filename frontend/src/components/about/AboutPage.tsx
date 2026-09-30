@@ -275,13 +275,16 @@ export function AboutPage({ onReplay }: { onReplay: () => void }) {
             <li>
               <b>Observations</b> — ERA5 reanalysis from the Copernicus Climate Change Service
               (C3S), licensed CC-BY 4.0: from the Climate Data Store for training, and via the
-              Open-Meteo Historical Weather API for recent days. Some training years also
-              carry IMD–NCMRWF merged satellite-gauge rainfall (India Meteorological
-              Department).
+              Open-Meteo Historical Weather API for recent days (
+              <a href="https://open-meteo.com/" target="_blank" rel="noopener noreferrer">Weather data by Open-Meteo.com</a>).
+              Contains modified Copernicus Climate Change Service information 2026. Some
+              training years also carry IMD–NCMRWF merged satellite-gauge rainfall (India
+              Meteorological Department).
             </li>
             <li>
               <b>Other inputs</b> — the MJO index is NOAA PSL’s OLR-based MJO Index (OMI);
-              district elevation is CGIAR-CSI SRTM 250 m, via the Open-Elevation API.
+              district elevation is CGIAR-CSI SRTM 250 m from the International Centre for
+              Tropical Agriculture (CIAT), via the Open-Elevation API.
             </li>
             <li>
               <b>District boundaries</b> — GADM 4.1, India admin-2 (gadm.org). Two corrections
@@ -291,6 +294,13 @@ export function AboutPage({ onReplay }: { onReplay: () => void }) {
               &amp; Kashmir, Ladakh and Arunachal Pradesh still appear on the map. Used here
               for a non-commercial hackathon prototype — formal licence review for any use
               beyond that is not yet done.
+            </li>
+            <li>
+              <b>Open-source software</b> — Sanket&apos;s code is MIT-licensed. The libraries
+              in this page are listed with their licences in{" "}
+              <a href="/third-party-licenses.txt" target="_blank" rel="noopener noreferrer">third-party-licenses.txt</a>;
+              every other dependency, dataset and font is in the repository&apos;s{" "}
+              <a href="https://github.com/Bhushan2318/sih-main/blob/main/THIRD_PARTY_NOTICES.md" target="_blank" rel="noopener noreferrer">third-party notices</a>.
             </li>
             <li>
               <b>The project.</b> Built for Smart India Hackathon 2026, Problem Statement

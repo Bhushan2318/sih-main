@@ -1,0 +1,22 @@
+NASA POWER referencing guide
+
+Source: https://power.larc.nasa.gov/docs/referencing/ (retrieved 2026-09-30).
+Quoted verbatim (excerpt):
+
+  When POWER data products are used in a publication include both POWER's Reference and
+  POWER's Data Reference in any work product or publication.
+
+  POWER's Reference
+  The data was obtained from National Aeronautics and Space Administration (NASA) Langley
+  Research Center's Prediction Of Worldwide Energy Resources (POWER) project funded
+  through the NASA Earth Science Division.
+
+  When referencing POWER data products please include the service name, version number,
+  and date accessed.
+
+  Redistribution Notification
+  To assist the POWER Project in providing the best service to the scientific community,
+  the Project requests notification if POWER data is transmitted to other researchers.
+
+In this repository these terms apply to the MERRA-2 values obtained through the NASA
+POWER daily point API for the ground-truth comparison in docs/analysis/.
