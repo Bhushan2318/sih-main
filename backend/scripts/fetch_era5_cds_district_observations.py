@@ -24,7 +24,7 @@ is the rain that fell 23:00-24:00 on the 1st. So every variable is grouped by
 ``valid_time - 1h``, which makes an observation day the half-open window (t-24h, t].
 
 That is deliberately the same convention the forecast side uses for day k,
-((k-1)*24, k*24] - see CLAUDE.md rule 4. Both sides of a bust label therefore describe
+((k-1)*24, k*24] - see CONTRIBUTING.md rule 4. Both sides of a bust label therefore describe
 the identical interval. Grouping by a plain calendar floor instead would shift a day's
 rainfall by one hour, on the variable that drives most busts.
 
@@ -286,7 +286,7 @@ def prefetch_months(year: int, months: list[int], cache: Path, parallel: int) ->
         # dataset ("Number queued requests for this dataset is temporarily limited") and
         # rejects the rest within seconds. A rejection is not a failure - but retrying it
         # quickly is abuse: a 45s retry across several threads put ~50 rejected jobs on
-        # their queue in 10 minutes before this was caught. CLAUDE.md rule 7 - the archive
+        # their queue in 10 minutes before this was caught. CONTRIBUTING.md rule 7 - the archive
         # is a public good. Back off exponentially, and never faster than 5 minutes.
         delay = 300.0
         deadline = time.time() + 12 * 3600

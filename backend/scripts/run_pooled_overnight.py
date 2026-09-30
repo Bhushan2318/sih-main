@@ -125,7 +125,7 @@ def run_queue(queue: list[dict], cache_dir: Path, out_path: Path, log_path: Path
     results: list[dict] = []
     if out_path.exists():
         # Resume: only a job that actually SUCCEEDED is skipped. Re-running a finished
-        # multi-hour job on a re-dispatch is the casual re-run CLAUDE.md says not to do -
+        # multi-hour job on a re-dispatch is the casual re-run CONTRIBUTING.md rule 7 says not to do -
         # but a job that crashed produced no model and nothing to lose by trying again.
         # Real bug 2026-09-17: the first version of this skipped ANY recorded status,
         # including "exception" - a fold that crashed 32 minutes in would have been

@@ -264,7 +264,7 @@ def test_attach_hbf_column_matches_a_naive_dict_lookup():
 
 def test_attach_hbf_column_missing_keys_are_nan_not_zero():
     """A (region, season) combination with no historical bust frequency is missing
-    signal, not zero risk - CLAUDE.md rule 3: missing never becomes zero."""
+    signal, not zero risk - CONTRIBUTING.md rule 3: missing never becomes zero."""
     df = pd.DataFrame({"region_id": pd.Categorical(["r1", "r2"]),
                        "season": pd.Categorical(["winter", "summer"])})
     hbf = {("r1", "winter"): 0.5}  # r2/summer is not in the table

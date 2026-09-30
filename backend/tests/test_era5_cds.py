@@ -6,7 +6,7 @@ shape, in the right range, in the right columns:
 
   - ERA5 `total_precipitation` at hour t is the accumulation over the hour ENDING at t.
     Grouping by floor("D") shifts a day's rainfall by one hour. Rainfall drives most
-    busts, and this is the same genre of error as the valid_date offset in CLAUDE.md.
+    busts, and this is the same genre of error as the valid_date offset in CONTRIBUTING.md rule 4.
   - ERA5 has no 2 m relative humidity, so rh2m_pct is derived from dewpoint.
   - Units: K, Pa, m and m3/m3 all differ from the canonical columns.
 """
@@ -164,7 +164,7 @@ def test_partial_days_are_dropped_not_silently_under_summed():
 # --------------------------------------------------------------- one aggregator only
 
 def test_both_fetches_share_one_aggregator():
-    """CLAUDE.md: there is exactly one weight table. Both observation fetches must reach
+    """docs/engineering-reference.md: there is exactly one weight table. Both observation fetches must reach
     the districts through the same code, not two copies of it."""
     from app.utils import district_observations as shared
     _s2 = importlib.util.spec_from_file_location(
@@ -260,7 +260,7 @@ def test_boundary_comes_from_the_next_months_own_download(tmp_path, monkeypatch)
     nxt = tmp_path / "era5_2011_07_0.zip".replace("2011_07", "201107")
     with zf.ZipFile(nxt, "w") as z:
         z.writestr("x.txt", "placeholder")
-    # plumbing only (CLAUDE.md rule 1): a labelled stand-in for the decoded archive.
+    # plumbing only (CONTRIBUTING.md rule 1): a labelled stand-in for the decoded archive.
     frame = pd.DataFrame({
         "time": pd.to_datetime(["2011-07-01 00:00", "2011-07-01 01:00", "2011-07-01 00:00"]),
         "lat": [10.0, 10.0, 10.25], "lon": [70.0, 70.0, 70.0], "v": [1, 2, 3]})

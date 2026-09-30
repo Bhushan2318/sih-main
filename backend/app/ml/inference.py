@@ -456,7 +456,7 @@ def _prep(df: pd.DataFrame, cols: list, categorical: "set | None" = None) -> pd.
             destroyed.append(c)
 
     if destroyed:
-        # Refuse rather than patch (CLAUDE.md rule 3). These columns held real values and
+        # Refuse rather than patch (CONTRIBUTING.md rule 3). These columns held real values and
         # are now entirely NaN, which only happens when a non-numeric column was coerced -
         # i.e. the model expects it as categorical and we did not treat it as one. Scoring
         # on it would not fail, it would quietly produce confident nonsense, so the only

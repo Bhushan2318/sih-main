@@ -2,7 +2,7 @@
 
 Why this exists: Render's free tier caps the serving box at 512 MB. An OCI Always Free
 Ampere A1 VM gives up to 4 OCPU / 24 GB RAM, permanently, at $0 - the same "free tier
-only" constraint in CLAUDE.md, just a roomier box. The image is unchanged: the same
+only" constraint in CONTRIBUTING.md rule 6, just a roomier box. The image is unchanged: the same
 `Dockerfile` that Render builds runs here, because it already does everything a serving
 box needs (fetches its own data/model artifact at startup, no training, no live NOAA
 pull - see the Dockerfile's own comments). Moving host does not mean moving architecture.

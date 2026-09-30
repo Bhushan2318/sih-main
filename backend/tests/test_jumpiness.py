@@ -60,7 +60,7 @@ def test_absolute_change_between_the_two_most_recent_cycles():
 
 
 def test_the_first_cycle_has_no_jump_rather_than_a_zero_one():
-    """Missing never becomes zero (CLAUDE.md rule 3)."""
+    """Missing never becomes zero (CONTRIBUTING.md rule 3)."""
     j = _jump(_fc_rows("A", "temperature_c", VALID, TEMPS))
     first = j.loc["2017-11-06"]
     assert math.isnan(first["jump_abs_change"])

@@ -82,7 +82,7 @@ def _cells() -> tuple:
 
     These are the weight table's own cells - 4,902 of them - not the 666 district
     centroids. A centroid is a point sample, and pairing a point observation against an
-    area-mean forecast is the mismatch CLAUDE.md's single-weight-table rule exists to
+    area-mean forecast is the mismatch the single-weight-table rule (docs/engineering-reference.md) exists to
     prevent: "both sides of the bust label are area means over the same polygon".
 
     The order is fixed because `_prepared_index` maps these positions into the aggregator

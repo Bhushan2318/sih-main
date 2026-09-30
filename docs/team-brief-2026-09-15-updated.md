@@ -1,5 +1,5 @@
 ================================================================
-SANKET — PROJECT BRIEF FOR CLAUDE CODE (UPDATED 2026-09-15)
+SANKET — PROJECT BRIEF (UPDATED 2026-09-15)
 ================================================================
 
 This replaces the version circulated earlier. Same structure, same section
@@ -243,7 +243,7 @@ for the PPT, not touching the model.
 WORKSTREAM F — FRONTEND, DEMO, BOUNDARY
 --------------------------------------------------------------
 F1. **STATUS UNCLEAR — re-verify, do not assume done or not-done.**
-    CLAUDE.md notes "the boundary depiction used for display is under review
+    The project notes said "the boundary depiction used for display is under review
     separately from the geometry used for aggregation" — meaning the concern
     is already recognized and the two geometries are already separated in
     principle. Whether the actual legal/sourcing research (SoI requirement,

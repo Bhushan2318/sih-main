@@ -8,6 +8,7 @@ Start with the [project README](../README.md). This folder holds everything behi
 |---|---|
 | [one-pager.md](one-pager.md) | Sanket on one page, for reviewers: the question, the evidence and the limits |
 | [known-issues.md](known-issues.md) | Every known caveat, with what was measured and what is being done about it |
+| [engineering-reference.md](engineering-reference.md) | The facts and constraints the code is built on: architecture, data, geography, models, measured facts and limitations |
 | [project-history.md](project-history.md) | What was built, in order, and why |
 
 ## Design, evidence and reviews

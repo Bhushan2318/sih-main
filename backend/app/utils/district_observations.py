@@ -1,6 +1,6 @@
 """Turning 0.25 deg cell readings into district values - shared by every observation fetch.
 
-There is exactly one district weight table (CLAUDE.md), and therefore exactly one place
+There is exactly one district weight table (docs/engineering-reference.md), and therefore exactly one place
 that reads it. Both the Open-Meteo fetch and the CDS fetch import from here rather than
 keeping their own copy of the aggregation, because two copies drift and the drift is
 invisible: both would keep producing plausible district numbers.

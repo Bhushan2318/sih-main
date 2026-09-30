@@ -57,9 +57,6 @@ backend/data/summary.json
 # superseded run is worse than no results file.
 docs/results.md
 
-# Local editor/agent tooling config. Machine-specific (it carries absolute paths from
-# whoever generated it) and of no use to anyone cloning this, so it is not published.
-.claude/
 
 # Derived observation and ingest artefacts. All are rebuildable from the fetch scripts
 # and none belong in git: the CDS checkpoints are ~1.7 MB per month, the year file is

@@ -5,7 +5,7 @@
  * 13 Aug 2018 cycle that forecast them. Left at Day 1, a judge sees the day *before* the
  * story and near-nationwide risk that has not sharpened into the event's district yet.
  *
- * `valid_date = init + (lead - 1)` (CLAUDE.md rule 4, already enforced server-side in
+ * `valid_date = init + (lead - 1)` (CONTRIBUTING.md rule 4, already enforced server-side in
  * app/services/replay_cases.py and scripts/build_replay_cases.py) - so lead is derived,
  * never a second hand-written number to drift out of step with the catalogue.
  */

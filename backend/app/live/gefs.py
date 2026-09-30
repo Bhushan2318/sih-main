@@ -259,7 +259,7 @@ def _extract_districts(blob: bytes, scratch: Path) -> dict:
     The field itself has not changed: the fetch already asks NOMADS for `subregion` over
     BBOX at 0.25 degrees and always carried every cell of India. The point sampling threw
     them away, which is why the live store held 71 regions resolved by point-in-polygon
-    while CLAUDE.md described an area-weighted mean over each district's polygon.
+    while docs/engineering-reference.md described an area-weighted mean over each district's polygon.
 
     The weight table is the one in `app.utils.india_districts` - the same table the
     reforecast path and the observations use. There is exactly one, deliberately.

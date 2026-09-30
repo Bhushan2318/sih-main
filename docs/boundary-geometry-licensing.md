@@ -24,7 +24,7 @@ Checked directly, not assumed:
   build. Grepped the frontend source: it is **no longer imported anywhere**. Dead weight,
   not the current display path.
 
-**This means CLAUDE.md's note that "the boundary depiction used for display is under
+**This means the project notes' claim that "the boundary depiction used for display is under
 review separately from the geometry used for aggregation" is now stale.** That was true
 when the map was state-level (Datameet for display, GADM for aggregation, per
 `docs/plan.md` line 45). Since the districts migration (`82af129`/`a24a663`), both layers

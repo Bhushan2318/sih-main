@@ -43,7 +43,7 @@
 /backend/app/ml/verification.py   @Aryakuna14
 /backend/scripts/run_baselines.py @Aryakuna14
 
-# ---- E: CNN (closed per CLAUDE.md / docs/team-brief - not accepting new model changes,
+# ---- E: CNN (closed per docs/team-brief - not accepting new model changes,
 # owner working through Bhushan2318 in practice) -----------------------------------------
 /backend/app/ml/cnn.py            @Bhushan2318
 /backend/app/ml/train_cnn.py      @Bhushan2318

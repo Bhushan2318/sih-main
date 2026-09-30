@@ -65,7 +65,7 @@ def test_paired_row_columns_are_frozen():
 
 def test_the_label_is_not_a_paired_row_column():
     """y_bust is applied after the split, because the bust threshold is computed on
-    training data only (CLAUDE.md). A label inside the paired frame would mean the
+    training data only (docs/engineering-reference.md). A label inside the paired frame would mean the
     threshold had already seen the held-out rows."""
     assert "y_bust" not in contracts.PAIRED_ROW_COLUMNS
 
@@ -145,7 +145,7 @@ def test_region_panel_required_fields_are_frozen():
 
 
 def test_shap_factor_shape_is_frozen():
-    """The 'what drove this prediction' panel is a shipped feature (CLAUDE.md rule 9).
+    """The 'what drove this prediction' panel is a shipped feature (CONTRIBUTING.md rule 8).
     Anything that changes this shape breaks it."""
     f = schemas.TopFactor(feature="ensemble_spread", importance=0.31, method="shap")
     assert set(schemas.TopFactor.model_fields) == {"feature", "importance", "method"}

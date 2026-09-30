@@ -315,7 +315,7 @@ here rather than discovered live.
   Plausible cause: ~2,550 training samples against
   43,969 parameters is little sample efficiency margin for a CNN relative to a tree
   ensemble on effectively tabular-shaped inputs. The CNN remains a challenger per
-  CLAUDE.md, not a regression to fix - but two years now agree it is not currently
+  docs/engineering-reference.md, not a regression to fix - but two years now agree it is not currently
   winning the ladder. Measured 2026-09-13.
 - **Pooling three years beats the best two-year pool, not just single years.**
   `scripts/train_pooled.py` (app.ml.pooled_training) trains any number of years through
@@ -392,7 +392,7 @@ here rather than discovered live.
   cross-platform RSS readings, not evidence of a leak). Timing is not close: 65 ms is
   roughly 7.5x faster than 490 ms, not slower, so this is not a regression - but it is a
   different number on different hardware, and per the brief this gets reported rather
-  than quietly adopting the original. Neither `app/ml/cnn.py`'s docstring nor CLAUDE.md's
+  than quietly adopting the original. Neither `app/ml/cnn.py`'s docstring nor docs/engineering-reference.md
   measured facts have been edited to match; both are one specific run's number, on
   whatever machine and onnxruntime build actually produced it, and this repo's own rule
   is not to overwrite a measured fact with a different machine's reading without saying
@@ -484,7 +484,7 @@ here rather than discovered live.
   simplification still keeps only 3 of the 24 islands at 860 KB.
 
 - **Display and aggregation boundary geometry are the same GADM 4.1 file now**, not two
-  separate ones — CLAUDE.md's note about them being reviewed separately predates the
+  separate ones — the project notes' remark about them being reviewed separately predates the
   districts migration. India's 2021 Geospatial Data Guidelines (DST, 15 Feb 2021, clause
   xiii) name Survey of India boundary data as the standard for any political map of
   India; this project's district inclusion already matches India's official territorial
@@ -510,16 +510,16 @@ here rather than discovered live.
   area mean over the polygon in one case, value of the single nearest grid centre in the
   other.
 
-  This is the method CLAUDE.md's Geography section specifically rejects, and Kolkata is
+  This is the method the engineering reference's Geography section specifically rejects, and Kolkata is
   one of the ten districts it names as containing *no grid centre at all* - so for that
   district the live value comes from a cell whose centre lies outside it. Kolkata and
   Hyderabad are both in `india_cities.json`.
 
-  Scale of the disagreement is already measured, in CLAUDE.md's own validation of the
+  Scale of the disagreement is already measured, in the engineering reference's validation of the
   district method against the 35 city points it replaced: correlation 0.9896, median
   absolute difference 0.31 °C. Small next to the temperature bust threshold of 4.45 °C,
   so this is a consistency problem rather than a visibly wrong number - but it is a
-  train/serve geography mismatch, and CLAUDE.md's "there is exactly one weight table"
+  train/serve geography mismatch, and the engineering reference's "there is exactly one weight table"
   and "both sides of the bust label are area means over the same polygon" describe the
   archive path only, not what the deployed site ingests each cycle.
 
@@ -734,7 +734,7 @@ here rather than discovered live.
   an 87.5% soil-moisture bust rate over 3,366 paired rows on the same mechanism.
 
   That reframes the fix: not a per-district exclusion list, but a land mask applied to
-  the weight table for land-only variables, decided once. CLAUDE.md's "exactly one weight
+  the weight table for land-only variables, decided once. the engineering reference's "exactly one weight
   table" still holds - the table needs a per-variable mask, not a second table.
 
   **Measured 2026-09-20: this does not inflate the headline skill - it depresses it.**
@@ -1080,7 +1080,7 @@ here rather than discovered live.
   40 high - the saturated all-red map that prompted this is gone. The memory question
   below turned out to be the binding one, not the row count.
   The original entry follows.
-  CLAUDE.md describes each district's value as the area-weighted mean of every 0.25 degree
+  docs/engineering-reference.md describes each district's value as the area-weighted mean of every 0.25 degree
   cell its polygon overlaps. That is true of the archive/reforecast path. It is not true of
   the live NOMADS path: `app/live/gefs.py` reads `scripts/india_cities.json`, which holds
   **36 points**, samples the grid at each one, and resolves the point to whatever district
@@ -1323,7 +1323,7 @@ here rather than discovered live.
   - Patna, September 2019: 79 mm in ERA5, only the 37th wettest district that day.
 
   Against that truth these would read as good forecasts. They can be added once IMD gauge
-  rainfall is the truth (CLAUDE.md, Known limitations: "ERA5 precipitation is weak over
+  rainfall is the truth (docs/engineering-reference.md, Known limitations: "ERA5 precipitation is weak over
   India").
 - **Scored as of 00 UTC on the init date.** `score_cycle(..., as_of_init=True)` blanks
   `forecast_error_lag`, the one input built from observations after the forecast was

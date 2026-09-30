@@ -1,11 +1,11 @@
 # Sanket — project brief
 
-**Snapshot: 2026-09-09.** Written to be pasted into a fresh Claude conversation that has
+**Snapshot: 2026-09-09.** Written to be pasted into a fresh AI-assistant conversation that has
 no other context. It is a point-in-time document: figures marked *live* are served by the
 running system and may already have changed; figures marked *measured* were measured once
 and are stable facts about cost, not about model quality.
 
-If you are the Claude reading this: the person asking has already built what is described
+If you are the assistant reading this: the person asking has already built what is described
 below. They want strategic and technical advice, not a rebuild. Constraints in section 8
 are real and should bound any recommendation. Where you disagree with a decision already
 made, say so plainly and say why.

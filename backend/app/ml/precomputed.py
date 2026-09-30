@@ -1,6 +1,6 @@
 """A cycle scored in CI, read back on the serving box.
 
-CLAUDE.md's first diagram splits this system because "the serving box is killed, not
+The architecture diagram in docs/engineering-reference.md splits this system because "the serving box is killed, not
 throttled" at 512 MB: CI trains, Render serves. Scoring every district of a cycle is
 training-shaped work that had quietly crept onto the serving side. It cost little while
 the live feed sampled 36 city points; at all 666 districts it does not fit.
@@ -68,7 +68,7 @@ def write_scored_cycle(scored, base: Path | None = None) -> Path:
 
     A run killed part-way through then leaves a directory the reader rejects, rather than
     one that reads as a whole cycle with some districts missing. Missing never becomes
-    partial (CLAUDE.md rule 3) - a map quietly short of districts says nothing about
+    partial (CONTRIBUTING.md rule 3) - a map quietly short of districts says nothing about
     itself, which is worse than no map.
     """
     d = cycle_dir(base or default_dir(), scored.run_id, scored.init_date)

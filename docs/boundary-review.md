@@ -1,6 +1,6 @@
 # Boundary depiction and licensing review
 
-Research only, 2026-09-12. No geometry, code or asset was changed. `CLAUDE.md` says the
+Research only, 2026-09-12. No geometry, code or asset was changed. The project's working notes said the
 display depiction is under review separately from the geometry used for aggregation and
 must not be changed without checking that review; this **is** that review's first pass.
 

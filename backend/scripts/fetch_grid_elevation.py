@@ -18,7 +18,7 @@ before trusting it for 4,902: Everest 27.9881N 86.9250E -> 8771 m (real ~8849 m,
 
 Reuses the one weight table
 ----------------------------
-CLAUDE.md: there is exactly one district weight table, and this does not write a second
+docs/engineering-reference.md: there is exactly one district weight table, and this does not write a second
 one. It queries elevation for the same (lat, lon) cells `district_grid_weights.parquet`
 already carries - the grid GEFS/ERA5 aggregation already uses - and
 `build_district_descriptors.py` aggregates it through the existing
@@ -28,7 +28,7 @@ Fetch once
 ----------
 4,902 unique cells, batched 500 at a time (~10 requests, ~25 s measured against the real
 API on 2026-09-18). Idempotent: refuses to re-fetch over an existing output file, out of
-courtesy to a shared free public service and per CLAUDE.md's fetch discipline.
+courtesy to a shared free public service and per CONTRIBUTING.md rule 7, fetch once.
 
     python -m scripts.fetch_grid_elevation
 """
@@ -95,7 +95,7 @@ def main() -> None:
     path = idist.geo_dir() / OUT_FILENAME
     if path.exists():
         print(f"{path} already exists - not re-fetching (delete it to refresh). "
-              "CLAUDE.md: fetch once, do not casually re-run.")
+              "CONTRIBUTING.md rule 7: fetch once, do not casually re-run.")
         return
     out = fetch()
     out.to_parquet(path, index=False)
