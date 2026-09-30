@@ -2,7 +2,7 @@
 members with earlier cycles' ensemble means, for the same (region, variable, valid_date).
 
 Every GEFS reforecast cycle carries only 5 of the operational feed's 31 members
-(CLAUDE.md known limitations). A time-lagged ensemble (lagged-average forecasting) is the
+(docs/engineering-reference.md, Known limitations). A time-lagged ensemble (lagged-average forecasting) is the
 standard, published way to cheaply widen that: earlier cycles that are still valid for the
 same target date add information the 5-member cycle alone does not have. This pools each
 earlier cycle's ensemble MEAN as one extra pseudo-member, not its individual members -

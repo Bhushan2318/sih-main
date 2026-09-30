@@ -1,4 +1,12 @@
-# Sanket — working agreement for Claude Code
+# Sanket — engineering reference
+
+The facts and constraints the code is built on: what the system is, how its two halves are
+split, where its data and geography come from, what has been measured, and what is known to
+be limited. Code comments and documents cite it by section.
+
+The rules every change follows are in [CONTRIBUTING.md](../CONTRIBUTING.md), numbered, and
+comments cite them as "CONTRIBUTING.md rule N". Open caveats, with what was measured, are in
+[known-issues.md](known-issues.md).
 
 ## What this project is
 
@@ -12,8 +20,8 @@ A **bust** is a forecast whose absolute error lands in the tail of that
 variable's own historical error distribution — the 90th percentile, computed on
 **training data only**.
 
-Problem statement 26079, Smart India Hackathon 2026, set by NCMRWF (National
-Centre for Medium Range Weather Forecasting, Ministry of Earth Sciences).
+Problem statement 26079, Smart India Hackathon 2026, set by the Ministry of Earth
+Sciences.
 
 Live site: https://sanket-a0dd.onrender.com
 
@@ -39,53 +47,6 @@ Query, Zustand, Recharts, hand-written CSS. Hosting cost: $0.
 
 ---
 
-## Non-negotiable rules
-
-1. **Nothing is synthetic.** Every value must trace to a real GRIB2 message or a
-   real observation file. Columns `source_grib` / `source_msgs` record which one.
-   If a fetch fails, STOP and report. Never generate placeholder, mock, or
-   example data in a production path. Test fixtures must be derived from real
-   files and labelled as such. Random tensors are permitted only for shape and
-   plumbing tests, clearly labelled, and must never reach anything that produces
-   a metric.
-
-2. **Metrics are served, never written down.** A number in a file is right until
-   the next retrain and quietly wrong afterwards. Never hardcode a score in
-   source, a README, a docstring, a comment, or the frontend. Read them from
-   `/api/model/status`.
-
-3. **Refuse rather than patch.** An incomplete cycle is rejected, not partially
-   ingested. Missing never becomes zero — use an explicit mask channel. A model
-   that got worse does not ship.
-
-4. **`valid_date = init + (lead − 1)`.** Day *k* is built from forecast hours
-   ((k−1)·24, k·24]. Labelling it `init + k` verified every forecast against the
-   following day's observation; fixing it cut regressor error ~17%. This
-   convention has already caused one bug. Do not change it.
-
-5. **Measure, do not estimate.** Anything added at serve time must be measured
-   with a real RSS measurement. The box is killed at 512 MB, and `/api/health`
-   read **509 MB** in use on 2026-09-24 - there is effectively no headroom.
-
-6. **Free tier only.** Render free, GitHub Actions, GitHub Releases (2 GB per
-   asset). $0 hosting is part of the story. No paid infrastructure, ever.
-
-7. **The archive is a public good.** 4.2 TB is pulled from a public NOAA bucket.
-   Fetch once. Never casually re-run a fetch. Any fetch path must be idempotent,
-   resumable, and write to the canonical layout.
-
-8. **Never push to `main`.** Branch from `develop`. Open a PR. Do not modify
-   anything in `.github/workflows/` without saying so explicitly.
-
-9. **Explainability is a shipped feature.** The region panel's "what drove this
-   prediction" is SHAP over XGBoost. Anything that breaks SHAP breaks the
-   product.
-
-10. **Limitations are written down.** If you discover a caveat, add it to the
-    limitations doc. Do not quietly work around it.
-
----
-
 ## What keeps going wrong here, and why
 
 **Four separate things in one night were written, unit-tested, committed with a
@@ -101,29 +62,6 @@ samples where the bug cannot appear. This is a data pipeline: it fails on
 So in this repo, "it has tests" is **weak evidence**. Before believing anything
 works, run it at real scale, and treat a green suite as a statement about
 plumbing rather than about correctness.
-
-## Before you write code
-
-- **Read the module you are about to change.** Do not infer its API.
-- **Grep for names.** If you need a module, function, class, or column name,
-  search for it. Do not guess.
-- **If a name you expect does not exist, say so and stop.** Do not create a
-  parallel implementation to route around it.
-- **Never invent a URL, S3 key, bucket path, or dataset name.** Fetch it, print
-  what came back. If you cannot verify it, say so and stop.
-- **Write the test first**, watch it fail, then implement.
-- **If you are more than 30% unsure about an approach, ask** before writing 200
-  lines of it.
-- **If you disagree with the brief, say so before implementing it.**
-
-## Before you claim you are done
-
-- Run the full test suite. Paste the output.
-- For any numeric claim, run the code and paste the printed number. Never state
-  a figure you did not just produce.
-- For any external path or dataset, print the object listing or first bytes.
-- Confirm you did not touch `main`, the promotion gate, or the workflows unless
-  the task said to.
 
 ---
 

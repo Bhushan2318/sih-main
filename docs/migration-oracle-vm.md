@@ -72,7 +72,7 @@ Two better options:
 - **Build on the VM.** Native arm64, 2 OCPU. Slow for `npm ci` but correct, and needs no
   new infrastructure.
 - **Build in GitHub Actions on an arm64 runner** and push to a registry. Native speed, and
-  free for public repos. This means a workflow change, which CLAUDE.md rule 8 says must be
+  free for public repos. This means a workflow change, which CONTRIBUTING.md says must be
   called out explicitly — so raise it before doing it.
 
 ### 4. Put the data on the VM, not in a Release asset
@@ -106,7 +106,7 @@ push — `autoDeploy: false` was set on Render on purpose, and that reasoning ca
 
 ## What this invalidates in the docs
 
-`CLAUDE.md`'s architecture section is load-bearing on the 512 MB ceiling — "the serving
+The architecture section of `docs/engineering-reference.md` is load-bearing on the 512 MB ceiling — "the serving
 box is **killed**, not throttled, at 512 MB. That is why the split exists." Several
 measured facts hang off it: the +253 MB cycle-listing fix, the CNN's +51 MB onnxruntime
 budget, "serving currently uses 388 MB of 512".

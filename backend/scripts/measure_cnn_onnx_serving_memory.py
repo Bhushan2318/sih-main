@@ -1,7 +1,7 @@
 """Reproduce the CNN's ONNX-serving memory/timing claim (E4, docs/team-brief-2026-09-15-
 updated.md Section 6, PHASE 1).
 
-`app/ml/cnn.py`'s `export_encoder` docstring and CLAUDE.md's measured facts both state:
+`app/ml/cnn.py`'s `export_encoder` docstring and the measured facts in docs/engineering-reference.md both state:
 "+51 MB, 490 ms for all 10 lead days via onnxruntime, scoring one lead at a time". Per the
 brief: "Reproduce it. If you get a different number, report the difference - do not
 quietly adopt ours." This script does that, on whatever machine runs it, and prints the
@@ -194,7 +194,7 @@ def main() -> int:
           f"{result['elapsed_ms_for_all_leads']:.0f} ms for {result['leads_scored']} "
           f"lead days.**")
     print(f"\nDocumented claim (app/ml/cnn.py export_encoder docstring, "
-          f"CLAUDE.md measured facts): +51 MB, 490 ms.")
+          f"the engineering reference's measured facts): +51 MB, 490 ms.")
     return 0
 
 

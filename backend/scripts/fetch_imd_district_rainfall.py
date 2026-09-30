@@ -3,7 +3,7 @@ ERA5/CDS district observation file.
 
 Why this exists
 ----------------
-CLAUDE.md's own stated plan: "IMD gauge-based gridded rainfall at native 0.25 deg for
+The engineering reference's stated plan: "IMD gauge-based gridded rainfall at native 0.25 deg for
 precipitation, ERA5 ... for everything else." ERA5 precipitation is a reanalysis product
 and is measurably weak over India - it is the hardest variable and the driver of most
 busts. IMD's product is built from a dense in-situ rain-gauge network, interpolated onto
@@ -22,7 +22,7 @@ it is always traceable which product produced a row's rainfall.
 Which day IMD's rain belongs to - measured, not assumed
 --------------------------------------------------------
 IMD's gauge day accumulates 0830 IST to 0830 IST (0300 UTC to 0300 UTC). Sanket's day is
-midnight to midnight UTC on both sides of a bust label - CLAUDE.md rule 4's
+midnight to midnight UTC on both sides of a bust label - CONTRIBUTING.md rule 4's
 ((k-1)*24, k*24] on the forecast side, `to_daily`'s (t-24h, t] on the ERA5 side.
 
 IMD labels each day by the END of its window. The value IMD dates D is rain for 0830 IST
@@ -96,7 +96,7 @@ MISSING = -999.0
 # --- Accumulation windows. See "the 0830 IST rain day" in the module docstring. ---
 DAY = pd.Timedelta(hours=24)
 IST_OFFSET = pd.Timedelta(hours=5, minutes=30)   # India has no daylight saving
-MODEL_DAY_START_UTC = pd.Timedelta(hours=0)      # 00:00 UTC, CLAUDE.md rule 4
+MODEL_DAY_START_UTC = pd.Timedelta(hours=0)      # 00:00 UTC, CONTRIBUTING.md rule 4
 IMD_DAY_START_IST = pd.Timedelta(hours=8, minutes=30)
 IMD_DAY_START_UTC = IMD_DAY_START_IST - IST_OFFSET  # = 03:00 UTC
 # IMD dates a day by the END of its 0830 IST window, so its date D is model date D-1.
@@ -245,7 +245,7 @@ def merge_precip(base: pd.DataFrame, imd_districts: pd.DataFrame) -> pd.DataFram
     following year.
 
     Refuses if IMD covers fewer (region_id, date) pairs than `base` - a real coverage gap,
-    not a row to drop silently (CLAUDE.md rule 3: refuse rather than patch). A district-date
+    not a row to drop silently (CONTRIBUTING.md rule 3: refuse rather than patch). A district-date
     IMD covers but has no valid gauge cell for stays NaN, which is different from IMD never
     having been asked about it at all.
     """

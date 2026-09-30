@@ -2,7 +2,7 @@
 observation file.
 
 Why merge rather than write a standalone file: IMD only publishes rain (and tmin/tmax,
-which this project does not use it for - CLAUDE.md's own plan is "IMD ... for
+which this project does not use it for - the engineering reference's plan is "IMD ... for
 precipitation, ERA5 ... for everything else"). A precip_mm-only file would either fail
 `ingest_upload`'s completeness expectations or silently drop the other eight canonical
 variables. Replacing just the precip_mm column of an already-fetched CDS/ERA5 file keeps
@@ -75,7 +75,7 @@ def test_imd_grid_to_long_dates_advance_from_start_day():
 # measured against two independent hourly reanalyses (docs/known-issues.md), and it
 # contradicts the start-day convention the project brief stated. Joining IMD's D to
 # model day D - which this script did - verified every rainfall forecast against
-# mostly the previous day's rain: the same class of bug CLAUDE.md rule 4 records.
+# mostly the previous day's rain: the same class of bug CONTRIBUTING.md rule 4 records.
 #
 # merge_precip therefore files IMD's date D under model date D-1. The dates below are
 # position markers, not rainfall: distinct values per day, so an off-by-one shows up
@@ -182,7 +182,7 @@ def test_imd_value_dated_d_ends_at_0830_ist_on_d():
 
 
 def test_model_day_is_midnight_to_midnight_utc():
-    """CLAUDE.md rule 4: day k is forecast hours ((k-1)*24, k*24], so the model day is
+    """CONTRIBUTING.md rule 4: day k is forecast hours ((k-1)*24, k*24], so the model day is
     midnight-to-midnight UTC. The ERA5 fetch matches it - see to_daily()."""
     start, end = fir.model_day_window_utc("2018-08-15")
     assert start == pd.Timestamp("2018-08-15 00:00", tz="UTC")

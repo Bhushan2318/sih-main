@@ -2,7 +2,7 @@
 replace region_id as a raw 666-level categorical model input.
 
 Why replace region_id: it is a categorical the model can only ever see ~34 of 666 levels
-of during training (label coverage, CLAUDE.md known limitations), so it cannot generalise
+of during training (label coverage, docs/engineering-reference.md, Known limitations), so it cannot generalise
 to a district that never appears in the training labels. Continuous descriptors - where a
 district sits, how big it is, how far from the modelled region's edge - let a district the
 model never saw in training borrow strength from ones that look like it.
@@ -61,7 +61,7 @@ def test_the_middle_of_a_square_is_exactly_half_its_side_from_the_edge():
 
 def test_elevation_is_the_existing_aggregators_area_weighted_mean(tmp_path):
     """elevation_mean must go through the SAME DistrictGridAggregator GEFS/ERA5 already
-    use (CLAUDE.md: one weight table), not a second spatial join. A tiny, hand-crafted
+    use (docs/engineering-reference.md: one weight table), not a second spatial join. A tiny, hand-crafted
     weight table proves the wiring: region X is 75% cell A (elevation 100 m) and 25% cell
     B (elevation 300 m) by weight, so the area-weighted mean is (3*100 + 1*300) / 4 = 150,
     not the plain average (200)."""

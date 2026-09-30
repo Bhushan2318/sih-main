@@ -4,7 +4,7 @@ already has on disk. No new fetch, no rebuild of the 666 districts themselves.
 Why this exists
 ----------------
 region_id is a 666-level categorical, but 2017's bust labels cover only 34 of those
-districts (CLAUDE.md known limitations). A categorical can only split on a level it saw
+districts (docs/engineering-reference.md, Known limitations). A categorical can only split on a level it saw
 in training, so the other 632 districts get nothing useful from region_id at inference.
 Continuous, geometry-based descriptors let an unlabelled district borrow strength from
 labelled ones that sit nearby, are a similar size, or are a similar distance from the
@@ -105,7 +105,7 @@ def _boundary_distance_km(point_lon: float, point_lat: float, boundary_geom,
 
 def _elevation_by_district(elevation: pd.DataFrame, aggregator=None) -> pd.Series:
     """Area-weighted mean elevation per district, via the SAME DistrictGridAggregator
-    GEFS/ERA5 aggregation already uses (CLAUDE.md: one weight table) - not a second
+    GEFS/ERA5 aggregation already uses (docs/engineering-reference.md: one weight table) - not a second
     spatial join. `elevation` is scripts/fetch_grid_elevation.py's output: one row per
     weight-table cell, real values fetched from a real elevation source."""
     agg = aggregator or idist.get_aggregator()
@@ -142,7 +142,7 @@ def build() -> pd.DataFrame:
     if not elevation_path.exists():
         raise RuntimeError(
             f"{elevation_path} does not exist - run "
-            "`python -m scripts.fetch_grid_elevation` first (CLAUDE.md: refuse rather "
+            "`python -m scripts.fetch_grid_elevation` first (CONTRIBUTING.md rule 3: refuse rather "
             "than fabricate a missing value).")
     elevation_by_district = _elevation_by_district(pd.read_parquet(elevation_path))
 

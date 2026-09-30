@@ -1,6 +1,6 @@
 """The live feed reads districts, not 36 city points.
 
-CLAUDE.md says each district's value is "the area-weighted mean of every 0.25 degree cell
+docs/engineering-reference.md says each district's value is "the area-weighted mean of every 0.25 degree cell
 its polygon overlaps - not a nearest-point sample". That was true of the reforecast path
 and never true of the live one: `app/live/gefs.py` read `scripts/india_cities.json`, 36
 points, and resolved each point to whatever district contained it. The published bundle
@@ -11,7 +11,7 @@ The fetch already downloads the whole grid. It asks NOMADS for `subregion` over
 BBOX 6-38N, 68-98E at 0.25 degrees, roughly 15,600 cells, and then discarded all but 36
 of them. So this is not a bandwidth change; it is reading what was already arriving.
 
-There is exactly one weight table and CLAUDE.md forbids a second, so these tests assert
+There is exactly one weight table and the engineering reference forbids a second, so these tests assert
 the live path goes through `app.utils.india_districts`, not that it computes its own
 geography.
 
@@ -94,7 +94,7 @@ def test_sea_cells_do_not_turn_a_coastal_district_into_nan(grid):
 
 
 def test_a_district_with_no_valid_cell_is_nan_not_a_number(grid):
-    """Refuse rather than patch: missing never becomes zero (CLAUDE.md rule 3)."""
+    """Refuse rather than patch: missing never becomes zero (CONTRIBUTING.md rule 3)."""
     lats, lons = grid
     out = get_aggregator().aggregate(lats, lons, np.full(lats.shape, np.nan))
     assert out.isna().all(), "an all-missing field must not fabricate district values"

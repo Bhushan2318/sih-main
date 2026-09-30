@@ -350,7 +350,7 @@ def compute_time_lagged_ensemble(fc: pd.DataFrame, trajectories: pd.DataFrame,
     (C2, time-lagged ensemble / lagged-average forecasting).
 
     A GEFS reforecast cycle carries only 5 of the operational feed's 31 members
-    (CLAUDE.md known limitations). This widens it cheaply: this cycle's own real members
+    (docs/engineering-reference.md, Known limitations). This widens it cheaply: this cycle's own real members
     are pooled with up to `window - 1` EARLIER cycles that are also valid for the same
     date, each contributing its ensemble MEAN as one extra pooled value - not its
     individual members, which forecast_trajectories/forecast_history already discard for
@@ -392,7 +392,7 @@ def compute_time_lagged_ensemble(fc: pd.DataFrame, trajectories: pd.DataFrame,
     g = own.groupby(_TRAJECTORY_KEYS, sort=False, observed=True)["value"]
     # "var" (pandas' built-in, ddof=1 by default - identical to var(ddof=1)) uses the
     # cythonised groupby path; a Python lambda here does not; measured real difference at
-    # full-year training volume, not visible in any small test. See CLAUDE.md: this repo
+    # full-year training volume, not visible in any small test. See docs/engineering-reference.md: this repo
     # fails on volume, not on a green suite.
     own_stats = g.agg(mean0="mean", var0="var", n0="count").reset_index()
     del own

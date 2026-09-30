@@ -1,6 +1,6 @@
 """Every headline figure for the deck, regenerated from the served model.
 
-CLAUDE.md rule 2 says metrics are served, never written down, because a number in a file
+CONTRIBUTING.md rule 2 says metrics are served, never written down, because a number in a file
 is right until the next retrain and quietly wrong afterwards. A slide deck breaks that
 rule by its nature - it is a file full of numbers. This script is the compromise: it
 prints the figures on demand from the current run's own artifacts, stamped with the run
@@ -409,7 +409,7 @@ def to_markdown(d: dict) -> str:
         a("")
         spread = cs.get("ensemble_spread", float("nan"))
         if np.isfinite(spread) and spread == 0:
-            # Both scores are read from this run, never typed in (CLAUDE.md rule 2): the
+            # Both scores are read from this run, never typed in (CONTRIBUTING.md rule 2): the
             # sentence used to carry one old run's two scores, typed in, into every deck.
             spread_auc = next((b.get("roc_auc") for b in d["baselines"]
                                if str(b.get("name", "")).lower() == "spread"), None)

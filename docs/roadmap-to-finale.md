@@ -1,7 +1,7 @@
 # Roadmap to the grand finale — 6 December 2026
 
 Written 2026-09-10. Nothing in the brief is being cut; this is the order that makes
-"everything" reachable with one operator and one Claude account.
+"everything" reachable with one operator and one AI-assistant account.
 
 ## The ordering rule
 

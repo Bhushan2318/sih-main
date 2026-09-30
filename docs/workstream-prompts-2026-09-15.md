@@ -1,9 +1,9 @@
-# Ready-to-paste Claude Code prompts, one per workstream (2026-09-15)
+# Ready-to-paste assistant prompts, one per workstream (2026-09-15)
 
 Each block below is self-contained — paste the whole block as the first message in a
-fresh Claude Code session for that person. Each one already states current repo state
+fresh coding-assistant session for that person. Each one already states current repo state
 (checked tonight) so nobody re-discovers what's already done. Full detail lives in
-`docs/team-brief-2026-09-15-updated.md` and `CLAUDE.md` — these prompts point there
+`docs/team-brief-2026-09-15-updated.md` and `docs/engineering-reference.md` — these prompts point there
 rather than repeating everything.
 
 ---
@@ -11,7 +11,7 @@ rather than repeating everything.
 ## WORKSTREAM A — Pipeline, fetch, CI (owner only)
 
 ```
-Read CLAUDE.md, then docs/team-brief-2026-09-15-updated.md sections 0 and 6
+Read docs/engineering-reference.md and CONTRIBUTING.md, then docs/team-brief-2026-09-15-updated.md sections 0 and 6
 ("WORKSTREAM A"). I am doing Workstream A: pipeline, fetch, CI, contracts.
 
 Current state, already verified — do not re-check or redo:
@@ -44,7 +44,7 @@ Read the actual module(s) before writing anything. Report what you find - file
 names, function signatures, current workflow trigger conditions - before
 proposing a plan. Then wait for my go-ahead before implementing.
 
-Constraints from CLAUDE.md: never push to main, never modify
+Constraints from CONTRIBUTING.md: never push to main, never modify
 .github/workflows/ without saying so explicitly first, don't touch the
 promotion gate.
 ```
@@ -54,7 +54,7 @@ promotion gate.
 ## WORKSTREAM B — Observations and truth
 
 ```
-Read CLAUDE.md, then docs/team-brief-2026-09-15-updated.md sections 0, 2, and 6
+Read docs/engineering-reference.md and CONTRIBUTING.md, then docs/team-brief-2026-09-15-updated.md sections 0, 2, and 6
 ("WORKSTREAM B"). I am doing Workstream B: observations and truth.
 
 Current state, already verified — do not re-fetch anything:
@@ -68,13 +68,13 @@ Current state, already verified — do not re-fetch anything:
   finer grid" limitation WITHOUT needing the Zarr path - do not re-fetch via
   Zarr for the variables already covered this way.
 - Do not re-run any fetch for years already on disk. The archive is a public
-  good (CLAUDE.md rule 7).
+  good (CONTRIBUTING.md rule 7).
 
 What's actually still open, in priority order:
 1. THE REAL GAP: IMD daily rainfall accumulates 0830 IST to 0830 IST,
    attributed to the starting day. Nothing in the fetch/merge script or the
    docs currently states how this aligns with the 00 UTC-initialised
-   valid_date convention (valid_date = init + (lead-1), CLAUDE.md rule 4, do
+   valid_date convention (valid_date = init + (lead-1), CONTRIBUTING.md rule 4, do
    not change this convention itself). Work out the correct alignment, WRITE
    IT DOWN in a docstring and in the limitations doc, and add a test pinning
    it. Get this wrong and every rainfall bust label is off by a day.
@@ -87,7 +87,7 @@ backend/app/utils/district_observations.py before writing anything. Report
 what you find before proposing a plan for the 0830 IST decision. Wait for
 go-ahead before implementing.
 
-Constraints from CLAUDE.md: no synthetic data ever, missing becomes explicit
+Constraints from CONTRIBUTING.md: no synthetic data ever, missing becomes explicit
 NaN never zero, don't write a second weight table, don't rebuild the 666
 districts.
 ```
@@ -97,7 +97,7 @@ districts.
 ## WORKSTREAM C — Features and the tabular model
 
 ```
-Read CLAUDE.md, then docs/team-brief-2026-09-15-updated.md sections 0 and 6
+Read docs/engineering-reference.md and CONTRIBUTING.md, then docs/team-brief-2026-09-15-updated.md sections 0 and 6
 ("WORKSTREAM C"). I am doing Workstream C: features and the tabular model.
 
 Current state, already verified: NONE of C1-C4 exist yet - a full-repo grep
@@ -126,7 +126,7 @@ plugs in. Report what you find - column names, how existing features are
 tested with hand-computed values - before proposing a plan for C1. Score the
 ladder before and after adding it. Wait for go-ahead before implementing.
 
-Constraints from CLAUDE.md: write the test first with a hand-computed expected
+Constraints from CONTRIBUTING.md: write the test first with a hand-computed expected
 value, never hardcode a metric, don't rebuild the 666 districts.
 ```
 
@@ -135,7 +135,7 @@ value, never hardcode a metric, don't rebuild the 666 districts.
 ## WORKSTREAM D — Verification and conformal
 
 ```
-Read CLAUDE.md, then docs/team-brief-2026-09-15-updated.md sections 0 and 6
+Read docs/engineering-reference.md and CONTRIBUTING.md, then docs/team-brief-2026-09-15-updated.md sections 0 and 6
 ("WORKSTREAM D"). I am doing Workstream D: verification and conformal.
 
 Current state, already verified: NONE of D1-D6 exist yet - a full-repo grep
@@ -170,7 +170,7 @@ scored (check /api/model/status's "baselines" payload structure) before
 writing anything, so your functions' inputs match what's actually available.
 Report what you find before proposing a plan. Wait for go-ahead.
 
-Constraints from CLAUDE.md: every function tested against a hand-computed or
+Constraints from CONTRIBUTING.md: every function tested against a hand-computed or
 literature value, never hardcode a metric, PR against develop.
 ```
 
@@ -179,7 +179,7 @@ literature value, never hardcode a metric, PR against develop.
 ## WORKSTREAM E — CNN
 
 ```
-Read CLAUDE.md, then docs/team-brief-2026-09-15-updated.md sections 0 and 6
+Read docs/engineering-reference.md and CONTRIBUTING.md, then docs/team-brief-2026-09-15-updated.md sections 0 and 6
 ("WORKSTREAM E") before doing anything else.
 
 STOP - this workstream is CLOSED, do not write CNN code. Verified tonight: the
@@ -207,7 +207,7 @@ claim to test that the existing result doesn't already answer.
 ## WORKSTREAM F — Frontend, demo, boundary
 
 ```
-Read CLAUDE.md, then docs/team-brief-2026-09-15-updated.md sections 0 and 6
+Read docs/engineering-reference.md and CONTRIBUTING.md, then docs/team-brief-2026-09-15-updated.md sections 0 and 6
 ("WORKSTREAM F"). I am doing Workstream F: frontend, demo, boundary.
 
 Current state, already verified — check the actual frontend before assuming
@@ -220,7 +220,7 @@ either "done" or "not done":
   at least partially built. Check the running frontend for whether it covers
   Ockhi/Chennai 2015/Kerala 2018 specifically and whether it shows model
   failures, not just successes, before rebuilding anything.
-- CLAUDE.md already notes the aggregation-geometry vs display-geometry split
+- The engineering reference already notes the aggregation-geometry vs display-geometry split
   is recognized (F1's core concern) - check docs/ for whether the actual
   legal/sourcing research (Survey of India requirement, GADM licence,
   datameet alternative) was written up, or whether that's still open.
@@ -241,7 +241,7 @@ Read frontend/src/components/model/ModelPage.tsx and whatever the dashboard's
 current first-screen component is before writing anything. Report what you
 find before proposing a plan. Wait for go-ahead.
 
-Constraints from CLAUDE.md: never hardcode a metric, read from
+Constraints from CONTRIBUTING.md: never hardcode a metric, read from
 /api/model/status; test against fixtures for missing/null/API-down states;
 watch the bundle size (district TopoJSON is already 374 KB).
 ```

@@ -2,8 +2,8 @@
 
 Replaces the Render free-tier plan (512 MB ceiling) with a paid EC2 box, chosen
 deliberately over the free-tier Oracle path discussed earlier - this trades the "$0
-hosting" framing in CLAUDE.md for headroom and no time-limited free-tier clock. Worth
-updating CLAUDE.md's cost claim to match once this is live, so the docs and the actual
+hosting" framing in docs/engineering-reference.md for headroom and no time-limited free-tier clock. Worth
+updating the engineering reference's cost claim to match once this is live, so the docs and the actual
 deployment do not disagree.
 
 The image is unchanged: the same `Dockerfile` Render builds runs here as-is, because it

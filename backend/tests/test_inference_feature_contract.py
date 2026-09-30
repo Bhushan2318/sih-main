@@ -14,7 +14,7 @@ median bust probability 0.9927 on a cycle the model had *trained on*, against a 
 ROC-AUC of 0.8411 - the two numbers disagreed because they came from different code
 paths.
 
-CLAUDE.md rule 3 is "refuse rather than patch; missing never becomes zero". Silently
+CONTRIBUTING.md rule 3 is "refuse rather than patch; missing never becomes zero". Silently
 coercing a real, present column into all-NaN is that rule's exact failure mode, so these
 tests pin both halves: read the contract from the model, and refuse when a column that
 had data is destroyed on the way in.

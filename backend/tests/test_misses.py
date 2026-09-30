@@ -4,7 +4,7 @@ Every other panel in this project argues that the model works. This one exists t
 where it does not, which is only worth showing if it is picked honestly: the worst cases
 by confidence, not a convenient sample.
 
-Fixtures here are hand-built frames with hand-checked expected answers, per CLAUDE.md -
+Fixtures here are hand-built frames with hand-checked expected answers, per CONTRIBUTING.md -
 a toy frame cannot express the volume bugs this repo keeps finding, but ranking and
 tie-breaking is exactly the kind of logic a toy frame *can* pin.
 """

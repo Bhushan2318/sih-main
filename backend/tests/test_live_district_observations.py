@@ -2,7 +2,7 @@
 
 The forecast side stopped sampling 36 city points (see test_live_district_grid.py). If the
 observation side kept sampling them, the bust label would compare an area mean against a
-nearest-point value, and CLAUDE.md is explicit that it must not: "Observations go through
+nearest-point value, and docs/engineering-reference.md is explicit that it must not: "Observations go through
 the same weight table, so both sides of the bust label are area means over the same
 polygon. There is exactly one weight table. Do not write a second one."
 
@@ -14,7 +14,7 @@ Why this is affordable, measured against the real API on 2026-09-23: Open-Meteo 
 comma-separated coordinates and returns one object per location. 300 real weight-table
 cells, two days, all nine hourly variables including
 total_column_integrated_water_vapour, came back HTTP 200 in 2.0 s and 1,139 KB. 4,902
-cells is 17 such batches, about 33 s plus polite gaps for one day. CLAUDE.md's "80 of
+cells is 17 such batches, about 33 s plus polite gaps for one day. The engineering reference's "80 of
 4,902 cells in 3.5 hours, ~215 hours for one year" is a statement about backfilling
 history one request per cell, not about a daily ingest, and was read as the latter for a
 while - including by me.

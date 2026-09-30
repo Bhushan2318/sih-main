@@ -94,7 +94,7 @@ def _metrics(y, proba, ref, cycles, y_calib, p_calib) -> dict:
     one honest caveat) at alpha=0.1 (target 90% coverage), then applied to this rung's
     own test-split probabilities. Coverage and mean prediction-set size below are
     MEASURED on the real held-out test rows, not the theoretical guarantee alone -
-    CLAUDE.md's own "measure, don't estimate" applies here as much as anywhere."""
+    CONTRIBUTING.md's "measure, don't estimate" (rule 5) applies here as much as anywhere."""
     m = clf_mod._evaluate(y, proba)
     m["bss"] = bl.brier_skill_score(y, proba, ref)
     m["z_auc"] = ver.binormal_auc(y, proba)

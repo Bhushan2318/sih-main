@@ -16,7 +16,7 @@ store has since been replaced with 666-district ERA5-CDS. The model was never wr
 its own test set - it was wrong about the world it was asked to serve.
 
 So the check has to run the real serving path over the real store and look at what comes
-out. Measure, do not estimate (CLAUDE.md rule 5), applied to the gate itself.
+out. Measure, do not estimate (CONTRIBUTING.md rule 5), applied to the gate itself.
 
 WHAT THIS DOES NOT MEASURE, and why
 -----------------------------------

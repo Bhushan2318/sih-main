@@ -272,7 +272,7 @@ def sedi(y_true, y_prob, threshold: float = 0.5) -> float:
     values as the event's base rate shrinks. Each variable's own bust threshold really
     is rare by construction - the 90th percentile of that variable's own error - but
     the label this is actually scored on, ``y_bust`` ("did ANY of ~8 variables bust"),
-    is not: CLAUDE.md's own measured figure is ~43% (1 - 0.9**8 ~= 0.57 before
+    is not: the engineering reference's measured figure is ~43% (1 - 0.9**8 ~= 0.57 before
     dependence pulls it down), not the 10% the per-variable definition might suggest.
     SEDI is included anyway - it costs nothing to report correctly at any base rate -
     but it does not carry the strong rare-event case here that the per-variable

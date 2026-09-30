@@ -1,6 +1,6 @@
 """Score the cycle where memory is free, serve the answer where it is not.
 
-CLAUDE.md's first diagram splits the system because "the serving box is killed, not
+The architecture diagram in docs/engineering-reference.md splits the system because "the serving box is killed, not
 throttled" at 512 MB: CI trains, Render serves. Scoring every district of a cycle is
 training-shaped work that had crept onto the serving side, and it only became load-bearing
 when the live feed went from 36 city points to all 666 districts.

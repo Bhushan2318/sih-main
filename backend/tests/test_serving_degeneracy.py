@@ -12,7 +12,7 @@ had observations when the model was trained, scored against the observation set 
 existed then.
 
 The fixtures below are shaped from real measurements over the 2018-12-31 cycle, all ten
-lead days, 6,660 events - not invented. Per CLAUDE.md, a green suite here is a statement
+lead days, 6,660 events - not invented. Per CONTRIBUTING.md, a green suite here is a statement
 about plumbing; the real evidence is the same check run against the real runs and the
 real store, which is recorded in the module docstring.
 """
