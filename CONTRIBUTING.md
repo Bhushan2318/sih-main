@@ -48,6 +48,20 @@ however good the rest of it is.
     than 0.05 ROC-AUC against the one being served, or scores below 0.55. Changing the
     gate or its thresholds needs a maintainer's explicit agreement.
 
+## Licensing
+
+Everything you contribute is released under the [MIT Licence](LICENSE).
+[`REUSE.toml`](REUSE.toml) covers new files automatically. Third-party material is
+different: data, geometry or code you did not write needs its own annotation in
+`REUSE.toml`, and the full text of its licence in `LICENSES/`. Check with:
+
+```bash
+pip install reuse && reuse lint
+```
+
+If you add or upgrade a dependency, regenerate the notices with
+`python backend/scripts/gen_third_party_notices.py` (its docstring lists what it needs).
+
 ## Why a green test suite is not enough here
 
 This is a data pipeline. It fails on volume, shape and duration, and a handful of test

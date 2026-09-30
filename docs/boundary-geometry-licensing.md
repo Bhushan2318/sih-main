@@ -139,6 +139,8 @@ worth repeating here rather than glossing over:
 4. Delete the now-dead `frontend/src/assets/geo/india_states.topojson` and its `README.md`
    once a display-geometry decision is made, rather than leaving an unused file with its
    own (different) licensing story sitting in the bundle.
+   **Done 2026-09-30:** that file and the equally unused `backend/data/geo/india_states.geojson`
+   were removed, and the remaining geometry's terms are recorded per file in `REUSE.toml`.
 
 Sources fetched directly for this writeup:
 - https://gadm.org/license.html

@@ -15,6 +15,7 @@ Smart India Hackathon 2026 · Problem Statement **SIH26079** · Ministry of Eart
 [![CI](https://github.com/Bhushan2318/sih-main/actions/workflows/setup.yml/badge.svg)](https://github.com/Bhushan2318/sih-main/actions/workflows/setup.yml)
 [![Refresh model and data](https://github.com/Bhushan2318/sih-main/actions/workflows/refresh-data.yml/badge.svg)](https://github.com/Bhushan2318/sih-main/actions/workflows/refresh-data.yml)
 [![Licence: MIT](https://img.shields.io/badge/licence-MIT-2b4eff)](LICENSE)
+[![REUSE 3.3 compliant](https://img.shields.io/badge/REUSE_3.3-compliant-00a882)](REUSE.toml)
 ![Hosting cost: $0](https://img.shields.io/badge/hosting_cost-%240-00a882)
 ![Python 3.11 | 3.12](https://img.shields.io/badge/python-3.11_%7C_3.12-3776ab?logo=python&logoColor=white)
 ![React 18](https://img.shields.io/badge/React_18-20232a?logo=react&logoColor=61dafb)
@@ -498,8 +499,12 @@ Every core dependency installs as a **prebuilt wheel** on Windows, macOS and Lin
 
 ## Data sources and licences
 
-Everything Sanket shows traces back to one of these sources. The MIT licence covers this
-repository's **code** only; each dataset keeps its own terms.
+Everything Sanket shows traces back to one of these sources. The MIT licence covers the
+project's own work only; each dataset keeps its own terms. Every file's copyright and
+licence is recorded in [`REUSE.toml`](REUSE.toml) and checked by `reuse lint`, and the full
+text of each licence is in [`LICENSES/`](LICENSES/).
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) lists every dataset, library, font and
+container image with its licence and the attribution it asks for.
 
 | Source | Used for | Terms |
 |---|---|---|
@@ -585,5 +590,16 @@ Built by **Team Winging It**. How the project was built, phase by phase, is in
 
 ## Licence
 
-The code is released under the [MIT Licence](LICENSE). Data keeps its own terms; see
-[Data sources and licences](#data-sources-and-licences).
+Sanket's own work (code, documentation, images) is released under the
+[MIT Licence](LICENSE). Everything else keeps its own terms, and all of it is written down:
+
+| File | What it holds |
+|---|---|
+| [`LICENSE`](LICENSE) | The MIT Licence for the project's own work |
+| [`REUSE.toml`](REUSE.toml) | The copyright and licence of every file in the repository; `reuse lint` checks it against [REUSE 3.3](https://reuse.software) |
+| [`LICENSES/`](LICENSES/) | The full text of every licence that applies to a file here: MIT, CC-BY-4.0, and the terms of GADM, NOAA, Natural Earth, CIAT (SRTM) and NASA POWER |
+| [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) | Every data source, Python and JavaScript package, font and container image, with its licence and the attribution it asks for |
+| [`THIRD_PARTY_LICENSES.txt`](THIRD_PARTY_LICENSES.txt) | The full licence text of every package shipped to users: the serving image's Python packages and the site's JavaScript bundle |
+
+The site itself serves the licences of its JavaScript bundle at
+[`/third-party-licenses.txt`](https://sanket-a0dd.onrender.com/third-party-licenses.txt).

@@ -21,6 +21,14 @@ Start with the [project README](../README.md). This folder holds everything behi
 | [replay-coverage-review.md](replay-coverage-review.md) | Whether Replay covers the events, and the failures, it should |
 | [analysis/](analysis/) | Measured outputs the docs cite, such as how far ERA5 and other products agree |
 
+## Licensing
+
+| Document | What it is |
+|---|---|
+| [../THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md) | Every data source, library, font and image, with its licence and attribution |
+| [../REUSE.toml](../REUSE.toml) and [../LICENSES/](../LICENSES/) | The licence of every file, and the full text of each licence |
+| [boundary-geometry-licensing.md](boundary-geometry-licensing.md) | The boundary data's licence, and India's rules for political maps |
+
 ## Plans
 
 | Document | What it is |

@@ -1,0 +1,20 @@
+GADM licence
+
+Source: https://gadm.org/license.html (retrieved 2026-09-30). Quoted verbatim:
+
+  The data are freely available for academic use and other non-commercial use.
+  Redistribution or commercial use is not allowed without prior permission.
+
+  Using the data to create maps for publishing of academic research articles is allowed.
+  Thus you can use the maps you made with GADM data for figures in articles published by
+  PLoS, Springer Nature, Elsevier, MDPI, etc. You are allowed (but not required) to
+  publish these articles (and the maps they contain) under an open license such as CC-BY
+  as is the case with PLoS journals and may be the case with other open access articles.
+
+The same page lists one country whose data carries a different licence (Austria). India's
+data is under the terms above.
+
+In this repository these terms apply to the district boundaries and to the files derived
+from them (see REUSE.toml). They are used here for a non-commercial Smart India Hackathon
+prototype; see docs/boundary-geometry-licensing.md. Any other use, redistribution
+included, needs GADM's prior permission.
