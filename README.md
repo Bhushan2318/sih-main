@@ -235,8 +235,11 @@ cp .env.example .env
 npm run dev                                   # dashboard at http://localhost:5173
 ```
 
-CI runs these same steps on clean Windows and Linux machines for every pull request, so if
-the badge above is green, they work.
+The sample is a small real slice of the archive: 17 forecast cycles from 2019 at 36 cities.
+So a fresh clone trains in one step, with no download. The site's model is trained on the
+full 666-district archive (see [Deployment](#deployment)). CI runs these same steps on
+clean Windows and Linux machines for every pull request, so if the badge above is green,
+they work.
 
 <details>
 <summary><b>Windows (PowerShell)</b></summary>
