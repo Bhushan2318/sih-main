@@ -24,7 +24,24 @@ import numpy as np
 import pandas as pd
 
 
-def score_run_on_year(run_id: str, year: int) -> pd.DataFrame:
+def as_of_issue(paired: pd.DataFrame) -> pd.DataFrame:
+    """The frame as a model sees it at 00 UTC on each init date: every input built from an
+    observation after issue time is blanked, which is the state every live cycle is scored in
+    (inference.build_scoring_frame, as_of_init). What the label is built from stays, because
+    the forecast is still checked against what happened.
+
+    Scoring a run that was trained with `forecast_error_lag` this way gives its held-out
+    skill as the site actually delivers it, which is the like-for-like number to compare a
+    run trained without the lag against.
+    """
+    from app.contracts import LABEL_INGREDIENTS, OBSERVATION_DERIVED
+
+    for col in sorted((OBSERVATION_DERIVED - LABEL_INGREDIENTS) & set(paired.columns)):
+        paired[col] = np.nan
+    return paired
+
+
+def score_run_on_year(run_id: str, year: int, as_of_issue_time: bool = False) -> pd.DataFrame:
     """The saved run's own regressors + classifier + thresholds, applied to one full
     calendar year of paired data the run may or may not have trained on.
 
@@ -63,6 +80,8 @@ def score_run_on_year(run_id: str, year: int) -> pd.DataFrame:
     # Same reasoning for the jump climatology (C1): the run's own training split, never
     # the scoring year's.
     fe.attach_jump_climatology(paired, state.jump_climatology)
+    if as_of_issue_time:
+        paired = as_of_issue(paired)
 
     pred = pd.Series(np.nan, index=paired.index, dtype=float)
     for var, (model, cols) in state.regressors.items():
@@ -84,6 +103,7 @@ def score_run_on_year(run_id: str, year: int) -> pd.DataFrame:
     events["split"] = "test"
     events["scored_run_id"] = run_id
     events["scored_year"] = year
+    events["as_of_issue"] = as_of_issue_time
     return events
 
 
@@ -94,21 +114,26 @@ def main() -> int:
     ap.add_argument("--year", type=int, required=True)
     ap.add_argument("--out", type=Path, default=None,
                     help="where to write the scored events (default: "
-                         "data/analysis/cross_year_scores/<run_id>_on_<year>.parquet)")
+                         "data/analysis/cross_year_scores/<run_id>_on_<year>[_as_of_issue].parquet)")
+    ap.add_argument("--as-of-issue", action="store_true",
+                    help="blank every input built from observations after issue time, as live "
+                         "scoring does (see as_of_issue)")
     args = ap.parse_args()
 
     from app.config import settings
     from app.db.base import resolve_path
     from app.ml import classifier as clf_mod
 
-    events = score_run_on_year(args.run_id, args.year)
+    events = score_run_on_year(args.run_id, args.year, as_of_issue_time=args.as_of_issue)
     metrics = clf_mod._evaluate(events["y_bust"], events["model_proba"])
-    print(f"{args.run_id} scored on {args.year}: n={metrics['n']:,} "
+    mode = "as of issue time" if args.as_of_issue else "with every input filled in"
+    print(f"{args.run_id} scored on {args.year} ({mode}): n={metrics['n']:,} "
           f"bust_rate={metrics['bust_rate']:.3f} roc_auc={metrics['roc_auc']:.4f} "
           f"brier={metrics['brier']:.4f}")
 
+    suffix = "_as_of_issue" if args.as_of_issue else ""
     out = args.out or (resolve_path(settings.data_dir) / "analysis" / "cross_year_scores"
-                       / f"{args.run_id}_on_{args.year}.parquet")
+                       / f"{args.run_id}_on_{args.year}{suffix}.parquet")
     out.parent.mkdir(parents=True, exist_ok=True)
     for col in events.columns:
         if str(events[col].dtype) == "category":

@@ -119,6 +119,16 @@ NULLABLE: frozenset[str] = frozenset({
     "mjo_rmm1", "mjo_rmm2", "mjo_amplitude",
 })
 
+# Columns that exist only because an observation arrived after the forecast was issued.
+# The first three are what the label is built from and are never model inputs.
+# `forecast_error_lag` was a model input, and no live forecast can have it: it made every
+# held-out score better than live scoring (docs/known-issues.md, 2026-09-25 and 2026-09-28).
+# regressors.feature_columns refuses any of these as an input.
+OBSERVATION_DERIVED: frozenset[str] = frozenset({
+    "observed_value", "abs_error", "verification_status", "forecast_error_lag",
+})
+LABEL_INGREDIENTS: frozenset[str] = frozenset({"observed_value", "abs_error", "verification_status"})
+
 
 def _kind(series: pd.Series) -> str:
     if isinstance(series.dtype, pd.CategoricalDtype):

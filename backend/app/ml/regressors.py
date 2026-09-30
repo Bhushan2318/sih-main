@@ -8,13 +8,18 @@ import xgboost as xgb
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.model_selection import GroupKFold
 
+from app.contracts import OBSERVATION_DERIVED
+
 MIN_ROWS = 30
 
 NUMERIC_FEATURES = [
     "lead_time_days", "forecast_value", "month",
     "ensemble_spread", "ensemble_member_count",
     "pressure_rate_of_change", "moisture_rate_of_change",
-    "forecast_error_lag", "historical_bust_frequency_region_season",
+    # forecast_error_lag used to be here: the realised error one lead earlier, which no live
+    # forecast can know (contracts.OBSERVATION_DERIVED, docs/known-issues.md). Runs saved
+    # before its removal still list it in their own feature_columns.json and score as before.
+    "historical_bust_frequency_region_season",
     "jump_abs_change", "jump_std", "jump_sign_flips", "jump_rel_climatology",
     # C2: time-lagged ensemble (see app.features.engineering.LAF_FEATURES).
     "laf_pool_mean", "laf_pool_std", "laf_pool_size", "laf_spread_ratio",
@@ -63,6 +68,10 @@ def feature_columns(df: pd.DataFrame) -> list:
     cols = [c for c in NUMERIC_FEATURES if c in df.columns]
     cols += [c for c in df.columns if c.startswith(CONCURRENT_PREFIX)]
     cols += [c for c in CATEGORICAL_FEATURES if c in df.columns]
+    leaked = sorted(set(cols) & OBSERVATION_DERIVED)
+    if leaked:
+        raise ValueError(f"refusing model inputs built from observations after issue time: "
+                         f"{leaked} (contracts.OBSERVATION_DERIVED)")
     return cols
 
 
