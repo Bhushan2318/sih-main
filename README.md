@@ -104,8 +104,8 @@ when to distrust a forecast is what decides whether a warning goes out.
    centre at all. Forecasts and observations go through the same single weight table.
 4. **Features.** Ensemble spread and member count, run-to-run forecast jumps, a time-lagged
    ensemble, pressure and moisture tendencies, the concurrent forecasts of every other
-   variable, the MJO state, district descriptors (location, area, elevation, distance from
-   the border), season, and each district's historical bust frequency.
+   variable, district descriptors (location, area, elevation, distance from the border),
+   season, and each district's historical bust frequency.
 5. **Models.** One XGBoost regressor per variable predicts the size of the forecast's
    error. A bust classifier, trained on their out-of-fold predictions, turns those into a
    bust probability. A convolutional challenger over the full gridded fields is scored on
