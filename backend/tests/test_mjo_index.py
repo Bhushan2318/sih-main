@@ -162,17 +162,26 @@ def test_the_training_frame_carries_the_mjo_features(monkeypatch):
     assert frame.loc[0, "mjo_rmm1"] == pytest.approx(2.0)   # 2017-11-02, exact match
 
 
-def test_regressor_and_classifier_both_see_the_mjo_features(monkeypatch):
+def test_no_model_input_reads_the_mjo_features(monkeypatch):
+    """OMI is not published in real time: NOAA PSL's own file ended 2026-06-24 when this was
+    checked on 2026-10-01. So every live cycle gets NaN for these columns, while every training
+    row from 2000-2016 had a value. That is the same train/live gap as `forecast_error_lag`. A
+    model trained with them learns from values the live site never has, so new runs take
+    neither, in the regressors or in the classifier.
+
+    The frames still carry the columns, because runs trained before this read them through their
+    own saved feature lists until they are replaced."""
     from app.features import pivot as pv
     from app.ml import regressors as reg_mod
 
     monkeypatch.setattr(fe, "load_mjo_index", lambda: _MJO)
     frame = fe.build_training_frame(_canonical())
     for col in fe.MJO_FEATURES:
-        assert col in reg_mod.feature_columns(frame)
+        assert col in frame.columns
+        assert col not in reg_mod.feature_columns(frame)
 
     pred = pd.Series(1.0, index=frame.index)
     ev = pv.build_event_frame(frame, pred, {"temperature_c": 5.0}, {"temperature_c": 3.0})
     for col in fe.MJO_FEATURES:
         assert col in ev.columns
-        assert col in reg_mod.feature_columns(ev) or col in pv.classifier_feature_columns(ev)
+        assert col not in pv.classifier_feature_columns(ev)

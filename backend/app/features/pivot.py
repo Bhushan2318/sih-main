@@ -8,7 +8,6 @@ from app.features.engineering import (
     EVENT_KEYS,
     JUMP_FEATURES,
     LAF_FEATURES,
-    MJO_FEATURES,
     _season,
     attach_district_descriptors,
     attach_mjo_index,
@@ -98,9 +97,12 @@ def classifier_feature_columns(event_df: pd.DataFrame) -> list:
     per_var = [c for c in event_df.columns
                if c.startswith(("pred_err_", "conf_", "jump_", "laf_"))
                or (c.startswith("spread_") and c not in ("spread_mean", "spread_max"))]
+    # The MJO columns are carried on the event frame (attach_mjo_index) for runs trained with
+    # them, but are not an input to new runs: live cycles never have them (see
+    # regressors.NUMERIC_FEATURES).
     context = (["lead_time_days", "month", "spread_mean", "spread_max",
                 "historical_bust_frequency_region_season"]
-               + list(DISTRICT_DESCRIPTOR_FEATURES) + list(MJO_FEATURES) + ["season"])
+               + list(DISTRICT_DESCRIPTOR_FEATURES) + ["season"])
     ordered, seen = [], set()
     for c in per_var + context:
         if c in event_df.columns and c not in seen:
