@@ -467,10 +467,16 @@ sih-main/
 │       ├── store/            Zustand store for live events
 │       ├── styles.css        the entire design system, hand-written
 │       └── theme.ts          chart palette, mirroring the CSS tokens
-├── docs/                     one-pager, known issues, reviews and plans (index: docs/README.md)
+├── docs/                     one-pager, engineering reference, known issues, reviews, plans
+│                             (index: docs/README.md)
+├── LICENSES/                 full text of every licence that applies to a file here
 ├── .github/                  CI and refresh workflows, issue and pull-request templates
 ├── Dockerfile                one image: builds the SPA, pulls the model, serves both
-└── render.yaml               service definition, so the host is not hand-wired
+├── render.yaml               service definition, so the host is not hand-wired
+├── REUSE.toml                copyright and licence of every file (checked by `reuse lint`)
+├── THIRD_PARTY_NOTICES.md    every dataset, library, font and image, with its licence
+├── THIRD_PARTY_LICENSES.txt  full licence texts of everything shipped to users
+└── LICENSE · CONTRIBUTING.md · SECURITY.md · CODE_OF_CONDUCT.md · CITATION.cff
 ```
 
 ## Technology
