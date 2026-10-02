@@ -50,7 +50,14 @@ IMD_ALIGNED_STEM = "imd_aligned_district_observations_india_{year}"
 # 0830 IST window: every IMD rainfall value one model day late. Never read - refused.
 IMD_STALE_STEM = "imd_merged_district_observations_india_{year}"
 
+# Estimator v2 CDS (scripts/fetch_era5_cds_district_observations.py --estimator v2):
+# RH and wind derived after the district mean, as the forecast side does. It outranks
+# the IMD-aligned file, which replaces rainfall inside a v1 CDS file and so carries
+# v1's humidity and wind.
+V2_STEM = "era5_cds_v2_district_observations_india_{year}"
+
 OBSERVATION_STEMS = (
+    V2_STEM,
     IMD_ALIGNED_STEM,
     "era5_cds_district_observations_india_{year}",   # CDS, ERA5 native 0.25 deg grid
     "era5_district_observations_india_{year}",       # Open-Meteo, districts
