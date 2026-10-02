@@ -83,8 +83,8 @@ class ClimatologyBaseline(_Base):
 class DistrictSeasonFrequencyBaseline(_Base):
     """Each (district, season)'s training bust rate - no forecast information at all.
 
-    On the served run's 2017 test set this scored ROC-AUC 0.652, above every rung the
-    ladder had, so a model must clearly beat it to show it reads the forecast. A cell
+    On the served run's 2017 test set this scored ROC-AUC 0.6715, above every baseline
+    rung the ladder had (best: EMOS, 0.6256), so a model must clearly beat it to show it reads the forecast. A cell
     with fewer than `min_events` training events backs off to its season's rate, and an
     unseen season to the overall rate - never to an invented number.
     """

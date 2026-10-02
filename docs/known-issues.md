@@ -369,8 +369,10 @@ here rather than discovered live.
 - **The ladder lacked the baseline that needs no forecast at all, added 2026-10-02.**
   Each (district, season)'s training bust rate (`district_season_frequency`) scored
   ROC-AUC 0.6715 on the served run's 2017 test set, fitted on its 13.32 M baseline-fit
-  training events. That is above every rung the ladder had. A model must clearly beat it
-  to show it reads the forecast rather than the calendar and the map.
+  training events. That is above every baseline rung the ladder had: climatology 0.5000,
+  lead day 0.5095, spread 0.5996, lead+spread+season 0.6079, EMOS 0.6256, IDR 0.5987,
+  analog 0.6114 (its `baselines.json`). A model must clearly beat it to show it reads the
+  forecast rather than the calendar and the map.
 - **`fit_streaming` (the CNN training loop) was not bit-reproducible on CUDA with the
   same seed - fixed 2026-09-17.** E1 of `docs/team-brief-2026-09-15-updated.md` Section 6
   required a test asserting two same-seed runs produce identical weights; none existed
