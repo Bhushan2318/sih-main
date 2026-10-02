@@ -41,6 +41,12 @@ fault and is not.
 
     pip install -r requirements.txt -r requirements-live.txt
     python backend/scripts/fetch_era5_cds_district_observations.py --years 2017
+
+Estimator v2 (per-cell daily components, reduced like the forecast side - see
+`to_cells_daily`) and ERA5's land-sea mask:
+
+    python backend/scripts/fetch_era5_cds_district_observations.py --years 2017 --estimator v2
+    python backend/scripts/fetch_era5_cds_district_observations.py --land-sea-mask
 """
 from __future__ import annotations
 
@@ -67,6 +73,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 BACKEND_DIR = SCRIPT_DIR.parent
 sys.path.insert(0, str(BACKEND_DIR))
 
+from app.utils import humidity  # noqa: E402
 from app.utils import india_districts as idist  # noqa: E402
 # One weight table, one aggregator - shared with the Open-Meteo fetch so the two cannot
 # drift apart. See app/utils/district_observations.py.
@@ -171,6 +178,104 @@ def to_daily(hourly: pd.DataFrame) -> pd.DataFrame:
     return out[["lat", "lon", "date"] + VALUE_COLUMNS]
 
 
+# ---------------------------------------------------------------- estimator v2: per cell
+#
+# `to_daily` above (v1) derives RH per hour and wind speed per cell, then the district mean
+# averages those. The forecast side does it the other way round: it averages q, T, p, u and
+# v over the day and over the district first, and derives RH and wind from those means
+# (scripts/fetch_gefs_reforecast_sample.py, `pull_one_file` then `_canonicalise`). RH and
+# speed are non-linear, so the order matters: measured on Nov 2017, v1 put the observation
+# +1.28 %RH (up to +3.1 in a district) and +0.04 m/s above what the forecast's own method
+# gives for the same air.
+#
+# v2 therefore stops at the components, one row per cell and day, and the district step
+# (app/utils/district_observations.py) derives RH and wind after averaging - so both sides
+# of the bust label use one estimator.
+
+# The reforecast writes instantaneous fields every 3 hours, and day k is the mean of
+# hours 3, 6, ..., 24 of that day (select_for_day, ((k-1)*24, k*24]). The observation day
+# is sampled at the same eight instants rather than all 24 hours.
+INSTANT_STEP_HOURS = 3
+INSTANTS_PER_DAY = 24 // INSTANT_STEP_HOURS
+
+CELL_DAILY_COLUMNS = [
+    "t2m_k",        # 2 m temperature, K
+    "q2m_kgkg",     # 2 m specific humidity, kg/kg, from dewpoint and surface pressure
+    "sp_pa",        # surface pressure, Pa
+    "msl_pa",       # mean sea level pressure, Pa
+    "u10_ms",       # 10 m wind components, m/s
+    "v10_ms",
+    "tcwv_kgm2",    # total column water vapour, kg/m2
+    "swvl1_m3m3",   # volumetric soil water, layer 1 (0-7 cm), m3/m3
+    "tp_mm",        # 24 h total precipitation, mm
+]
+
+# Only soil may be missing (ERA5 has no soil over water); anything else missing is refused.
+_MAY_BE_NAN = {"swvl1_m3m3"}
+
+V2_DIR = OUT_DIR / "_era5_cds_v2"
+
+
+def to_cells_daily(hourly: pd.DataFrame) -> pd.DataFrame:
+    """Hourly cell readings -> one row per (lat, lon, day) of daily-mean components.
+
+    The day is the half-open window (t-24h, t], as in `to_daily`. Rain sums all 24 hourly
+    accumulations; every other field is the mean of the eight 3-hourly instants the
+    forecast's own day is built from. Days without all 24 stamps are dropped, never
+    averaged short.
+    """
+    df = hourly.copy()
+    df["time"] = pd.to_datetime(df["time"])
+    df["date"] = (df["time"] - pd.Timedelta(hours=1)).dt.date
+
+    complete = df.groupby(["lat", "lon", "date"])["time"].transform("size") == 24
+    df = df[complete]
+    if df.empty:
+        return pd.DataFrame(columns=["lat", "lon", "date"] + CELL_DAILY_COLUMNS)
+
+    keys = ["lat", "lon", "date"]
+    rain = (df.groupby(keys)["total_precipitation"].sum() * 1000.0).rename("tp_mm")  # m -> mm
+
+    inst = df[df["time"].dt.hour % INSTANT_STEP_HOURS == 0].copy()
+    inst["q2m_kgkg"] = humidity.specific_humidity_from_dewpoint(
+        inst["2m_dewpoint_temperature"].to_numpy(), inst["surface_pressure"].to_numpy())
+    g = inst.groupby(keys)
+    if (g.size() != INSTANTS_PER_DAY).any():
+        raise RuntimeError("a complete day must hold exactly "
+                           f"{INSTANTS_PER_DAY} instants at a {INSTANT_STEP_HOURS} h step")
+    out = pd.DataFrame({
+        "t2m_k": g["2m_temperature"].mean(),
+        "q2m_kgkg": g["q2m_kgkg"].mean(),
+        "sp_pa": g["surface_pressure"].mean(),
+        "msl_pa": g["mean_sea_level_pressure"].mean(),
+        "u10_ms": g["10m_u_component_of_wind"].mean(),
+        "v10_ms": g["10m_v_component_of_wind"].mean(),
+        "tcwv_kgm2": g["total_column_water_vapour"].mean(),
+        "swvl1_m3m3": g["volumetric_soil_water_layer_1"].mean(),
+    }).join(rain).reset_index()
+    return out[["lat", "lon", "date"] + CELL_DAILY_COLUMNS]
+
+
+def check_cells_daily(df: pd.DataFrame, year: int, month: int, cells: pd.DataFrame) -> None:
+    """Refuse a month that is short a day, short a cell, or missing a value it must have."""
+    import calendar
+    expected_days = calendar.monthrange(year, month)[1]
+    n_days = df["date"].nunique()
+    if n_days != expected_days:
+        raise RuntimeError(f"{year}-{month:02d}: {n_days} days, expected {expected_days}")
+    want = set(zip(np.round(cells.lat, 4), np.round(cells.lon, 4)))
+    per_day = df.groupby("date").apply(
+        lambda d: set(zip(np.round(d.lat, 4), np.round(d.lon, 4))) == want)
+    if not per_day.all():
+        bad = [str(d) for d, ok in per_day.items() if not ok][:3]
+        raise RuntimeError(f"{year}-{month:02d}: cell set differs from the weight table "
+                           f"on {bad}")
+    for col in CELL_DAILY_COLUMNS:
+        if col not in _MAY_BE_NAN and df[col].isna().any():
+            raise RuntimeError(f"{year}-{month:02d}: {col} has "
+                               f"{int(df[col].isna().sum())} missing values")
+
+
 def _requests_for(year: int, month: int) -> list[dict]:
     """The month, plus the single boundary hour that completes its last day."""
     north, west, south, east = request_area()
@@ -266,6 +371,96 @@ def _boundary_from_next_month(cache: Path, year: int, month: int):
     if pd.Timestamp(first) != pd.Timestamp(year=ny, month=nm, day=1):
         return None
     return df[df["time"] == first]
+
+
+def cells_daily_path(year: int, month: int) -> Path:
+    return V2_DIR / f"cells_daily_{year}{month:02d}.parquet"
+
+
+def build_cells_daily(years: list[int], months: list[int] | None = None,
+                      keep_downloads: bool = False, parallel: int = 1,
+                      fetch=None) -> None:
+    """Estimator v2: one checked `cells_daily_YYYYMM.parquet` per month, ~7 MB each.
+
+    A month is written only after `check_cells_daily` passes, and its downloads are
+    deleted only after it is written - so a refused month keeps its zips for a retry and
+    a crash never leaves a half-written month that looks finished. `fetch` is
+    `fetch_month(client, year, month, cache)`, injectable for tests.
+    """
+    cache = OUT_DIR / "_era5_cds"
+    V2_DIR.mkdir(parents=True, exist_ok=True)
+    cells = grid_cells()
+    if fetch is None:
+        import cdsapi
+        client = cdsapi.Client()
+        fetch = lambda y, m: fetch_month(client, y, m, cache)  # noqa: E731
+    for year in years:
+        todo = [m for m in (months or list(range(1, 13)))
+                if not cells_daily_path(year, m).exists()]
+        if parallel > 1 and todo:
+            prefetch_months(year, todo, cache, parallel)
+        for month in todo:
+            t0 = time.time()
+            daily = to_cells_daily(fetch(year, month))
+            daily = daily[pd.to_datetime(daily["date"]).dt.month == month]
+            check_cells_daily(daily, year, month, cells)
+            path = cells_daily_path(year, month)
+            tmp = path.with_suffix(".parquet.tmp")
+            daily.to_parquet(tmp, index=False)
+            tmp.replace(path)
+            print(f"  {year}-{month:02d}  {daily.date.nunique()} days x "
+                  f"{len(cells)} cells -> {path.name} "
+                  f"{path.stat().st_size/1e6:.1f} MB  {time.time()-t0:,.0f}s", flush=True)
+            if not keep_downloads:
+                for z in cache.glob(f"era5_{year}{month:02d}_*.zip"):
+                    z.unlink()
+
+
+def fetch_land_sea_mask(client=None) -> Path:
+    """ERA5's own land-sea mask (time-invariant) for every weight-table cell, once.
+
+    One single-hour request. The soil-moisture land mask needs ERA5's mask, not a
+    coastline: what decides whether a cell's swvl1 is a land value is ERA5's own surface
+    tiling.
+    """
+    import xarray as xr  # fetch-side dependency; see the note at the top of the module
+    if client is None:
+        import cdsapi
+        client = cdsapi.Client()
+    north, west, south, east = request_area()
+    V2_DIR.mkdir(parents=True, exist_ok=True)
+    raw = V2_DIR / "_land_sea_mask_download"
+    client.retrieve(DATASET, {
+        "product_type": ["reanalysis"], "variable": ["land_sea_mask"],
+        "year": ["2017"], "month": ["01"], "day": ["01"], "time": ["00:00"],
+        "data_format": "netcdf", "download_format": "unarchived",
+        "area": [north, west, south, east], "grid": [0.25, 0.25],
+    }, str(raw))
+    if zipfile.is_zipfile(raw):
+        with zipfile.ZipFile(raw) as z:
+            members = [m for m in z.namelist() if m.endswith(".nc")]
+            if len(members) != 1:
+                raise RuntimeError(f"expected one NetCDF in the mask download, got {members}")
+            nc = V2_DIR / "_land_sea_mask.nc"
+            nc.write_bytes(z.read(members[0]))
+    else:
+        nc = raw
+    ds = _normalise(xr.open_dataset(nc))
+    df = ds.to_dataframe().reset_index()
+    ds.close()
+    df = df.rename(columns={"latitude": "lat", "longitude": "lon"})[["lat", "lon", "lsm"]]
+    cells = grid_cells()
+    want = set(zip(np.round(cells.lat, 4), np.round(cells.lon, 4)))
+    df = df[[k in want for k in zip(np.round(df.lat, 4), np.round(df.lon, 4))]]
+    if len(df) != len(cells) or df["lsm"].isna().any():
+        raise RuntimeError(f"land-sea mask covers {len(df)} of {len(cells)} cells")
+    out = V2_DIR / "land_sea_mask.parquet"
+    df.to_parquet(out, index=False)
+    for p in (raw, V2_DIR / "_land_sea_mask.nc"):
+        p.unlink(missing_ok=True)
+    print(f"land-sea mask: {len(df)} cells, {int((df.lsm < 0.5).sum())} mostly water "
+          f"-> {out.name}")
+    return out
 
 
 def prefetch_months(year: int, months: list[int], cache: Path, parallel: int) -> None:
@@ -424,7 +619,17 @@ def main() -> None:
     ap.add_argument("--parallel", type=int, default=1,
                     help="download this many months' CDS requests at once (their waits "
                          "overlap); default 1 = one at a time")
+    ap.add_argument("--estimator", choices=["v1", "v2"], default="v1",
+                    help="v1: district files with RH/wind derived per hour and cell (the "
+                         "archive's current observations). v2: per-cell daily components "
+                         "in _era5_cds_v2/, derived after the district mean like the "
+                         "forecast side")
+    ap.add_argument("--land-sea-mask", action="store_true",
+                    help="fetch ERA5's land-sea mask once into _era5_cds_v2/ and exit")
     args = ap.parse_args()
+    if args.land_sea_mask:
+        fetch_land_sea_mask()
+        return
 
     years: set[int] = set()
     for chunk in args.years.split(","):
@@ -442,6 +647,10 @@ def main() -> None:
             months.update(range(int(a), int(b) + 1))
         elif chunk:
             months.add(int(chunk))
+    if args.estimator == "v2":
+        build_cells_daily(sorted(years), sorted(months), keep_downloads=args.keep_downloads,
+                          parallel=args.parallel)
+        return
     build(sorted(years), sorted(months), keep_downloads=args.keep_downloads,
           parallel=args.parallel)
 

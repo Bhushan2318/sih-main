@@ -67,10 +67,10 @@ def test_rh_falls_as_dewpoint_drops_and_stays_in_range():
 
 
 def test_rh_uses_the_same_saturation_formula_as_the_forecast_side():
-    """Bolton (1980), identical constants to rh_from_specific_humidity in the GEFS
-    fetch. If the two sides used different es formulas the humidity bust label would
-    partly record that difference."""
-    src = (BACKEND / "scripts" / "fetch_gefs_reforecast_sample.py").read_text()
+    """Bolton (1980), identical constants to rh_from_specific_humidity, which the GEFS
+    fetch imports from app/utils/humidity.py. If the two sides used different es formulas
+    the humidity bust label would partly record that difference."""
+    src = (BACKEND / "app" / "utils" / "humidity.py").read_text()
     assert "611.2 * np.exp(17.67 * (t_k - 273.15) / (t_k - 29.65))" in src
     t = np.array([301.0])
     td = np.array([294.0])
