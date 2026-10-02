@@ -93,6 +93,15 @@ def binormal_auc(y_true, y_prob) -> float:
     return float(stats.norm.cdf((z_pos.mean() - z_neg.mean()) / denom))
 
 
+def _moving_block_cycle_indices(n_cycles: int, block_len: int, rng) -> np.ndarray:
+    """Positions of `n_cycles` cycles drawn as circular runs of `block_len` consecutive
+    cycles (Politis & Romano's circular block bootstrap), truncated to `n_cycles`."""
+    n_blocks = -(-n_cycles // block_len)
+    starts = rng.integers(0, n_cycles, size=n_blocks)
+    idx = (starts[:, None] + np.arange(block_len)[None, :]) % n_cycles
+    return idx.ravel()[:n_cycles]
+
+
 def block_bootstrap_ci(
     y_true,
     y_prob,
@@ -101,6 +110,7 @@ def block_bootstrap_ci(
     n_resamples: int = 1000,
     ci: float = 0.95,
     seed: int = 0,
+    block_len: int = 1,
 ) -> dict:
     """Confidence interval for ``metric_fn``, resampling whole forecast cycles.
 
@@ -117,6 +127,14 @@ def block_bootstrap_ci(
     default is ``trapezoidal_auc``, but any ladder metric (Brier, F1, ...) works the same
     way, which is what "on every ladder rung" in D1 means in practice - one function, any
     metric, called once per rung.
+
+    ``block_len`` > 1 resamples runs of that many consecutive cycles (in ``cycle_ids``
+    sort order, chronological for dates) instead of single cycles. Consecutive daily
+    cycles are not independent either: one shares 9 of its 10 valid dates with the next,
+    and on the served run's 2017 test set per-cycle ROC-AUC had a lag-1 autocorrelation of
+    0.85. Single-cycle resampling there gave intervals 2.5-3.6x narrower than 10-30 day
+    blocks. The block is capped at a fifth of the cycles, so a short series still has
+    resamples that differ; ``block_len`` in the result is the length actually used.
     """
     y = np.asarray(y_true)
     p = np.asarray(y_prob, float)
@@ -127,10 +145,11 @@ def block_bootstrap_ci(
     point = metric_fn(y, p)
     unique_cycles = np.unique(c)
     n_cycles = len(unique_cycles)
+    block = max(1, min(int(block_len), n_cycles // 5))
     if n_cycles < 2:
         return {
             "point": point, "lo": point, "hi": point,
-            "n_resamples": 0, "n_cycles": int(n_cycles), "ci": ci,
+            "n_resamples": 0, "n_cycles": int(n_cycles), "ci": ci, "block_len": block,
         }
 
     rows_by_cycle = {cyc: np.flatnonzero(c == cyc) for cyc in unique_cycles}
@@ -138,7 +157,10 @@ def block_bootstrap_ci(
 
     draws = np.empty(n_resamples, dtype=float)
     for i in range(n_resamples):
-        chosen = rng.choice(unique_cycles, size=n_cycles, replace=True)
+        if block == 1:
+            chosen = rng.choice(unique_cycles, size=n_cycles, replace=True)
+        else:
+            chosen = unique_cycles[_moving_block_cycle_indices(n_cycles, block, rng)]
         idx = np.concatenate([rows_by_cycle[cyc] for cyc in chosen])
         draws[i] = metric_fn(y[idx], p[idx])
 
@@ -152,6 +174,7 @@ def block_bootstrap_ci(
     return {
         "point": point, "lo": lo, "hi": hi,
         "n_resamples": int(draws.size), "n_cycles": int(n_cycles), "ci": ci,
+        "block_len": block,
     }
 
 

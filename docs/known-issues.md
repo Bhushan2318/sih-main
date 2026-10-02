@@ -356,6 +356,23 @@ here rather than discovered live.
   only 2 samples - but it means the interval width should not be read as improving
   smoothly as the held-out set grows; it improves in steps, one per additional
   independent cycle.
+- **Single-cycle resampling made the intervals far too narrow, measured 2026-10-02.**
+  - Consecutive daily cycles are not independent either: each shares 9 of its 10
+    verified days with the next.
+  - On the served run's 2017 test set (2,430,900 events, 365 cycles), the 95% interval on
+    ROC-AUC 0.8435 was 0.0098 wide resampling single cycles, 0.0334 with 10-cycle blocks
+    and 0.0438 with 30-cycle blocks: 4.5x wider.
+  - The ladder now uses 30-cycle circular blocks (`run_baselines.CI_BLOCK_CYCLES`;
+    `block_len` in each interval records the length used).
+  - Earlier "more training years measurably help" gains of 0.007-0.019 sat inside these
+    wider intervals.
+- **The ladder lacked the baseline that needs no forecast at all, added 2026-10-02.**
+  Each (district, season)'s training bust rate (`district_season_frequency`) scored
+  ROC-AUC 0.6715 on the served run's 2017 test set, fitted on its 13.32 M baseline-fit
+  training events. That is above every baseline rung the ladder had: climatology 0.5000,
+  lead day 0.5095, spread 0.5996, lead+spread+season 0.6079, EMOS 0.6256, IDR 0.5987,
+  analog 0.6114 (its `baselines.json`). A model must clearly beat it to show it reads the
+  forecast rather than the calendar and the map.
 - **`fit_streaming` (the CNN training loop) was not bit-reproducible on CUDA with the
   same seed - fixed 2026-09-17.** E1 of `docs/team-brief-2026-09-15-updated.md` Section 6
   required a test asserting two same-seed runs produce identical weights; none existed
