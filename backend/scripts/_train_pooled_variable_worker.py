@@ -54,7 +54,8 @@ def main() -> int:
 
         art = pt.train_variable_regressor_pooled(
             job["cached"], job["train_years"], job["variable"], job["train_cycles"],
-            job["va_var"], job["hbf"], job["cache_dir"], device=job["device"])
+            job["va_var"], job["hbf"], job["cache_dir"], device=job["device"],
+            bias_table=job.get("bias_table"))
         if art is None:
             result["skipped"] = "regressor training returned None or too few rows"
         else:
@@ -65,7 +66,8 @@ def main() -> int:
                 result["val_pred"] = pd.Series(preds, index=job["va_var"].index)
         result["fold_models"] = pt.oof_fold_models(
             job["cached"], job["train_years"], job["variable"], job["train_cycles"],
-            job["hbf"], job["fold_of"], job["cache_dir"], device=job["device"])
+            job["hbf"], job["fold_of"], job["cache_dir"], device=job["device"],
+            bias_table=job.get("bias_table"))
     except Exception as exc:  # noqa: BLE001 - reported to the parent, not swallowed
         result["error"] = traceback.format_exc()
         result["skipped"] = f"worker exception: {exc}"

@@ -43,6 +43,9 @@ class ModelState:
     shap_summary: pd.DataFrame = field(default_factory=pd.DataFrame)
     manifest: dict = field(default_factory=dict)
     metrics: dict = field(default_factory=dict)
+    # Label version 2: the run's training-period bias table (app/features/bias.py), applied
+    # to every frame it scores. None for a run trained before it - scored exactly as before.
+    bias_table: Optional[pd.DataFrame] = None
     # Set instead of `regressors` on the serving box, which loads the models' names and not
     # the models (see _models_stay_off_this_box).
     regressor_names: list = field(default_factory=list)
@@ -204,6 +207,7 @@ def load_model_state(run_id: Optional[str] = None) -> Optional[ModelState]:
         freq = registry.load_historical_bust_freq(rid)
         jump = registry.load_jump_climatology(rid)
         shap_summary = _read_shap_summary(registry.run_dir(rid) / "shap_summary.parquet")
+        bias_table = registry.load_bias_table(rid)
 
     import json
     def _read(name):
@@ -222,6 +226,7 @@ def load_model_state(run_id: Optional[str] = None) -> Optional[ModelState]:
         manifest=_read("manifest.json"),
         metrics=_read("metrics.json"),
         regressor_names=names_only,
+        bias_table=None if lean else bias_table,
     )
     with _lock:
         _state_cache = (rid, lean, state)
@@ -312,6 +317,9 @@ def build_scoring_frame(
         feature_version=run_feature_version(getattr(state, "manifest", None)),
     )
     del subset, history
+    if state.bias_table is not None:
+        from app.features.bias import apply_bias
+        frame = apply_bias(frame, state.bias_table)
     if as_of_init and "forecast_error_lag" in frame.columns:
         frame["forecast_error_lag"] = np.nan
     return frame

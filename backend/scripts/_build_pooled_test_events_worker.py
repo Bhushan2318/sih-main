@@ -39,7 +39,8 @@ def main() -> int:
         # read is what failed for a training year on 2026-09-22 (41.6 GB peak commit).
         result["event_frame"], result["test_metrics"] = test_event_frame(
             job["cached_path"], job["test_cycles"], job["hbf"], job["p90_error"],
-            job["bust_threshold"], job["artifacts"], job["columns"])
+            job["bust_threshold"], job["artifacts"], job["columns"],
+            bias_table=job.get("bias_table"))
     except Exception:
         result["error"] = traceback.format_exc()
 
