@@ -105,7 +105,10 @@ def test_pooled_split_holds_the_test_year_out_entirely(tmp_path):
 
     assert test_c == set(pd.to_datetime(y2001["init_date"]))
     assert not (train_c | val_c) & test_c
-    assert train_c | val_c == set(pd.to_datetime(y2000["init_date"]))
+    # Train and validation come only from the earlier year. Not all of it: cycles within
+    # 9 days of a later split are dropped so no observed day sits on both sides
+    # (SPLIT_EMBARGO_DAYS; tests/test_split_embargo.py).
+    assert train_c | val_c <= set(pd.to_datetime(y2000["init_date"]))
 
 
 def test_assign_folds_covers_every_cycle_and_is_deterministic():
@@ -687,8 +690,8 @@ def test_fit_cycles_caps_a_large_pool_and_spans_every_year_and_season():
 
 
 def test_fit_cycles_leaves_every_oof_fold_with_training_cycles():
-    """assign_folds numbers sorted cycles i % 3 - an every-third-day sample would put
-    every kept cycle in one fold and leave that fold's model nothing to train on."""
+    """Every OOF fold (assign_folds' 30-day blocks) must keep a share of the sampled
+    cycles, or that fold's model has nothing to train on."""
     cycles = _daily_cycles(range(2000, 2017))
     fold_of = pt.assign_folds(cycles)
     got = pt.fit_cycles(cycles, cap=2000)

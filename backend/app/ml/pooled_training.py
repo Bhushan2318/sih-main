@@ -60,7 +60,9 @@ from app.ml.thresholds import (
     compute_member_p90,
     compute_risk_bands,
 )
-from app.ml.train_pipeline import (
+from app.ml.train_pipeline import (  # noqa: I001
+    SPLIT_EMBARGO_DAYS,
+    _embargo_before,
     TRAIN_FRAC,
     VAL_FRAC,
     TrainReport,
@@ -182,6 +184,13 @@ def _readable_parquet(path: Path) -> bool:
 
 MAX_VAL_CYCLES = 365
 
+# Out-of-fold folds are runs of this many consecutive days, not alternating days: a daily
+# cycle's neighbours share 9 of its 10 observed days, so an alternating fold's model had
+# seen almost every day it was asked to predict.
+FOLD_BLOCK_DAYS = 30
+
+
+
 
 # How many training cycles one variable's regressor (and each OOF fold model) fits on.
 # Measured 2026-09-21 on the real caches, one variable: XGBoost's QuantileDMatrix peaked
@@ -196,9 +205,8 @@ MAX_FIT_CYCLES = 2000
 
 def fit_cycles(train_cycles: set, cap: "int | None" = None) -> set:
     """The training cycles the per-variable fits use: all of them up to `cap`, otherwise
-    a fixed-seed uniform sample of `cap`. Random, not every k-th day: `assign_folds`
-    numbers sorted cycles `i % 3`, so a regular stride would put every kept cycle in one
-    OOF fold and leave that fold's model nothing to train on."""
+    a fixed-seed uniform sample of `cap`. Random, not every k-th day, so every year,
+    season and OOF fold (`assign_folds`' 30-day blocks) keeps its share."""
     cap = MAX_FIT_CYCLES if cap is None else cap
     if len(train_cycles) <= cap:
         return set(train_cycles)
@@ -258,6 +266,18 @@ def pooled_split(cached_paths: dict, test_year: int):
     if len(val) > MAX_VAL_CYCLES:
         train = train + val[:-MAX_VAL_CYCLES]
         val = val[-MAX_VAL_CYCLES:]
+    # No observed day on both sides of a boundary: drop the last SPLIT_EMBARGO_DAYS - 1
+    # days before validation from training, and before the test year from validation.
+    # Without this, training's last cycles verified on validation's first days, and
+    # validation's last cycles on the test year's first nine days.
+    if val:
+        train = _embargo_before(train, min(val))
+    if test_cycles:
+        first_test = min(test_cycles)
+        val = [c for c in val if pd.Timestamp(c) >= first_test] + _embargo_before(
+            [c for c in val if pd.Timestamp(c) < first_test], first_test)
+        train = [c for c in train if pd.Timestamp(c) >= first_test] + _embargo_before(
+            [c for c in train if pd.Timestamp(c) < first_test], first_test)
     return set(train), set(val), test_cycles
 
 
@@ -662,13 +682,40 @@ def regressor_is_unusable(metrics: dict) -> bool:
 
 
 def assign_folds(train_cycles: set, n_splits: int = 3) -> dict:
-    """cycle -> fold id, computed once and shared across every variable - the pooled
-    equivalent of `regressors.oof_predict`'s `GroupKFold` on `init_date`. Folds are the
-    same regardless of which variable trains on them, so this only needs computing once,
-    not once per variable."""
+    """cycle -> fold id, computed once and shared across every variable. Folds are
+    contiguous blocks of FOLD_BLOCK_DAYS days, assigned round-robin, so a fold holds
+    whole stretches of weather rather than every third day (see FOLD_BLOCK_DAYS). A
+    short span gets shorter blocks, so every fold still gets some."""
     cycles = sorted(train_cycles)
     n_splits = min(n_splits, max(len(cycles), 1))
-    return {c: i % n_splits for i, c in enumerate(cycles)}
+    if not cycles:
+        return {}
+    first = pd.Timestamp(cycles[0])
+    span = (pd.Timestamp(cycles[-1]) - first).days + 1
+    block = max(1, min(FOLD_BLOCK_DAYS, span // (2 * n_splits)))
+    return {c: ((pd.Timestamp(c) - first).days // block) % n_splits for c in cycles}
+
+
+def fold_training_cycles(cycles, fold_of: dict, fold: int) -> set:
+    """The cycles fold `fold`'s model may train on: not in that fold, and not within
+    SPLIT_EMBARGO_DAYS - 1 days of any cycle in it, so it shares no observed day with
+    the cycles it predicts out of fold."""
+    held = np.array(sorted(pd.Timestamp(c).value for c, f in fold_of.items() if f == fold),
+                    dtype=np.int64)
+    if held.size == 0:
+        return {c for c in cycles}
+    reach = pd.Timedelta(days=SPLIT_EMBARGO_DAYS - 1).value
+    out = set()
+    for c in cycles:
+        if fold_of.get(c) == fold:
+            continue
+        v = pd.Timestamp(c).value
+        i = np.searchsorted(held, v)
+        near = ((i < held.size and held[i] - v <= reach)
+                or (i > 0 and v - held[i - 1] <= reach))
+        if not near:
+            out.add(c)
+    return out
 
 
 def oof_fold_models(cached_paths: dict, train_years: list, variable: str,
@@ -684,7 +731,7 @@ def oof_fold_models(cached_paths: dict, train_years: list, variable: str,
     cols = _feature_columns_for(cached_paths, train_years)
     models = {}
     for fold in range(n_splits):
-        fold_chunks = [{c for c in chunk if fold_of[c] != fold} for chunk in chunks]
+        fold_chunks = [fold_training_cycles(chunk, fold_of, fold) for chunk in chunks]
         booster, _ = _fit_booster(cached_paths, train_years, variable, fold_chunks, cols,
                                   hbf, cache_dir, device)
         if booster is None:
