@@ -1263,6 +1263,20 @@ here rather than discovered live.
   - A northerly is a bust by construction.
   - Next retrain: circular error and circular mean (a helper exists on the parked
     `parked/opencode-nemotron` branch), and drop wind direction as a bust label.
+  - **Measured 2026-10-02 (Nov 2017, 93,240 events):** 86.5% of direction busts under
+    the plain arithmetic disappear with a circular mean and circular error. The median
+    daily resultant wind is 1.39 m/s, and in 80% of events the forecast or the observed
+    wind is under 2 m/s, where a daily direction is mostly noise.
+  - **Fixed for new runs, 2026-10-02: feature version 2** (`contracts.FEATURE_VERSION`).
+    `abs_error` goes the short way round, `ensemble_spread` is the circular standard
+    deviation of the members, and the time-lagged ensemble pools unit vectors. A run is
+    scored with the version in its manifest; the served run has none, so it keeps
+    version 1 (the old arithmetic) and receives exactly the inputs it was trained on.
+    On the real CI sample, version 1 reproduces `main`'s frame exactly (186,660 rows,
+    56 columns), and version 2 changes only wind-direction rows. Their error p90 falls
+    from 191.0° to 115.1°, and spread p90 from 118.0° to 55.0°. A cached year records its
+    version and is rebuilt on a mismatch. Removing direction from the bust label is a
+    separate change (the bias-corrected label).
 - **The serving box was at 509 MB of 512. Guarded 2026-09-25.**
   - Replay and the ensemble endpoint accepted any `init_date` and scored non-precomputed
     cycles on the box (1,406 MB peak).
