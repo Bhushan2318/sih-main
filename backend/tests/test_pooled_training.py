@@ -374,7 +374,7 @@ def test_cache_year_rebuilds_a_truncated_cache_file(tmp_path, monkeypatch):
 
     built = {}
 
-    def fake_build(init_date_min=None, init_date_max=None):
+    def fake_build(init_date_min=None, init_date_max=None, **_):
         built["called"] = True
         return pd.DataFrame({"init_date": [pd.Timestamp("2000-01-01")], "x": [1.0]}), 1
 
@@ -389,7 +389,7 @@ def test_cache_year_writes_atomically(tmp_path, monkeypatch):
     """A killed write must leave no file at all, never a partial one at the real path."""
     from app.ml import pooled_training as pt
 
-    def exploding_build(init_date_min=None, init_date_max=None):
+    def exploding_build(init_date_min=None, init_date_max=None, **_):
         raise KeyboardInterrupt("killed mid-build")
 
     monkeypatch.setattr(pt, "_build_paired_in_chunks", exploding_build)
@@ -742,7 +742,18 @@ def _cache_with_inf(path, bad_col="laf_spread_ratio"):
     df.loc[df.index[::7], bad_col] = np.inf
     df.loc[df.index[::11], bad_col] = -np.inf
     df.to_parquet(path, index=False, row_group_size=64)
+    _stamp_as_current_cache(path)
     return df
+
+
+def _stamp_as_current_cache(path):
+    """Mark a hand-written cache as built by the current code (feature version in its
+    footer, as cache_year writes it), so cache_year reuses it rather than rebuilding."""
+    import pyarrow.parquet as pq
+    t = pq.read_table(path)
+    meta = dict(t.schema.metadata or {})
+    meta[pt._FEATURE_VERSION_KEY] = str(pt.FEATURE_VERSION).encode()
+    pq.write_table(t.replace_schema_metadata(meta), path, row_group_size=64)
 
 
 def test_ensure_finite_cache_turns_ratio_inf_into_missing_and_keeps_everything_else(tmp_path):
