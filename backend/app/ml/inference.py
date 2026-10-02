@@ -20,6 +20,14 @@ from app.ml.thresholds import Thresholds
 from app.storage import parquet_store
 
 
+def run_feature_version(manifest: dict) -> int:
+    """The feature version a run was trained with, so it is scored with the same
+    arithmetic. A run that predates recorded versions is version 1 - see
+    contracts.FEATURE_VERSION."""
+    from app import contracts
+    return int((manifest or {}).get("feature_version", contracts.LEGACY_FEATURE_VERSION))
+
+
 @dataclass
 class ModelState:
 
@@ -301,6 +309,7 @@ def build_scoring_frame(
         require_observed=False,
         forecast_history=history,
         jump_climatology=state.jump_climatology or None,
+        feature_version=run_feature_version(getattr(state, "manifest", None)),
     )
     del subset, history
     if as_of_init and "forecast_error_lag" in frame.columns:

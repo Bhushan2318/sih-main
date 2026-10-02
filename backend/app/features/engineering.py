@@ -62,6 +62,26 @@ TRAJECTORY_COLUMNS = _TRAJECTORY_KEYS + ["fc_mean"]
 # moisture at 100 where it has no value.
 _SOIL_SATURATED = 99.5
 
+
+def circular_abs_diff_deg(a, b) -> np.ndarray:
+    """|a - b| the short way round the circle, in [0, 180]."""
+    d = np.abs(np.asarray(a, dtype=float) - np.asarray(b, dtype=float)) % 360.0
+    return np.minimum(d, 360.0 - d)
+
+
+def _circular_std_from_r(r) -> np.ndarray:
+    """Circular standard deviation in degrees from the mean resultant length R:
+    sqrt(-2 ln R) radians (Mardia & Jupp). R = 1 (members agree) gives 0."""
+    r = np.clip(np.asarray(r, dtype=float), 1e-12, 1.0)
+    return np.degrees(np.sqrt(-2.0 * np.log(r)))
+
+
+def circular_std_deg(values) -> float:
+    """Circular standard deviation of a set of directions, in degrees."""
+    rad = np.radians(np.asarray(values, dtype=float))
+    r = np.hypot(np.mean(np.sin(rad)), np.mean(np.cos(rad)))
+    return float(_circular_std_from_r(r))
+
 # C3, MJO (Madden-Julian Oscillation): a global daily index, not per-district, attached
 # by an as-of join on init_date - see scripts/fetch_mjo_index.py for why NOAA PSL's OMI
 # rather than BOM's RMM, and for the RMM1/RMM2 transform.
@@ -98,12 +118,29 @@ def observed_means(df: pd.DataFrame) -> pd.DataFrame:
               .agg(agg).rename(columns={"value": "observed_value"}))
 
 
+def _circular_spread(paired: pd.DataFrame) -> None:
+    """In place: `ensemble_spread` of direction rows becomes the circular standard
+    deviation of the event's members (NaN below two members, as `std` gives)."""
+    circ = paired["variable"].isin(_CIRCULAR_VARIABLES).to_numpy()
+    if not circ.any():
+        return
+    sub = paired.loc[circ, EVENT_KEYS + ["variable"]].copy()
+    rad = np.radians(paired.loc[circ, "forecast_value"].to_numpy(dtype=float))
+    sub["_s"], sub["_c"] = np.sin(rad), np.cos(rad)
+    g = sub.groupby(EVENT_KEYS + ["variable"], observed=True)
+    r = np.hypot(g["_s"].transform("mean"), g["_c"].transform("mean"))
+    spread = _circular_std_from_r(r.to_numpy())
+    n = paired.loc[circ, "ensemble_member_count"].to_numpy()
+    paired.loc[circ, "ensemble_spread"] = np.where(n >= 2, spread, np.nan)
+
+
 def build_training_frame(
     canonical: pd.DataFrame,
     historical_bust_freq: dict | None = None,
     require_observed: bool = True,
     forecast_history: pd.DataFrame | None = None,
     jump_climatology: dict | None = None,
+    feature_version: int = contracts.FEATURE_VERSION,
 ) -> pd.DataFrame:
     """`forecast_history` is cycles issued before those in `canonical` - raw forecast rows,
     or trajectories already reduced by forecast_trajectories (app.features.history). They
@@ -122,7 +159,7 @@ def build_training_frame(
     all_trajectories = pd.concat(trajectories, ignore_index=True)
     del trajectories
     jumps = compute_jumpiness(all_trajectories)
-    laf = compute_time_lagged_ensemble(fc, all_trajectories)
+    laf = compute_time_lagged_ensemble(fc, all_trajectories, feature_version=feature_version)
     del all_trajectories
     ob = observed_means(df)
 
@@ -144,6 +181,12 @@ def build_training_frame(
     paired = paired[~sat]
 
     paired["abs_error"] = (paired["forecast_value"] - paired["observed_value"]).abs()
+    if feature_version >= 2:
+        # Direction: the short way round. 355 against 5 is a 10 degree error, not 350.
+        circ = paired["variable"].isin(_CIRCULAR_VARIABLES).to_numpy()
+        if circ.any():
+            paired.loc[circ, "abs_error"] = circular_abs_diff_deg(
+                paired.loc[circ, "forecast_value"], paired.loc[circ, "observed_value"])
     required = ["abs_error", "lead_time_days"] if require_observed else ["lead_time_days"]
     paired = paired.dropna(subset=required)
     if paired.empty:
@@ -166,6 +209,8 @@ def build_training_frame(
     grp = paired.groupby(EVENT_KEYS + ["variable"], observed=True)["forecast_value"]
     paired["ensemble_spread"] = grp.transform("std")
     paired["ensemble_member_count"] = grp.transform("count")
+    if feature_version >= 2:
+        _circular_spread(paired)
 
     paired = _add_rate_of_change(paired)
 
@@ -345,7 +390,9 @@ def _merge_jumpiness(paired: pd.DataFrame, jumps: pd.DataFrame) -> pd.DataFrame:
 
 
 def compute_time_lagged_ensemble(fc: pd.DataFrame, trajectories: pd.DataFrame,
-                                 window: int = LAF_WINDOW) -> pd.DataFrame:
+                                 window: int = LAF_WINDOW,
+                                 feature_version: int = contracts.FEATURE_VERSION
+                                 ) -> pd.DataFrame:
     """laf_pool_mean, laf_pool_std, laf_pool_size and laf_spread_ratio per trajectory row
     (C2, time-lagged ensemble / lagged-average forecasting).
 
@@ -395,6 +442,16 @@ def compute_time_lagged_ensemble(fc: pd.DataFrame, trajectories: pd.DataFrame,
     # full-year training volume, not visible in any small test. See docs/engineering-reference.md: this repo
     # fails on volume, not on a green suite.
     own_stats = g.agg(mean0="mean", var0="var", n0="count").reset_index()
+    if feature_version >= 2:
+        # Direction members as unit vectors (s0, c0 = mean sine and cosine), so the pool
+        # below can be combined on the circle.
+        circ_own = own[own["variable"].isin(_CIRCULAR_VARIABLES)]
+        if not circ_own.empty:
+            rad = np.radians(circ_own["value"].to_numpy(dtype=float))
+            vec = (circ_own[_TRAJECTORY_KEYS].assign(s0=np.sin(rad), c0=np.cos(rad))
+                   .groupby(_TRAJECTORY_KEYS, sort=False, observed=True)[["s0", "c0"]]
+                   .mean().reset_index())
+            own_stats = own_stats.merge(vec, on=_TRAJECTORY_KEYS, how="left")
     del own
 
     out = trajectories.sort_values(_TRAJECTORY_KEYS, ignore_index=True)
@@ -433,6 +490,30 @@ def compute_time_lagged_ensemble(fc: pd.DataFrame, trajectories: pd.DataFrame,
         # ratio is undefined, not infinite. Real 2026-09-21: humidity_pct at saturation,
         # 630-2,205 inf rows in every year 2000-2016, which XGBoost refuses to train on.
         ratio = np.where((own_std == 0) & (n_prior > 0), np.nan, ratio)
+
+    if feature_version >= 2 and "s0" in out.columns:
+        circ = out["variable"].isin(_CIRCULAR_VARIABLES).to_numpy()
+        if circ.any():
+            pool_mean, pool_std, ratio = (np.array(a, dtype=float, copy=True)
+                                          for a in (pool_mean, pool_std, ratio))
+            s0 = out.loc[circ, "s0"].to_numpy(dtype=float)
+            c0 = out.loc[circ, "c0"].to_numpy(dtype=float)
+            n0c, npr, size = n0[circ], n_prior[circ], pool_size[circ]
+            if prior.size:
+                prad = np.radians(prior[circ])
+                ps, pc = np.nansum(np.sin(prad), axis=1), np.nansum(np.cos(prad), axis=1)
+            else:
+                ps = pc = np.zeros(int(circ.sum()))
+            with np.errstate(invalid="ignore", divide="ignore"):
+                S, C = n0c * s0 + ps, n0c * c0 + pc
+                pool_mean[circ] = np.degrees(np.arctan2(S, C)) % 360.0
+                pstd = np.where(size >= 2, _circular_std_from_r(np.hypot(S, C) / size), np.nan)
+                ostd = np.where(n0c >= 2, _circular_std_from_r(np.hypot(s0, c0)), np.nan)
+                r = np.where(npr == 0, 1.0, pstd / ostd)
+                r = np.where(n0c < 2, np.nan, r)
+                r = np.where((ostd == 0) & (npr > 0), np.nan, r)
+            pool_std[circ], ratio[circ] = pstd, r
+        out = out.drop(columns=["s0", "c0"])
 
     out["laf_pool_mean"] = pool_mean
     out["laf_pool_std"] = pool_std

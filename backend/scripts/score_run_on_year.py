@@ -68,7 +68,9 @@ def score_run_on_year(run_id: str, year: int, as_of_issue_time: bool = False) ->
 
     lo = pd.Timestamp(f"{year}-01-01")
     hi = pd.Timestamp(f"{year}-12-31")
-    paired, _ = _build_paired_in_chunks(init_date_min=lo, init_date_max=hi)
+    paired, _ = _build_paired_in_chunks(
+        init_date_min=lo, init_date_max=hi,
+        feature_version=inference.run_feature_version(getattr(state, "manifest", None)))
     if paired.empty:
         raise ValueError(f"no paired forecast+observation data for {year} in the store")
 
