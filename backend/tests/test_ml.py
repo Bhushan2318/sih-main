@@ -245,10 +245,26 @@ def test_thresholds_are_fit_on_the_train_split_only(_retrain):
     # significant digit (2.50132446 vs 2.50133672), which is not the leak this test guards.
     paired = _downcast_paired(fe.build_training_frame(read_dataset()))
     train_c, _, _ = _split_by_cycle(paired)
-    tr = paired[paired["init_date"].isin(train_c)]
+    tr = paired[paired["init_date"].isin(train_c)].copy()
 
-    train_only = compute_error_thresholds(_event_mean_error(tr), percentile=90.0)
-    full_data = compute_error_thresholds(_event_mean_error(paired), percentile=90.0)
+    # Label version 2: the pipeline removes the training-split bias first (app/features/
+    # bias.py) and thresholds label variables only - recompute the same way. The bias is
+    # itself fitted on the training split, so the full-data comparison below uses it too.
+    from app.features import bias as bias_mod
+    bias_events = (tr.groupby(fe.EVENT_KEYS + ["variable", "season"], observed=True)
+                     .agg(fc_mean=("forecast_value", "mean"), obs=("observed_value", "mean"))
+                     .reset_index())
+    table = bias_mod.fit_bias_table(bias_events)
+
+    def corrected_event_errors(frame):
+        frame = bias_mod.apply_bias(frame.copy(), table)
+        label = bias_mod.label_variable_mask(frame["variable"])
+        frame = frame[~label | np.isfinite(frame["abs_error"].to_numpy(dtype=float))]
+        ev = _event_mean_error(frame)
+        return ev[bias_mod.label_variable_mask(ev["variable"])]
+
+    train_only = compute_error_thresholds(corrected_event_errors(tr), percentile=90.0)
+    full_data = compute_error_thresholds(corrected_event_errors(paired), percentile=90.0)
     published = report.thresholds["bust_threshold"]
 
     for var, value in published.items():

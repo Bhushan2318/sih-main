@@ -317,9 +317,10 @@ def build_scoring_frame(
         feature_version=run_feature_version(getattr(state, "manifest", None)),
     )
     del subset, history
-    if state.bias_table is not None:
+    bias_table = getattr(state, "bias_table", None)
+    if bias_table is not None:
         from app.features.bias import apply_bias
-        frame = apply_bias(frame, state.bias_table)
+        frame = apply_bias(frame, bias_table)
     if as_of_init and "forecast_error_lag" in frame.columns:
         frame["forecast_error_lag"] = np.nan
     return frame
@@ -566,8 +567,15 @@ def refresh_observations(scored: ScoredCycle) -> ScoredCycle:
     # The event frame's actual_err_<var> is |forecast mean - observed| (pivot.build_event_frame),
     # and the forecast mean is per_variable's predicted_value; restated from the refreshed
     # observations so the two tables describe the same ones. No classifier input reads it.
+    fc = pv["predicted_value"].to_numpy(dtype=float)
+    if "bias_correction" in pv.columns:
+        # Label version 2: the label is on the corrected forecast, so the restated error is
+        # too. A label variable whose cell had no bias has no corrected error (NaN).
+        from app.features.bias import label_variable_mask
+        label = label_variable_mask(pv["variable"])
+        fc = np.where(label, fc - pv["bias_correction"].to_numpy(dtype=float), fc)
     err = pv.assign(region_id=pv["region_id"].astype(str), variable=pv["variable"].astype(str),
-                    actual_err=(pv["predicted_value"] - pv["observed_value"]).abs())
+                    actual_err=np.abs(fc - pv["observed_value"].to_numpy(dtype=float)))
     err = err.pivot(index=["region_id", "lead_time_days"], columns="variable",
                     values="actual_err")
     ev = scored.events.drop(columns=[c for c in scored.events.columns
@@ -582,15 +590,22 @@ def refresh_observations(scored: ScoredCycle) -> ScoredCycle:
 
 
 def _per_variable_table(scored: pd.DataFrame, state: ModelState) -> pd.DataFrame:
+    # predicted_value is GEFS's own forecast mean - what the site shows - even for a run
+    # that reads the bias-corrected forecast (label version 2); the bias removed is kept
+    # beside it so a restated error can be the corrected one (refresh_observations).
+    shown = "forecast_value_raw" if "forecast_value_raw" in scored.columns else "forecast_value"
+    extra = ({"bias_correction": ("bias_correction", "mean")}
+             if "bias_correction" in scored.columns else {})
     g = (
         scored.groupby(["region_id", "lead_time_days", "variable", "valid_date"],
                        observed=True)
         .agg(
-            predicted_value=("forecast_value", "mean"),
+            predicted_value=(shown, "mean"),
             observed_value=("observed_value", "mean"),
             predicted_error=("pred_err", "mean"),
             ensemble_spread=("ensemble_spread", "mean"),
             ensemble_member_count=("ensemble_member_count", "max"),
+            **extra,
         )
         .reset_index()
     )

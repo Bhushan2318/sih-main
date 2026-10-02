@@ -162,6 +162,10 @@ def apply_bias(frame: pd.DataFrame, table: pd.DataFrame) -> pd.DataFrame:
     forecast and error - it cannot be corrected, so it is not compared. Other variables'
     rows are untouched; their `bias_correction` is NaN."""
     b = bias_for(frame, table)
+    if "forecast_value_raw" not in frame.columns:
+        # GEFS's own forecast, kept for display: the site shows the forecast that might
+        # bust, not the corrected value the model reads.
+        frame["forecast_value_raw"] = frame["forecast_value"].to_numpy(dtype=float)
     frame["bias_correction"] = b
     label = label_variable_mask(frame["variable"])
     fv = frame["forecast_value"].to_numpy(dtype=float).copy()

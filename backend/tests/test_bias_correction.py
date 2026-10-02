@@ -160,3 +160,11 @@ def test_wind_direction_is_not_a_label_variable():
     assert "wind_direction_deg" not in contracts.LABEL_VARIABLES
     assert "temperature_c" in contracts.LABEL_VARIABLES
     assert contracts.LABEL_VERSION == 2
+
+
+def test_gefs_own_forecast_is_kept_for_display():
+    """The site shows the forecast that might bust, not the corrected value the model reads."""
+    df = _members([30.0, 31.0], [28.0, 28.0])
+    out = bias.apply_bias(df, _table(2.0))
+    assert out["forecast_value_raw"].tolist() == pytest.approx([30.0, 31.0])
+    assert out["forecast_value"].tolist() == pytest.approx([28.0, 29.0])
