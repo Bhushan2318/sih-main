@@ -1003,18 +1003,36 @@ def _run_variable_subprocess(cached: dict, train_years: list, variable: str,
            "skipped": msg, "error": msg}
 
 
+def _checkpoint_context(cached_paths: dict, train_years: list) -> dict:
+    """Everything besides the split and the params that a variable's result depends on:
+    the features it reads (from the cached schema), the training code, the cached data
+    itself and the libraries that fit it. See app/ml/provenance.py."""
+    from app.ml import provenance
+    return {"features": _feature_columns_for(cached_paths, train_years),
+            "code": provenance.source_fingerprint(),
+            "cache": provenance.cache_fingerprint(cached_paths),
+            "libraries": provenance.library_versions()}
+
+
 def _variable_checkpoint_path(cache_dir: Path, variable: str, train_years: list,
-                              train_cycles, val_cycles: set) -> Path:
+                              train_cycles, val_cycles: set,
+                              context: "dict | None" = None) -> Path:
     """Where one variable's finished worker result is kept between runs.
 
     At seventeen years a variable takes about an hour, and the results used to live only
     in the parent's memory: a failure in any later stage threw every finished variable
     away (2026-09-21, four finished CUDA variables lost with the run). The key covers
     everything the result depends on - the pool, the exact train and validation cycles
-    (validation row numbering follows from them), and the model parameters - so a
-    changed split or changed params never picks up a stale result."""
+    (validation row numbering follows from them), the model parameters, and `context`
+    (`_checkpoint_context`: features, code, cached data, libraries) - so a changed
+    split, params, feature list, label code or cache never picks up a stale result. It
+    did before `context` existed: a retrain without forecast_error_lag would have reused
+    regressors that still expected it."""
     import hashlib
+    from app.ml import provenance
     h = hashlib.sha256()
+    if context is not None:
+        h.update(provenance.context_digest(context))
     h.update(repr(sorted(train_years)).encode())
     if isinstance(train_cycles, list):  # staged fit: the chunking itself is part of the key
         h.update(b"staged")
@@ -1639,6 +1657,7 @@ def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
     print(f"[pooled] regressors fit ({fit_mode}) on {n_fit} of {len(train_c)} training cycles"
           + (f" in {len(fit_c)} chunks" if fit_mode == "staged" else ""),
           file=sys.stderr, flush=True)
+    ckpt_context = _checkpoint_context({y: cached[y] for y in train_years}, train_years)
 
     # Split the variables across GPU and CPU devices, both running against the same `va`
     # and `hbf`. Each half returns its own partial results; the halves touch disjoint
@@ -1655,7 +1674,8 @@ def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
         g_artifacts, g_skipped, g_fold_models = {}, {}, {}
         g_val_pred = pd.Series(np.nan, index=pd.RangeIndex(n_va), dtype=float)
         for var in var_subset:
-            ckpt = _variable_checkpoint_path(cache_dir, var, train_years, fit_c, val_c)
+            ckpt = _variable_checkpoint_path(cache_dir, var, train_years, fit_c, val_c,
+                                             context=ckpt_context)
             result = _load_variable_checkpoint(ckpt)
             if result is not None:
                 print(f"[pooled] {var} reused from checkpoint {ckpt.name}",
@@ -1771,10 +1791,14 @@ def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
     registry.save_historical_bust_freq(rid, hbf)
     registry.save_metrics(rid, {"regressors": report.regressor_metrics,
                                "classifier": report.classifier_metrics})
+    from app.ml import provenance
     registry.save_manifest(rid, {
         "run_id": rid, "pooled_train_years": train_years, "test_year": test_year,
         "split_cycles": report.split_cycles, "modelled_variables": report.modelled_variables,
         "skipped_variables": report.skipped_variables,
+        "provenance": {**provenance.run_provenance(fit_mode=fit_mode,
+                                                   max_fit_cycles=MAX_FIT_CYCLES),
+                       "cache_sha256": ckpt_context["cache"]},
     })
 
     # The rows this run was just scored on, kept rather than dropped - see
