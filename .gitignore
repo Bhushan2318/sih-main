@@ -64,6 +64,8 @@ docs/results.md
 # scripts/ingest_districts_chunked.py is running.
 backend/data/_ingest_chunks/
 backend/data/samples/_era5_cds/
+# Estimator v2 per-cell daily components and ERA5's land-sea mask (~7 MB per month).
+backend/data/samples/_era5_cds_v2/
 backend/data/samples/era5_cds_district_observations_india_*.parquet
 backend/data/samples/*_labelled.parquet
 # Gridded fields for the convolutional model: ~3.9 MB per cycle, ~1.5 GB for a year.

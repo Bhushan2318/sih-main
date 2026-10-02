@@ -74,6 +74,7 @@ import requests
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.ingestion import grid_fields as gf                            # noqa: E402
+from app.utils.humidity import rh_from_specific_humidity, wind_speed_dir  # noqa: E402,F401
 from app.utils.india_districts import get_aggregator, load_registry    # noqa: E402
 
 # --------------------------------------------------------------------------------------
@@ -411,20 +412,8 @@ def extract_grid(grib_bytes: bytes, spec: dict) -> tuple[np.ndarray, np.ndarray]
 # Canonicalisation
 # --------------------------------------------------------------------------------------
 
-def rh_from_specific_humidity(q: np.ndarray, t_k: np.ndarray, p_pa: np.ndarray) -> np.ndarray:
-    """Relative humidity [%] from specific humidity, temperature, pressure.
-
-    Bolton (1980) saturation vapour pressure; standard q -> vapour-pressure inversion.
-    """
-    e = q * p_pa / (0.622 + 0.378 * q)
-    es = 611.2 * np.exp(17.67 * (t_k - 273.15) / (t_k - 29.65))
-    return np.clip(100.0 * e / es, 0.0, 100.0)
-
-
-def wind_speed_dir(u: np.ndarray, v: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    spd = np.sqrt(u**2 + v**2)
-    direction = (270.0 - np.degrees(np.arctan2(v, u))) % 360.0
-    return spd, direction
+# rh_from_specific_humidity and wind_speed_dir live in app.utils.humidity, shared with the
+# ERA5 observation fetch so the two sides of the bust label cannot drift apart.
 
 
 # canonical wide-column name per grib prefix (post daily-aggregation, pre final unit fix)
