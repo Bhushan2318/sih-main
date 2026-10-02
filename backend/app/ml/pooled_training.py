@@ -39,6 +39,7 @@ A regressor trained via `xgb.train()` on a `QuantileDMatrix` is a `Booster`, not
 from __future__ import annotations
 
 import gc
+import json
 import pickle
 import shutil
 import subprocess
@@ -82,13 +83,18 @@ def cache_year(year: int, cache_dir: Path) -> Path:
     # during a disk squeeze, leaving paired_2000.parquet truncated at 1.59 GB of 3.65 GB;
     # every later run reused it unread, and the pooled run died nine hours on in
     # pooled_split, after re-caching seventeen other years for nothing.
+    from app.storage import parquet_store
+    signature = parquet_store.year_batch_signature(year)
     if path.exists():
-        if _readable_parquet(path) and cached_feature_version(path) == FEATURE_VERSION:
+        if (_readable_parquet(path) and cached_feature_version(path) == FEATURE_VERSION
+                and cached_store_signature(path) == signature):
             _report_finite_repair(path)
             return path
         if _readable_parquet(path):
-            print(f"[pooled] {path.name} was built with feature version "
-                  f"{cached_feature_version(path)}, not {FEATURE_VERSION}: rebuilding",
+            why = (f"feature version {cached_feature_version(path)}, not {FEATURE_VERSION}"
+                   if cached_feature_version(path) != FEATURE_VERSION
+                   else "a different set of store batches than the store holds now")
+            print(f"[pooled] {path.name} was built from {why}: rebuilding",
                   file=sys.stderr, flush=True)
         path.unlink()
     lo, hi = pd.Timestamp(f"{year}-01-01"), pd.Timestamp(f"{year}-12-31")
@@ -106,6 +112,7 @@ def cache_year(year: int, cache_dir: Path) -> Path:
     del paired
     meta = dict(table.schema.metadata or {})
     meta[_FEATURE_VERSION_KEY] = str(FEATURE_VERSION).encode()
+    meta[_STORE_SIGNATURE_KEY] = json.dumps(signature, sort_keys=True).encode()
     pq.write_table(table.replace_schema_metadata(meta), tmp)
     del table
     tmp.replace(path)
@@ -114,6 +121,18 @@ def cache_year(year: int, cache_dir: Path) -> Path:
 
 
 _FEATURE_VERSION_KEY = b"sanket_feature_version"
+_STORE_SIGNATURE_KEY = b"sanket_store_batches"
+
+
+def cached_store_signature(path: Path) -> "list | None":
+    """The store batches a cached year was built from (parquet_store.year_batch_signature),
+    or None for a cache written before that was recorded - which is then rebuilt, because
+    nothing says what it was built from (the 2016/2017 caches kept IMD rainfall after the
+    IMD batches were moved out)."""
+    import pyarrow.parquet as pq
+    meta = pq.ParquetFile(path).schema_arrow.metadata or {}
+    raw = meta.get(_STORE_SIGNATURE_KEY)
+    return json.loads(raw) if raw else None
 
 
 def cached_feature_version(path: Path) -> int:

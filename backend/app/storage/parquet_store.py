@@ -5,7 +5,7 @@ import logging
 import os
 import shutil
 import threading
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Iterable, Sequence
 
@@ -140,6 +140,94 @@ def drop_batch(batch_id: str) -> None:
     part_dir = _partition_dir(batch_id)
     if part_dir.exists():
         shutil.rmtree(part_dir)
+
+
+# Upload-batch statuses whose rows must never reach a training frame. 'quarantined' is set
+# when a batch is found wrong (the IMD rainfall that sat a day late, 2026-09-26); 'retired'
+# when a batch is superseded (v1 ERA5 observations replaced by estimator v2).
+EXCLUDED_BATCH_STATUSES = ("quarantined", "retired")
+
+
+def present_batch_ids() -> set:
+    """Batch ids that have files in the store."""
+    if not CANONICAL_DIR.exists():
+        return set()
+    return {p.name.split("=", 1)[1] for p in CANONICAL_DIR.glob("batch_id=*") if p.is_dir()}
+
+
+def excluded_batch_ids() -> set:
+    """Batch ids whose upload_batch status says they must not be used."""
+    from app.db.base import get_session
+    from app.db.models import UploadBatch
+    with get_session() as s:
+        rows = s.query(UploadBatch.id).filter(
+            UploadBatch.status.in_(EXCLUDED_BATCH_STATUSES)).all()
+    return {r[0] for r in rows}
+
+
+def assert_no_excluded_batches() -> None:
+    """Refuse to build training frames while a quarantined or retired batch is on disk.
+
+    The status alone used to be the whole protection, and nothing read it: restoring a
+    quarantined batch's files would have put it straight back into training, where a later
+    ingest wins the dedupe. Move the batch out of the store (`MOVED.md` in its backup
+    folder says how) or change its status deliberately."""
+    present = present_batch_ids()
+    if not present:
+        return
+    bad = sorted(present & excluded_batch_ids())
+    if bad:
+        raise RuntimeError(
+            f"{len(bad)} quarantined/retired batch(es) are in the store at {CANONICAL_DIR}: "
+            f"{bad[:5]} - move them out (see the backup folder's MOVED.md) before training")
+
+
+def batch_spans() -> dict:
+    """batch_id -> {min, max (valid_date), rows, bytes}, from Parquet footers only."""
+    import pyarrow.parquet as pq
+    out = {}
+    for bid in sorted(present_batch_ids()):
+        lo = hi = None
+        rows = size = 0
+        for f in sorted(_partition_dir(bid).glob("*.parquet")):
+            pf = pq.ParquetFile(f)
+            md = pf.metadata
+            rows += md.num_rows
+            size += f.stat().st_size
+            names = list(pf.schema_arrow.names)
+            if "valid_date" not in names:
+                continue
+            col = names.index("valid_date")
+            for i in range(md.num_row_groups):
+                st = md.row_group(i).column(col).statistics
+                if st is None or not st.has_min_max:
+                    lo = hi = None   # unknown span: treated as reaching every year
+                    break
+                lo = st.min if lo is None else min(lo, st.min)
+                hi = st.max if hi is None else max(hi, st.max)
+        out[bid] = {"min": lo, "max": hi, "rows": rows, "bytes": size}
+    return out
+
+
+# A cached year reads observations from _OBS_PAD_DAYS before 1 January to its last cycle
+# + _MAX_LEAD_DAYS + _OBS_PAD_DAYS (train_pipeline._build_paired_in_chunks: 3 and 10).
+_YEAR_REACH_BEFORE_DAYS = 3
+_YEAR_REACH_AFTER_DAYS = 10 + 3
+
+
+def year_batch_signature(year: int) -> list:
+    """The store batches a cached `year` is built from: every batch whose valid dates reach
+    the year's window, with its row count and bytes. A cache records this and is rebuilt
+    when it changes; a batch for another year leaves it alone."""
+    lo = date(year, 1, 1) - timedelta(days=_YEAR_REACH_BEFORE_DAYS)
+    hi = date(year, 12, 31) + timedelta(days=_YEAR_REACH_AFTER_DAYS)
+    sig = []
+    for bid, sp in batch_spans().items():
+        reaches = (sp["min"] is None or sp["max"] is None
+                   or (sp["min"] <= hi and sp["max"] >= lo))
+        if reaches:
+            sig.append({"batch_id": bid, "rows": int(sp["rows"]), "bytes": int(sp["bytes"])})
+    return sig
 
 
 def store_fingerprint() -> str:
