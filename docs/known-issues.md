@@ -765,6 +765,30 @@ here rather than discovered live.
   fixed here - fixing it means deciding the land-mask rule once and re-ingesting the
   affected years, not patching the reader, and it should be one decision rather than four
   districts' worth of special cases.
+
+  **Decided and implemented 2026-10-02 (feature version 2).**
+  - **Why a district list and not a cell mask.** The ideal fix, a land mask in the
+    weight table, would need the forecast side re-aggregated cell by cell. The archive
+    holds district means per member, and the grid bundles only the ensemble mean and
+    spread, so that means refetching GEFS (CONTRIBUTING.md rule 7).
+  - **The rule.** Soil moisture is dropped, on both sides, for a district whose weight
+    is more than 5% GEFS sea (`engineering.SOIL_SEA_FRACTION_MAX`).
+  - **The mask.** `data/geo/soil_land_mask.parquet`, built by
+    `scripts/build_soil_land_mask.py`. A GEFS sea cell is one at ≥ 0.9 in at least 95%
+    of the 730 valid 2017-2018 cycles; that gives 8,586 of the domain's 20,445 cells.
+  - **The 18 districts excluded:** Nicobar Islands, Lakshadweep, Diu, Mumbai City, Mahe,
+    Daman, South Andaman, Gir Somnath, Kachchh, Kasaragod, Ramanathapuram, North &
+    Middle Andaman, Udupi, Mumbai Suburban, Kannur, Junagadh, Dakshina Kannada,
+    Jagatsinghapur. Every other variable in them is kept.
+  - **Below 5%,** sea moves a district's GEFS soil by at most ~3.5 points, mostly
+    steadily, and the bias correction removes the steady part.
+  - **The observation side** needs no district rule: estimator-v2 observations average
+    ERA5 soil over cells ERA5's own mask calls at least half land.
+  - **Why ERA5 water is not a criterion.** Excluding on it too would have dropped 26 more
+    coastal districts (Kerala, Goa, the Odisha coast) whose GEFS cells are land.
+  - **This assumes v2 observations;** v1 averaged ERA5's water in as ~0.
+  - **Not covered:** Lahul & Spiti's high soil values (snow or ice) are not sea, and are
+    left to the bias correction.
 - **The parser test's collected count is not portable across machines.**
   `tests/test_parsers.py` runs one test per real file `conftest.iter_sample_files()`
   finds, which scans two roots: `backend/data/samples/` (repo, real fetch output) and,
