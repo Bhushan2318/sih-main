@@ -27,6 +27,14 @@ from app.ml.baselines import ALL_BASELINES, EMOSBaseline, brier, fit_all
 rng = np.random.default_rng(0)
 
 
+def _with_event_context(df: pd.DataFrame) -> pd.DataFrame:
+    """Every ladder file carries the event keys and season; the district x season
+    rung reads them. Placeholder district ids, a separate generator so the
+    fixture's own draws are unchanged."""
+    r = np.random.default_rng(99)
+    return df.assign(region_id=r.choice(["D1", "D2", "D3"], len(df)), season="JJAS")
+
+
 def _events(n=4000, spread_scale=1.0, seed=0):
     """Errors whose magnitude genuinely scales with the ensemble spread - the structure
     EMOS exists to exploit. Not a metric fixture: this is plumbing, and no score from it
@@ -40,7 +48,7 @@ def _events(n=4000, spread_scale=1.0, seed=0):
         "spread_rainfall_mm": spread,
         "lead_time_days": r.integers(1, 11, n),
         "y_bust": (err >= thr).astype(int),
-    })
+    }).pipe(_with_event_context)
 
 
 def test_it_is_on_the_ladder():

@@ -19,6 +19,14 @@ from app.ml.baselines import ALL_BASELINES, AnalogBaseline, brier, fit_all
 rng = np.random.default_rng(0)
 
 
+def _with_event_context(df: pd.DataFrame) -> pd.DataFrame:
+    """Every ladder file carries the event keys and season; the district x season
+    rung reads them. Placeholder district ids, a separate generator so the
+    fixture's own draws are unchanged."""
+    r = np.random.default_rng(99)
+    return df.assign(region_id=r.choice(["D1", "D2", "D3"], len(df)), season="JJAS")
+
+
 def _events(n=2000, seed=0):
     """Two well-separated clusters in (lead_time_days, spread_mean) with different bust
     rates - the structure a neighbour lookup exists to exploit. Not a metric fixture."""
@@ -34,7 +42,7 @@ def _events(n=2000, seed=0):
         "lead_time_days": np.concatenate([lead_a, lead_b]),
         "spread_mean": np.concatenate([spread_a, spread_b]),
         "y_bust": np.concatenate([y_a, y_b]),
-    })
+    }).pipe(_with_event_context)
 
 
 def test_it_is_on_the_ladder():

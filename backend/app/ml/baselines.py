@@ -80,6 +80,44 @@ class ClimatologyBaseline(_Base):
 
 
 @dataclass
+class DistrictSeasonFrequencyBaseline(_Base):
+    """Each (district, season)'s training bust rate - no forecast information at all.
+
+    On the served run's 2017 test set this scored ROC-AUC 0.652, above every rung the
+    ladder had, so a model must clearly beat it to show it reads the forecast. A cell
+    with fewer than `min_events` training events backs off to its season's rate, and an
+    unseen season to the overall rate - never to an invented number.
+    """
+
+    name: str = "district_season_frequency"
+    min_events: int = 30
+    _cell: dict = field(default_factory=dict)
+    _season: dict = field(default_factory=dict)
+
+    def _design(self, ev: pd.DataFrame) -> pd.DataFrame:  # not a logistic model
+        return pd.DataFrame(index=ev.index)
+
+    def fit(self, train_events: pd.DataFrame) -> "DistrictSeasonFrequencyBaseline":
+        y = np.asarray(train_events[LABEL], float)
+        self.base_rate = float(y.mean()) if len(y) else float("nan")
+        self._model, self.features = None, ["region_id", "season"]
+        df = pd.DataFrame({"r": train_events["region_id"].astype(str).to_numpy(),
+                           "s": train_events["season"].astype(str).to_numpy(), "y": y})
+        cell = df.groupby(["r", "s"])["y"].agg(["mean", "size"])
+        self._cell = {k: float(v) for k, v in
+                      cell.loc[cell["size"] >= self.min_events, "mean"].items()}
+        self._season = {k: float(v) for k, v in df.groupby("s")["y"].mean().items()}
+        return self
+
+    def predict_proba(self, events: pd.DataFrame) -> np.ndarray:
+        r = events["region_id"].astype(str).to_numpy()
+        s = events["season"].astype(str).to_numpy()
+        out = np.array([self._cell.get((ri, si), self._season.get(si, self.base_rate))
+                        for ri, si in zip(r, s)], dtype=float)
+        return _clip(out)
+
+
+@dataclass
 class LeadDayBaseline(_Base):
 
     name: str = "lead_day"
@@ -420,7 +458,8 @@ class AnalogBaseline(_Base):
         return _clip(proba[:, 1])
 
 
-ALL_BASELINES = (ClimatologyBaseline, LeadDayBaseline, SpreadBaseline,
+ALL_BASELINES = (ClimatologyBaseline, DistrictSeasonFrequencyBaseline, LeadDayBaseline,
+                 SpreadBaseline,
                  LeadSpreadSeasonBaseline, EMOSBaseline, IDRBaseline, AnalogBaseline)
 
 
