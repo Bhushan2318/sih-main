@@ -63,6 +63,12 @@ def _latest_eval() -> Path:
     return files[-1]
 
 
+# Intervals resample runs of 30 consecutive daily cycles: consecutive cycles share 9 of
+# their 10 valid dates, so single cycles are not independent draws (see
+# verification.block_bootstrap_ci).
+CI_BLOCK_CYCLES = 30
+
+
 def _git_sha() -> str:
     try:
         return subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=BACKEND_DIR,
@@ -98,7 +104,8 @@ def _metrics(y, proba, ref, cycles, y_calib, p_calib) -> dict:
     m = clf_mod._evaluate(y, proba)
     m["bss"] = bl.brier_skill_score(y, proba, ref)
     m["z_auc"] = ver.binormal_auc(y, proba)
-    m["roc_auc_ci"] = ver.block_bootstrap_ci(y, proba, cycles, metric_fn=ver.trapezoidal_auc)
+    m["roc_auc_ci"] = ver.block_bootstrap_ci(y, proba, cycles, metric_fn=ver.trapezoidal_auc,
+                                             block_len=CI_BLOCK_CYCLES)
     m["corp_reliability"] = ver.corp_reliability_curve(y, proba)
     m["brier_decomposition"] = ver.brier_decomposition(y, proba)
     m["sedi"] = ver.sedi(y, proba)
