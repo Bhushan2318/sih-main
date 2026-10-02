@@ -183,9 +183,12 @@ What is stable enough to write down is how the evidence is built:
   whole forecast cycles; the binormal Z-AUC of Shanker, Sarkar & Mamgain (NCMRWF, QJRMS
   2024); the CORP reliability decomposition; SEDI; relative economic value; and conformal
   coverage measured on the test rows.
-- **Leakage is tested for.** Bust thresholds are fitted on the training split only,
-  out-of-fold folds are grouped by forecast cycle, and no observed day sits on both sides
-  of the split. Each of those is enforced by a test.
+- **Leakage is tested for.** Bust thresholds are fitted on the training split only.
+  Out-of-fold folds are 30-day blocks of forecast cycles. And no observed day sits on both
+  sides of any split or fold: a Day-10 forecast verifies nine days after it is issued, so
+  every boundary keeps a 10-day gap. Each of those is enforced by a test. Until
+  2026-10-02 the pooled retrain kept no gap and its folds alternated day by day, so
+  neighbouring forecasts that share 9 of their 10 verified days sat on opposite sides.
 - **What the tests missed is written down.** An audit on 2026-09-25 found two things that
   make the current held-out scores look better than live use. One input, the previous
   lead day's realised error, is something no live forecast can have. And the 2016–2017

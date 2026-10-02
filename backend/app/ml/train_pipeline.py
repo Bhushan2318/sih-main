@@ -206,6 +206,19 @@ def _fit_jump_climatology(train: pd.DataFrame, others) -> dict:
     return clim
 
 
+# A cycle issued on day d is verified against the observations of days d .. d+9 (Day 1-10,
+# valid_date = init + (lead - 1)). Two cycles less than this many days apart share at
+# least one observed day, so no split boundary is closer than this.
+SPLIT_EMBARGO_DAYS = 10
+
+
+def _embargo_before(cycles: list, boundary) -> list:
+    """`cycles` (sorted) without those that share an observed day with a cycle at or
+    after `boundary`."""
+    cut = pd.Timestamp(boundary) - pd.Timedelta(days=SPLIT_EMBARGO_DAYS)
+    return [c for c in cycles if pd.Timestamp(c) <= cut]
+
+
 def _split_by_cycle(paired: pd.DataFrame):
     cycles = sorted(paired["init_date"].dropna().unique())
     n = len(cycles)
@@ -213,7 +226,12 @@ def _split_by_cycle(paired: pd.DataFrame):
         return set(cycles), set(), set()
     a = max(1, int(round(n * TRAIN_FRAC)))
     b = max(a + 1, int(round(n * (TRAIN_FRAC + VAL_FRAC))))
-    return set(cycles[:a]), set(cycles[a:b]), set(cycles[b:])
+    train, val, test = cycles[:a], cycles[a:b], cycles[b:]
+    # No observed day on both sides of a boundary (SPLIT_EMBARGO_DAYS).
+    if test:
+        val = _embargo_before(val, test[0])
+    train = _embargo_before(train, val[0] if val else (test[0] if test else train[-1]))
+    return set(train), set(val), set(test)
 
 
 def _split_by_year(paired: pd.DataFrame, test_year: int):
@@ -235,7 +253,15 @@ def _split_by_year(paired: pd.DataFrame, test_year: int):
         return set(pre), set(), test_c
     a = max(1, int(round(n * TRAIN_FRAC / (TRAIN_FRAC + VAL_FRAC))))
     a = min(a, n - 1)
-    return set(pre[:a]), set(pre[a:]), test_c
+    train, val = pre[:a], pre[a:]
+    # No observed day on both sides of a boundary (SPLIT_EMBARGO_DAYS).
+    if test_c:
+        val = _embargo_before(val, min(test_c))
+    if val:
+        train = _embargo_before(train, val[0])
+    elif test_c:
+        train = _embargo_before(train, min(test_c))
+    return set(train), set(val), test_c
 
 
 def _choose_split(paired: pd.DataFrame, test_year: int | None = None):
