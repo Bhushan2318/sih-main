@@ -309,7 +309,7 @@ def build_scoring_frame(
         require_observed=False,
         forecast_history=history,
         jump_climatology=state.jump_climatology or None,
-        feature_version=run_feature_version(state.manifest),
+        feature_version=run_feature_version(getattr(state, "manifest", None)),
     )
     del subset, history
     if as_of_init and "forecast_error_lag" in frame.columns:
