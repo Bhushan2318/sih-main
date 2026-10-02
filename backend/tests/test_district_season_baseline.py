@@ -1,8 +1,8 @@
 """The district x season bust-frequency baseline.
 
 "How often has this district busted in this season?" needs no forecast at all, and on the
-served run's 2017 test set it scored ROC-AUC 0.652 - above every rung the ladder had
-(the best, EMOS, 0.626). A model that does not clearly beat it has not shown it reads the
+served run's 2017 test set it scored ROC-AUC 0.6715 - above every baseline rung the ladder
+had (the best, EMOS, 0.6256). A model that does not clearly beat it has not shown it reads the
 forecast. So it is a rung.
 
 Frames here are hand-built for the arithmetic of the rates and the back-off.
