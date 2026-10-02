@@ -105,7 +105,10 @@ def test_pooled_split_holds_the_test_year_out_entirely(tmp_path):
 
     assert test_c == set(pd.to_datetime(y2001["init_date"]))
     assert not (train_c | val_c) & test_c
-    assert train_c | val_c == set(pd.to_datetime(y2000["init_date"]))
+    # Train and validation come only from the earlier year. Not all of it: cycles within
+    # 9 days of a later split are dropped so no observed day sits on both sides
+    # (SPLIT_EMBARGO_DAYS; tests/test_split_embargo.py).
+    assert train_c | val_c <= set(pd.to_datetime(y2000["init_date"]))
 
 
 def test_assign_folds_covers_every_cycle_and_is_deterministic():
