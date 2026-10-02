@@ -687,8 +687,8 @@ def test_fit_cycles_caps_a_large_pool_and_spans_every_year_and_season():
 
 
 def test_fit_cycles_leaves_every_oof_fold_with_training_cycles():
-    """assign_folds numbers sorted cycles i % 3 - an every-third-day sample would put
-    every kept cycle in one fold and leave that fold's model nothing to train on."""
+    """Every OOF fold (assign_folds' 30-day blocks) must keep a share of the sampled
+    cycles, or that fold's model has nothing to train on."""
     cycles = _daily_cycles(range(2000, 2017))
     fold_of = pt.assign_folds(cycles)
     got = pt.fit_cycles(cycles, cap=2000)
