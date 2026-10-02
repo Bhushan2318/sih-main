@@ -416,6 +416,50 @@ def build_cells_daily(years: list[int], months: list[int] | None = None,
                     z.unlink()
 
 
+V2_STEM = "era5_cds_v2_district_observations_india_{year}"
+SOURCE_V2 = (SOURCE + "; estimator v2: daily means of q, T, sp, u, v at the forecast's "
+             "3-hourly instants, district-averaged, then RH and wind derived; soil from "
+             "ERA5 land cells (lsm >= 0.5)")
+
+
+def land_sea_mask_path() -> Path:
+    return V2_DIR / "land_sea_mask.parquet"
+
+
+def build_v2_district_year(year: int) -> Path:
+    """One year's district observations from its twelve `cells_daily` months.
+
+    Refuses a year with any month missing - a partial year ingested as a year would
+    train on part of it while reporting all of it - and refuses without ERA5's land-sea
+    mask, because soil over water would then be averaged in as ~0. Same columns as the v1
+    year file, so ingest treats it as a drop-in replacement; `source` names the estimator.
+    """
+    from app.utils.district_observations import to_districts_v2
+
+    months = [cells_daily_path(year, m) for m in range(1, 13)]
+    missing = [p.name for p in months if not p.exists()]
+    if missing:
+        raise RuntimeError(f"{year}: {len(missing)} of 12 months missing ({missing[:3]}...)")
+    mask = land_sea_mask_path()
+    if not mask.exists():
+        raise FileNotFoundError(f"no land-sea mask at {mask}; run --land-sea-mask first")
+    lsm = pd.read_parquet(mask)
+    cells = grid_cells()
+    parts = [to_districts_v2(pd.read_parquet(p), cells, land_sea_mask=lsm) for p in months]
+    out = pd.concat(parts, ignore_index=True).merge(district_metadata(), on="region_id",
+                                                     how="left")
+    out["source"] = SOURCE_V2
+    cols = (["region_id", "region_name", "state_id", "state_name",
+             "latitude", "longitude", "date"] + VALUE_COLUMNS + ["source"])
+    out = out[cols].sort_values(["region_id", "date"]).reset_index(drop=True)
+    path = OUT_DIR / f"{V2_STEM.format(year=year)}.parquet"
+    tmp = path.with_suffix(".parquet.tmp")
+    out.to_parquet(tmp, index=False)
+    tmp.replace(path)
+    print(f"  -> {path.name}  {len(out):,} rows  {out['date'].nunique()} days")
+    return path
+
+
 def fetch_land_sea_mask(client=None) -> Path:
     """ERA5's own land-sea mask (time-invariant) for every weight-table cell, once.
 
@@ -626,6 +670,9 @@ def main() -> None:
                          "forecast side")
     ap.add_argument("--land-sea-mask", action="store_true",
                     help="fetch ERA5's land-sea mask once into _era5_cds_v2/ and exit")
+    ap.add_argument("--v2-districts", action="store_true",
+                    help="build each year's estimator-v2 district file from its twelve "
+                         "cells_daily months (no download) and exit")
     args = ap.parse_args()
     if args.land_sea_mask:
         fetch_land_sea_mask()
@@ -647,6 +694,10 @@ def main() -> None:
             months.update(range(int(a), int(b) + 1))
         elif chunk:
             months.add(int(chunk))
+    if args.v2_districts:
+        for y in sorted(years):
+            build_v2_district_year(y)
+        return
     if args.estimator == "v2":
         build_cells_daily(sorted(years), sorted(months), keep_downloads=args.keep_downloads,
                           parallel=args.parallel)
