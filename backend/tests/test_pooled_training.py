@@ -581,16 +581,20 @@ def test_full_retrain_pooled_sends_every_variable_to_cuda_when_a_gpu_exists(
     dispatched = {}
     real = pt._run_variable_subprocess
 
-    def spy(cached, train_years, variable, train_cycles, va_var, hbf, cdir, device, fold_of):
+    def spy(cached, train_years, variable, train_cycles, va_var, hbf, cdir, device, fold_of,
+            **kw):
         dispatched[variable] = device
-        return real(cached, train_years, variable, train_cycles, va_var, hbf, cdir, "cpu", fold_of)
+        return real(cached, train_years, variable, train_cycles, va_var, hbf, cdir, "cpu",
+                    fold_of, **kw)
 
     monkeypatch.setattr(pt, "_cuda_available", lambda: True)
     monkeypatch.setattr(pt, "_run_variable_subprocess", spy)
     report = pt.full_retrain_pooled(train_years=[2000, 2001], test_year=2002, cache_dir=cache_dir)
 
     assert report.status == "success", report.error
-    assert len(dispatched) == base["variable"].nunique()
+    # Every label variable gets a regressor; wind direction is an input, not a label.
+    from app import contracts
+    assert set(dispatched) == set(base["variable"].unique()) & contracts.LABEL_VARIABLES
     assert set(dispatched.values()) == {"cuda"}
 
 

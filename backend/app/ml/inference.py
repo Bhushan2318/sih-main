@@ -28,6 +28,14 @@ def run_feature_version(manifest: dict) -> int:
     return int((manifest or {}).get("feature_version", contracts.LEGACY_FEATURE_VERSION))
 
 
+def bust_probability(state, X: pd.DataFrame) -> np.ndarray:
+    """The classifier's bust probability for prepared event features, through the run's
+    calibrator when it has one (app/ml/calibration.py)."""
+    from app.ml import calibration
+    raw = state.classifier.predict_proba(X)[:, 1]
+    return calibration.apply(getattr(state, "calibrator", None), raw)
+
+
 @dataclass
 class ModelState:
 
@@ -43,6 +51,11 @@ class ModelState:
     shap_summary: pd.DataFrame = field(default_factory=pd.DataFrame)
     manifest: dict = field(default_factory=dict)
     metrics: dict = field(default_factory=dict)
+    # Label version 2: the run's training-period bias table (app/features/bias.py), applied
+    # to every frame it scores. None for a run trained before it - scored exactly as before.
+    bias_table: Optional[pd.DataFrame] = None
+    # The classifier's Platt calibration (app/ml/calibration.py); None for older runs.
+    calibrator: Optional[dict] = None
     # Set instead of `regressors` on the serving box, which loads the models' names and not
     # the models (see _models_stay_off_this_box).
     regressor_names: list = field(default_factory=list)
@@ -204,6 +217,8 @@ def load_model_state(run_id: Optional[str] = None) -> Optional[ModelState]:
         freq = registry.load_historical_bust_freq(rid)
         jump = registry.load_jump_climatology(rid)
         shap_summary = _read_shap_summary(registry.run_dir(rid) / "shap_summary.parquet")
+        bias_table = registry.load_bias_table(rid)
+        calibrator = registry.load_calibrator(rid)
 
     import json
     def _read(name):
@@ -222,6 +237,8 @@ def load_model_state(run_id: Optional[str] = None) -> Optional[ModelState]:
         manifest=_read("manifest.json"),
         metrics=_read("metrics.json"),
         regressor_names=names_only,
+        bias_table=None if lean else bias_table,
+        calibrator=None if lean else calibrator,
     )
     with _lock:
         _state_cache = (rid, lean, state)
@@ -312,6 +329,10 @@ def build_scoring_frame(
         feature_version=run_feature_version(getattr(state, "manifest", None)),
     )
     del subset, history
+    bias_table = getattr(state, "bias_table", None)
+    if bias_table is not None:
+        from app.features.bias import apply_bias
+        frame = apply_bias(frame, bias_table)
     if as_of_init and "forecast_error_lag" in frame.columns:
         frame["forecast_error_lag"] = np.nan
     return frame
@@ -388,7 +409,7 @@ def score_cycle(
     )
     X_evt = _prep(events, state.classifier_columns,
                   categorical_features(state.classifier))
-    events["bust_probability"] = state.classifier.predict_proba(X_evt)[:, 1]
+    events["bust_probability"] = bust_probability(state, X_evt)
     events["risk_band"] = [state.thresholds.band_for(p) for p in events["bust_probability"]]
 
     events["dominant_variable"] = _dominant_variable(events, state.thresholds.bust_threshold)
@@ -558,8 +579,15 @@ def refresh_observations(scored: ScoredCycle) -> ScoredCycle:
     # The event frame's actual_err_<var> is |forecast mean - observed| (pivot.build_event_frame),
     # and the forecast mean is per_variable's predicted_value; restated from the refreshed
     # observations so the two tables describe the same ones. No classifier input reads it.
+    fc = pv["predicted_value"].to_numpy(dtype=float)
+    if "bias_correction" in pv.columns:
+        # Label version 2: the label is on the corrected forecast, so the restated error is
+        # too. A label variable whose cell had no bias has no corrected error (NaN).
+        from app.features.bias import label_variable_mask
+        label = label_variable_mask(pv["variable"])
+        fc = np.where(label, fc - pv["bias_correction"].to_numpy(dtype=float), fc)
     err = pv.assign(region_id=pv["region_id"].astype(str), variable=pv["variable"].astype(str),
-                    actual_err=(pv["predicted_value"] - pv["observed_value"]).abs())
+                    actual_err=np.abs(fc - pv["observed_value"].to_numpy(dtype=float)))
     err = err.pivot(index=["region_id", "lead_time_days"], columns="variable",
                     values="actual_err")
     ev = scored.events.drop(columns=[c for c in scored.events.columns
@@ -574,15 +602,22 @@ def refresh_observations(scored: ScoredCycle) -> ScoredCycle:
 
 
 def _per_variable_table(scored: pd.DataFrame, state: ModelState) -> pd.DataFrame:
+    # predicted_value is GEFS's own forecast mean - what the site shows - even for a run
+    # that reads the bias-corrected forecast (label version 2); the bias removed is kept
+    # beside it so a restated error can be the corrected one (refresh_observations).
+    shown = "forecast_value_raw" if "forecast_value_raw" in scored.columns else "forecast_value"
+    extra = ({"bias_correction": ("bias_correction", "mean")}
+             if "bias_correction" in scored.columns else {})
     g = (
         scored.groupby(["region_id", "lead_time_days", "variable", "valid_date"],
                        observed=True)
         .agg(
-            predicted_value=("forecast_value", "mean"),
+            predicted_value=(shown, "mean"),
             observed_value=("observed_value", "mean"),
             predicted_error=("pred_err", "mean"),
             ensemble_spread=("ensemble_spread", "mean"),
             ensemble_member_count=("ensemble_member_count", "max"),
+            **extra,
         )
         .reset_index()
     )

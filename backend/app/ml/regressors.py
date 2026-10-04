@@ -32,6 +32,10 @@ NUMERIC_FEATURES = [
     # OMI is not published in real time, so every live cycle has them as NaN while every
     # training row had a value - the same train/live gap as forecast_error_lag. Runs saved
     # before their removal still list them in their own feature_columns.json.
+    # Label version 2: the training-period bias removed from this forecast (app/features/
+    # bias.py) - known at issue time, fitted on training cycles only. Present only in
+    # frames the bias was applied to, so runs before it never see it.
+    "bias_correction",
 ]
 # state_id (~36 levels) replaces region_id (666 levels, only ~34 ever labelled) as the
 # district-identity feature - see NUMERIC_FEATURES' C4 comment above.

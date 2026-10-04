@@ -306,7 +306,48 @@ def pooled_split(cached_paths: dict, test_year: int):
     return set(train), set(val), test_cycles
 
 
-def pooled_stats(cached_paths: dict, train_years: list, train_cycles: set):
+_BIAS_READ_COLUMNS = ["region_id", "variable", "lead_time_days", "season",
+                      "forecast_value", "observed_value"]
+
+
+def pooled_bias_table(cached_paths: dict, train_years: list, train_cycles: set):
+    """The per-(district, variable, lead, season) bias of the ensemble mean, from training
+    cycles only, streamed one cached year at a time (app/features/bias.py)."""
+    from app.features import bias as bias_mod
+    acc = None
+    cols = list(dict.fromkeys(fe.EVENT_KEYS + _BIAS_READ_COLUMNS + ["init_date"]))
+    for year in train_years:
+        df = pd.read_parquet(cached_paths[year], columns=cols)
+        df = df[df["init_date"].isin(train_cycles)]
+        if df.empty:
+            continue
+        ev = (df.groupby(fe.EVENT_KEYS + ["variable", "season"], observed=True)
+                .agg(fc_mean=("forecast_value", "mean"), obs=("observed_value", "mean"))
+                .reset_index())
+        del df
+        acc = bias_mod.accumulate_bias(acc, ev)
+        del ev
+    return bias_mod.finish_bias_table(acc)
+
+
+def _with_bias(df: pd.DataFrame, bias_table) -> pd.DataFrame:
+    """`df` with the run's bias applied (app/features/bias.apply_bias), or unchanged when
+    the run has no table (label version 1)."""
+    if bias_table is None:
+        return df
+    from app.features import bias as bias_mod
+    return bias_mod.apply_bias(df, bias_table)
+
+
+def _bias_read_columns(columns: list, bias_table) -> list:
+    """`columns` plus what applying the bias needs, when there is a table."""
+    if bias_table is None:
+        return list(columns)
+    return list(dict.fromkeys(list(columns) + _BIAS_READ_COLUMNS))
+
+
+def pooled_stats(cached_paths: dict, train_years: list, train_cycles: set,
+                 bias_table=None):
     """`(hbf, p90_error, bust_threshold)`, streamed one cached year at a time.
 
     Reads only the columns each statistic needs - never the full feature-engineered
@@ -329,10 +370,11 @@ def pooled_stats(cached_paths: dict, train_years: list, train_cycles: set):
     per_var: dict = {}
     event_frames = []
     for year in train_years:
-        df = pd.read_parquet(cached_paths[year], columns=read_cols)
+        df = pd.read_parquet(cached_paths[year], columns=_bias_read_columns(read_cols, bias_table))
         df = df[df["init_date"].isin(train_cycles)]
         if df.empty:
             continue
+        df = _with_bias(df, bias_table)
         # Native dtype, never a cast: rounding abs_error to float32 moved the 75th
         # percentile enough to flip borderline rows and changed hbf in the 3rd decimal.
         err = df["abs_error"].to_numpy()
@@ -363,10 +405,12 @@ def pooled_stats(cached_paths: dict, train_years: list, train_cycles: set):
     for year in train_years:
         df = pd.read_parquet(
             cached_paths[year],
-            columns=list(dict.fromkeys(_THIN_STATS_COLUMNS + ["init_date"])))
+            columns=_bias_read_columns(
+                list(dict.fromkeys(_THIN_STATS_COLUMNS + ["init_date"])), bias_table))
         df = df[df["init_date"].isin(train_cycles)]
         if df.empty:
             continue
+        df = _with_bias(df, bias_table)
         codes, cats = _as_codes(df["variable"])
         by_code = np.array([thr_large.get(str(c), np.inf) for c in cats])
         is_large = df["abs_error"].to_numpy() > by_code[codes]
@@ -389,6 +433,10 @@ def pooled_stats(cached_paths: dict, train_years: list, train_cycles: set):
 
     hbf = {k: float(large[k] / total[k]) for k in total if total[k]}
     event_err = pd.concat(event_frames, ignore_index=True)
+    if bias_table is not None:
+        # Label version 2: only label variables get a bust threshold (contracts).
+        from app.features.bias import label_variable_mask
+        event_err = event_err[label_variable_mask(event_err["variable"])]
     bust_threshold = compute_error_thresholds(event_err, percentile=90.0)
     return hbf, p90_error, bust_threshold
 
@@ -440,7 +488,7 @@ def _as_codes(col: "pd.Series"):
     return codes, list(cats)
 
 
-def _feature_columns_for(cached_paths: dict, years: list) -> list:
+def _feature_columns_for(cached_paths: dict, years: list, with_bias: bool = False) -> list:
     """Which columns `reg_mod.feature_columns` would pick for this variable's frame,
     without reading any row data - schema only, plus the one feature attached after
     caching (`historical_bust_frequency_region_season`, computed globally in
@@ -448,6 +496,8 @@ def _feature_columns_for(cached_paths: dict, years: list) -> list:
     import pyarrow.parquet as pq
     names = set(pq.ParquetFile(cached_paths[years[0]]).schema_arrow.names)
     names.add("historical_bust_frequency_region_season")
+    if with_bias:
+        names.add("bias_correction")   # attached by apply_bias at read time, not cached
     return reg_mod.feature_columns(pd.DataFrame(columns=sorted(names)))
 
 
@@ -512,15 +562,17 @@ class _YearDataIter(xgb.DataIter):
     """
 
     def __init__(self, cached_paths: dict, years: list, variable: str, cycles: set,
-                 feature_cols: list, hbf: dict, cache_dir: Path):
+                 feature_cols: list, hbf: dict, cache_dir: Path, bias_table=None):
         self._paths = [cached_paths[y] for y in years]
         self._variable = variable
         self._cycles = cycles
         self._feature_cols = feature_cols
         self._hbf = hbf
-        self._read_cols = list(dict.fromkeys(
-            [c for c in feature_cols if c != "historical_bust_frequency_region_season"]
-            + ["region_id", "season", "variable", "init_date", "abs_error"]))
+        self._bias_table = bias_table
+        self._read_cols = _bias_read_columns(list(dict.fromkeys(
+            [c for c in feature_cols if c not in ("historical_bust_frequency_region_season",
+                                                  "bias_correction")]
+            + ["region_id", "season", "variable", "init_date", "abs_error"])), bias_table)
         self._i = 0
         self.batches = 0  # batches handed to XGBoost; 0 means this chunk had no rows
         # No cache_prefix: QuantileDMatrix builds its quantile sketch batch by batch and
@@ -548,6 +600,12 @@ class _YearDataIter(xgb.DataIter):
         # its blocks into one contiguous array per dtype - a second full-sized allocation
         # on top of the filtered frame already in memory. Measured real crash 2026-09-13,
         # ArrayMemoryError on a single cached year's own frame.
+        df = _with_bias(df, self._bias_table)
+        if self._bias_table is not None:
+            # A forecast whose cell has no bias has no corrected error: not a training row.
+            df = df[np.isfinite(df["abs_error"].to_numpy(dtype=float))]
+            if df.empty:
+                return 1
         df = attach_hbf_column(df, self._hbf)
         X = reg_mod._prep_X(df, self._feature_cols)
         input_data(data=X, label=df["abs_error"].to_numpy())
@@ -587,7 +645,7 @@ def _xgb_train_params(device: str) -> dict:
 
 def _fit_booster(cached_paths: dict, train_years: list, variable: str, cycle_chunks: list,
                  cols: list, hbf: dict, cache_dir: Path, device: str,
-                 n_estimators: "int | None" = None):
+                 n_estimators: "int | None" = None, bias_table=None):
     """One booster boosted over `cycle_chunks` in turn: each chunk gets its own
     QuantileDMatrix, freed before the next is built, and its share of `n_estimators`
     rounds continues the same booster. One chunk is the ordinary single fit. Returns
@@ -598,7 +656,8 @@ def _fit_booster(cached_paths: dict, train_years: list, variable: str, cycle_chu
     booster, n_rows = None, 0
     rounds_left = n_estimators
     for i, cycles in enumerate(chunks):
-        it = _YearDataIter(cached_paths, train_years, variable, cycles, cols, hbf, cache_dir)
+        it = _YearDataIter(cached_paths, train_years, variable, cycles, cols, hbf, cache_dir,
+                           bias_table=bias_table)
         try:
             dtrain = xgb.QuantileDMatrix(it, enable_categorical=True)
         except xgb.core.XGBoostError:
@@ -637,18 +696,22 @@ def _as_chunks(train_cycles) -> list:
 def train_variable_regressor_pooled(cached_paths: dict, train_years: list, variable: str,
                                     train_cycles, val_df: "pd.DataFrame",
                                     hbf: dict, cache_dir: Path,
-                                    device: str = "cpu") -> "reg_mod.RegressorArtifact | None":
+                                    device: str = "cpu",
+                                    bias_table=None) -> "reg_mod.RegressorArtifact | None":
     """The pooled-training equivalent of `regressors.train_variable_regressor`: same
     params, same features, fit via an external-memory `QuantileDMatrix` instead of a
     single in-memory `.fit()` so `train_years` is never all resident at once."""
-    cols = _feature_columns_for(cached_paths, train_years)
+    cols = _feature_columns_for(cached_paths, train_years, with_bias=bias_table is not None)
     booster, n_train = _fit_booster(cached_paths, train_years, variable,
-                                    _as_chunks(train_cycles), cols, hbf, cache_dir, device)
+                                    _as_chunks(train_cycles), cols, hbf, cache_dir, device,
+                                    bias_table=bias_table)
     if booster is None:
         return None
     model = _booster_to_sklearn(booster, xgb.XGBRegressor)
 
     va = val_df[val_df["variable"] == variable]
+    if bias_table is not None:
+        va = va[np.isfinite(va["abs_error"].to_numpy(dtype=float))]
     del booster  # see oof_fold_models for why: real fragmentation crashes
     gc.collect()
     # No train-split metric here, unlike the single-frame path: recomputing it would mean
@@ -745,7 +808,7 @@ def fold_training_cycles(cycles, fold_of: dict, fold: int) -> set:
 
 def oof_fold_models(cached_paths: dict, train_years: list, variable: str,
                     train_cycles, hbf: dict, fold_of: dict, cache_dir: Path,
-                    device: str = "cpu"):
+                    device: str = "cpu", bias_table=None):
     """fold id -> (fitted, sklearn-wrapped booster, feature columns), each excluding its
     own fold's cycles. Used only to compute out-of-fold predictions for the training
     events the classifier trains on - never saved as an artifact."""
@@ -753,12 +816,12 @@ def oof_fold_models(cached_paths: dict, train_years: list, variable: str,
     if sum(len(c) for c in chunks) < 2:
         return {}
     n_splits = len(set(fold_of.values()))
-    cols = _feature_columns_for(cached_paths, train_years)
+    cols = _feature_columns_for(cached_paths, train_years, with_bias=bias_table is not None)
     models = {}
     for fold in range(n_splits):
         fold_chunks = [fold_training_cycles(chunk, fold_of, fold) for chunk in chunks]
         booster, _ = _fit_booster(cached_paths, train_years, variable, fold_chunks, cols,
-                                  hbf, cache_dir, device)
+                                  hbf, cache_dir, device, bias_table=bias_table)
         if booster is None:
             continue
         models[fold] = (_booster_to_sklearn(booster, xgb.XGBRegressor), cols)
@@ -780,7 +843,8 @@ _YEAR_EVENTS_WORKER_SCRIPT = (Path(__file__).resolve().parents[2] / "scripts"
 
 def _run_year_events_subprocess(cached_path: Path, train_cycles: set, hbf: dict,
                                 p90_error: dict, bust_threshold: dict,
-                                fold_models: dict, fold_of: dict, columns) -> "pd.DataFrame":
+                                fold_models: dict, fold_of: dict, columns,
+                                bias_table=None) -> "pd.DataFrame":
     """One year's raw-frame load + OOF-predict + `build_event_frame` in a fresh process -
     see _build_pooled_year_events_worker.py's docstring for why: real crash 2026-09-15
     (v9), ArrayMemoryError inside pandas' own groupby machinery on a 76.7M-row year,
@@ -797,7 +861,8 @@ def _run_year_events_subprocess(cached_path: Path, train_cycles: set, hbf: dict,
     worse trade than one retry costing a few extra seconds of subprocess startup."""
     job = {"cached_path": cached_path, "train_cycles": train_cycles, "hbf": hbf,
           "p90_error": p90_error, "bust_threshold": bust_threshold,
-          "fold_models": fold_models, "fold_of": fold_of, "columns": columns}
+          "fold_models": fold_models, "fold_of": fold_of, "columns": columns,
+          "bias_table": bias_table}
     errors = []
     for attempt in range(2):
         result = _run_worker_subprocess(_YEAR_EVENTS_WORKER_SCRIPT, job)
@@ -822,7 +887,8 @@ def _cycle_batches(cycles: set, max_per_batch: int) -> list:
 
 def year_event_frame(cached_path: Path, train_cycles: set, hbf: dict, p90_error: dict,
                      bust_threshold: dict, fold_models: dict, fold_of: dict, columns,
-                     max_cycles_per_batch: int = EVENTS_BATCH_CYCLES) -> "pd.DataFrame":
+                     max_cycles_per_batch: int = EVENTS_BATCH_CYCLES,
+                     bias_table=None) -> "pd.DataFrame":
     """One cached year's training events with out-of-fold regressor predictions,
     built one batch of forecast dates at a time and concatenated.
 
@@ -834,13 +900,15 @@ def year_event_frame(cached_path: Path, train_cycles: set, hbf: dict, p90_error:
     present = pd.to_datetime(pq.read_table(cached_path, columns=["init_date"])
                              .column("init_date").unique().to_pandas())
     mine = set(present) & {pd.Timestamp(c) for c in train_cycles}
-    read_cols = sorted(columns) if columns else None
+    read_cols = (_bias_read_columns(sorted(c for c in columns if c != "bias_correction"),
+                                    bias_table) if columns else None)
     frames = []
     for batch in _cycle_batches(mine, max_cycles_per_batch):
         df = pd.read_parquet(cached_path, columns=read_cols,
                              filters=[("init_date", "in", list(batch))])
         if df.empty:
             continue
+        df = _with_bias(df, bias_table)
         df = attach_hbf_column(df, hbf)
         df["_fold"] = df["init_date"].map(fold_of)
         oof = pd.Series(np.nan, index=df.index, dtype=float)
@@ -899,7 +967,8 @@ def val_event_frame(spill_dir: Path, val_pred, hbf: dict, p90_error: dict,
 
 def test_event_frame(cached_path: Path, test_cycles: set, hbf: dict, p90_error: dict,
                      bust_threshold: dict, artifacts: dict, columns,
-                     max_cycles_per_batch: int = EVENTS_BATCH_CYCLES) -> tuple:
+                     max_cycles_per_batch: int = EVENTS_BATCH_CYCLES,
+                     bias_table=None) -> tuple:
     """The held-out year's events and each variable's test metrics, one batch of
     forecast dates at a time - same reasoning and same exactness as year_event_frame.
     Metrics are not averaged across batches: each variable's targets and predictions are
@@ -910,13 +979,15 @@ def test_event_frame(cached_path: Path, test_cycles: set, hbf: dict, p90_error: 
     present = pd.to_datetime(pq.read_table(cached_path, columns=["init_date"])
                              .column("init_date").unique().to_pandas())
     mine = set(present) & {pd.Timestamp(c) for c in test_cycles}
-    read_cols = sorted(columns) if columns else None
+    read_cols = (_bias_read_columns(sorted(c for c in columns if c != "bias_correction"),
+                                    bias_table) if columns else None)
     frames, y_parts, p_parts = [], {}, {}
     for batch in _cycle_batches(mine, max_cycles_per_batch):
         df = pd.read_parquet(cached_path, columns=read_cols,
                              filters=[("init_date", "in", list(batch))])
         if df.empty:
             continue
+        df = _with_bias(df, bias_table)
         df = attach_hbf_column(df, hbf)
         pred = pd.Series(np.nan, index=df.index, dtype=float)
         for var, art in artifacts.items():
@@ -925,8 +996,10 @@ def test_event_frame(cached_path: Path, test_cycles: set, hbf: dict, p90_error: 
                 continue
             p = reg_mod.predict_variable_error(art, df[tmask])
             pred.loc[tmask] = p
-            y_parts.setdefault(var, []).append(df.loc[tmask, "abs_error"].to_numpy())
-            p_parts.setdefault(var, []).append(np.asarray(p, dtype=float))
+            y = df.loc[tmask, "abs_error"].to_numpy(dtype=float)
+            ok = np.isfinite(y)   # a forecast with no bias cell has no corrected error
+            y_parts.setdefault(var, []).append(y[ok])
+            p_parts.setdefault(var, []).append(np.asarray(p, dtype=float)[ok])
         frames.append(_events_float32(pv.build_event_frame(
             df, pred, p90_error, bust_threshold, hbf, copy_input=False)))
         del df, pred
@@ -943,7 +1016,8 @@ def test_event_frame(cached_path: Path, test_cycles: set, hbf: dict, p90_error: 
 def build_pooled_train_events(cached_paths: dict, train_years: list, train_cycles: set,
                               hbf: dict, p90_error: dict, bust_threshold: dict,
                               fold_models: dict, fold_of: dict,
-                              columns: "set | None" = None) -> "pd.DataFrame":
+                              columns: "set | None" = None,
+                              bias_table=None) -> "pd.DataFrame":
     """`event_tr`, assembled one cached year at a time, each year's own raw-frame work
     (load, attach OOF predictions, reduce to event grain) run in a fresh subprocess -
     see _run_year_events_subprocess. Concatenating the (small) per-year event frames
@@ -953,7 +1027,7 @@ def build_pooled_train_events(cached_paths: dict, train_years: list, train_cycle
     for year in train_years:
         frame = _run_year_events_subprocess(
             cached_paths[year], train_cycles, hbf, p90_error, bust_threshold,
-            fold_models, fold_of, columns)
+            fold_models, fold_of, columns, bias_table=bias_table)
         if frame is not None and not frame.empty:
             frames.append(frame)
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
@@ -991,7 +1065,8 @@ _VAL_FRAME_WORKER_SCRIPT = (Path(__file__).resolve().parents[2] / "scripts"
 
 
 def _run_val_frame_subprocess(cached: dict, val_years: list, val_cycles: set,
-                              columns: set, hbf: dict, out_dir: Path) -> dict:
+                              columns: set, hbf: dict, out_dir: Path,
+                              bias_table=None) -> dict:
     """Build the validation frame in a throwaway process that spills it to `out_dir`.
 
     The parent must be lean when it spawns a per-variable training worker: that worker
@@ -1000,7 +1075,8 @@ def _run_val_frame_subprocess(cached: dict, val_years: list, val_cycles: set,
     failed that malloc (2026-09-21). Freeing the frame in-process is not enough - the
     read arena is not returned to the OS - so it is never allocated here at all."""
     job = {"cached": cached, "val_years": val_years, "val_cycles": val_cycles,
-           "columns": columns, "hbf": hbf, "out_dir": str(out_dir)}
+           "columns": columns, "hbf": hbf, "out_dir": str(out_dir),
+           "bias_table": bias_table}
     return _run_worker_subprocess(_VAL_FRAME_WORKER_SCRIPT, job)
 
 
@@ -1016,7 +1092,8 @@ def _read_va_var(spill_dir: Path, variable: str) -> "pd.DataFrame":
 
 def _run_variable_subprocess(cached: dict, train_years: list, variable: str,
                              train_cycles: set, va_var: "pd.DataFrame", hbf: dict,
-                             cache_dir: Path, device: str, fold_of: dict) -> dict:
+                             cache_dir: Path, device: str, fold_of: dict,
+                             bias_table=None) -> dict:
     """Train one variable's regressor + its OOF fold models in a brand-new process, and
     return the result as a plain dict. See _train_pooled_variable_worker.py's docstring
     for why this is a subprocess and not a function call: the process exit is what
@@ -1042,7 +1119,8 @@ def _run_variable_subprocess(cached: dict, train_years: list, variable: str,
     def attempt(dev: str) -> dict:
         job = {"cached": cached, "train_years": train_years, "variable": variable,
               "train_cycles": train_cycles, "va_var": va_var, "hbf": hbf,
-              "cache_dir": cache_dir, "device": dev, "fold_of": fold_of}
+              "cache_dir": cache_dir, "device": dev, "fold_of": fold_of,
+              "bias_table": bias_table}
         return _run_worker_subprocess(_WORKER_SCRIPT, job)
 
     # A caught exception (the worker pickles `error`) is a failed attempt too, not only a
@@ -1165,7 +1243,7 @@ _TEST_EVENTS_WORKER_SCRIPT = (Path(__file__).resolve().parents[2] / "scripts"
 
 def _run_test_events_subprocess(cached_path: Path, test_cycles: set, hbf: dict,
                                 p90_error: dict, bust_threshold: dict, artifacts: dict,
-                                columns) -> tuple:
+                                columns, bias_table=None) -> tuple:
     """The held-out test year's raw-frame load + predict + `build_event_frame`, in a
     fresh process - same reasoning as _run_year_events_subprocess, applied preemptively
     since the test year carries the identical full-year row-count risk. Returns
@@ -1174,7 +1252,7 @@ def _run_test_events_subprocess(cached_path: Path, test_cycles: set, hbf: dict,
     living in the parent are not the same objects the subprocess touched."""
     job = {"cached_path": cached_path, "test_cycles": test_cycles, "hbf": hbf,
           "p90_error": p90_error, "bust_threshold": bust_threshold,
-          "artifacts": artifacts, "columns": columns}
+          "artifacts": artifacts, "columns": columns, "bias_table": bias_table}
     result = _run_worker_subprocess(_TEST_EVENTS_WORKER_SCRIPT, job)
     if result.get("error"):
         raise RuntimeError(f"test-events worker failed:\n{result['error']}")
@@ -1258,11 +1336,12 @@ def finalize_for_serving(run_id: str, cache_dir: Path,
                          f"validation ROC-AUC - nothing to finalize against")
 
     _, val_c, _ = pooled_split(cached, test_year)
+    bias_table = registry.load_bias_table(run_id)   # None for a label-version-1 run
     needed = set(_feature_columns_for(cached, train_years)) | set(fe.EVENT_KEYS) | {
         "variable", "forecast_value", "observed_value", "ensemble_spread",
         "abs_error", "region_id", "season"}
     needed.discard("historical_bust_frequency_region_season")
-    read_cols = sorted(needed)
+    read_cols = _bias_read_columns(sorted(needed), bias_table)
 
     # Which file holds which cycle is read from the files, not inferred from the year in
     # the name - the same rule year_event_frame follows.
@@ -1277,7 +1356,8 @@ def finalize_for_serving(run_id: str, cache_dir: Path,
                                  filters=[("init_date", "in", list(batch))])
             if df.empty:
                 continue
-            df = attach_hbf_column(df.reset_index(drop=True), hbf)
+            df = _with_bias(df.reset_index(drop=True), bias_table)
+            df = attach_hbf_column(df, hbf)
             pred = pd.Series(np.nan, index=df.index, dtype=float)
             for var, (model, cols) in regs.items():
                 vmask = df["variable"] == var
@@ -1295,6 +1375,7 @@ def finalize_for_serving(run_id: str, cache_dir: Path,
     del events
 
     art = clf_mod.ClassifierArtifact(model=clf, feature_columns=clf_cols, metrics={},
+                                         calibrator=registry.load_calibrator(run_id),
                                      n_train=0, n_val=len(event_va),
                                      train_bust_rate=float("nan"))
     got = clf_mod._evaluate(event_va["y_bust"], clf_mod.predict_bust_probability(art, event_va))
@@ -1380,7 +1461,7 @@ def baseline_fit_columns(events) -> list:
 
 def baseline_fit_events(cached_paths: dict, years: list, cycles: set,
                         hbf: dict, p90_error: dict, bust_threshold: dict,
-                        max_cycles_per_batch: int = EVENTS_BATCH_CYCLES):
+                        max_cycles_per_batch: int = EVENTS_BATCH_CYCLES, bias_table=None):
     """Training-split events carrying only what the baseline ladder fits on.
 
     Built with the shipped builder (`pv.build_event_frame`) driven by an all-NaN
@@ -1403,9 +1484,9 @@ def baseline_fit_events(cached_paths: dict, years: list, cycles: set,
     """
     import pyarrow.parquet as pq
 
-    read_cols = sorted(set(fe.EVENT_KEYS) | {
+    read_cols = _bias_read_columns(sorted(set(fe.EVENT_KEYS) | {
         "variable", "forecast_value", "observed_value", "ensemble_spread",
-        "abs_error", "region_id", "season"})
+        "abs_error", "region_id", "season"}), bias_table)
     frames = []
     for year in years:
         path = cached_paths[year]
@@ -1417,6 +1498,7 @@ def baseline_fit_events(cached_paths: dict, years: list, cycles: set,
                                  filters=[("init_date", "in", list(batch))])
             if df.empty:
                 continue
+            df = _with_bias(df, bias_table)
             df = attach_hbf_column(df, hbf)
             ev = _events_float32(pv.build_event_frame(
                 df, pd.Series(np.nan, index=df.index, dtype=float),
@@ -1468,7 +1550,8 @@ def emit_baseline_fit_events_for_run(run_id: str, cache_dir: Path,
     train_c, _, _ = pooled_split(cached, test_year)
     events = baseline_fit_events(cached, train_years, fit_cycles(train_c), hbf,
                                  thr.p90_error, thr.bust_threshold,
-                                 max_cycles_per_batch=max_cycles_per_batch)
+                                 max_cycles_per_batch=max_cycles_per_batch,
+                                 bias_table=registry.load_bias_table(run_id))
     if len(events) != int(n_train):
         raise ValueError(
             f"{run_id}: rebuilt {len(events):,} training events, but the run recorded "
@@ -1521,6 +1604,7 @@ def emit_eval_events_for_run(run_id: str, cache_dir: Path,
                          f"held-out ROC-AUC - nothing to emit eval events against")
 
     _, _, test_c = pooled_split(cached, test_year)
+    bias_table = registry.load_bias_table(run_id)   # None for a label-version-1 run
     needed = set(_feature_columns_for(cached, train_years)) | set(fe.EVENT_KEYS) | {
         "variable", "forecast_value", "observed_value", "ensemble_spread",
         "abs_error", "region_id", "season"}
@@ -1532,11 +1616,13 @@ def emit_eval_events_for_run(run_id: str, cache_dir: Path,
                  for var, (model, cols) in regs.items()}
     event_te, _ = test_event_frame(cached[test_year], test_c, hbf, thr.p90_error,
                                    thr.bust_threshold, artifacts, sorted(needed),
-                                   max_cycles_per_batch=max_cycles_per_batch)
+                                   max_cycles_per_batch=max_cycles_per_batch,
+                                   bias_table=bias_table)
     if event_te.empty:
         raise ValueError(f"{run_id}: rebuilt no test events from {cached[test_year]}")
 
     clf_art = clf_mod.ClassifierArtifact(model=clf, feature_columns=clf_cols, metrics={},
+                                         calibrator=registry.load_calibrator(run_id),
                                          n_train=0, n_val=len(event_te),
                                          train_bust_rate=float("nan"))
     got = clf_mod._evaluate(event_te["y_bust"],
@@ -1671,7 +1757,12 @@ def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
         report.status = "no_data"
         return report
 
-    hbf, p90_error, bust_threshold = pooled_stats(cached, train_years, train_c)
+    # Label version 2: each district/variable/lead/season's training-mean error is removed
+    # before anything compares a forecast with its observation (app/features/bias.py).
+    bias_table = pooled_bias_table(cached, train_years, train_c)
+    report.split_cycles["bias_cells"] = int((bias_table["level"] == "lead_season").sum())
+    hbf, p90_error, bust_threshold = pooled_stats(cached, train_years, train_c,
+                                                  bias_table=bias_table)
     if not hbf and not p90_error:
         report.status = "no_data"
         report.error = "no training rows survived the pooled stats pass"
@@ -1703,15 +1794,20 @@ def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
     val_years = sorted({y for y in train_years
                         for c in val_c if pd.Timestamp(c).year == y}) or train_years
     va_spill = cache_dir / "_va_by_variable"
-    va_built = _run_val_frame_subprocess(cached, val_years, val_c, needed, hbf, va_spill)
+    va_built = _run_val_frame_subprocess(cached, val_years, val_c, needed, hbf, va_spill,
+                                         bias_table=bias_table)
     if va_built.get("error"):
         report.status = "failed"
         report.error = f"validation frame build failed: {va_built['error'][-2000:]}"
         return report
     n_va = int(va_built["n_rows"])
 
-    variables = sorted(pd.read_parquet(cached[train_years[0]], columns=["variable"])
-                       ["variable"].unique())
+    # Regressors for label variables only: wind direction stays an input (its spread,
+    # jumps and lagged pool reach the classifier) but is no longer something a bust is
+    # defined on, so an error regressor for it has nothing to feed (contracts.LABEL_VARIABLES).
+    from app import contracts
+    variables = sorted(v for v in pd.read_parquet(cached[train_years[0]], columns=["variable"])
+                       ["variable"].unique() if str(v) in contracts.LABEL_VARIABLES)
     fold_of = assign_folds(train_c)
     # "sample": each regressor fits on MAX_FIT_CYCLES of the training cycles.
     # "staged": on every training cycle, boosted chunk by chunk (fit_chunks), each chunk
@@ -1755,7 +1851,8 @@ def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
             else:
                 va_var = _read_va_var(va_spill, var)
                 result = _run_variable_subprocess(
-                    cached, train_years, var, fit_c, va_var, hbf, cache_dir, device, fold_of)
+                    cached, train_years, var, fit_c, va_var, hbf, cache_dir, device, fold_of,
+                    bias_table=bias_table)
                 del va_var
                 if result.get("artifact") is not None:
                     _save_variable_checkpoint(ckpt, result)
@@ -1817,7 +1914,7 @@ def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
     report.split_cycles["classifier"] = len(clf_c)
     event_tr = build_pooled_train_events(
         cached, train_years, clf_c, hbf, p90_error, bust_threshold, fold_models, fold_of,
-        columns=needed)
+        columns=needed, bias_table=bias_table)
     del fold_models  # only needed for event_tr's out-of-fold predictions, above
     gc.collect()
     # Built in a worker, batched by forecast date - see _run_val_events_subprocess.
@@ -1833,7 +1930,8 @@ def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
     # since the held-out year is read in full and carries the same row-count risk that
     # crashed the (now-fixed) training-year path.
     event_te, test_metrics = _run_test_events_subprocess(
-        cached[test_year], test_c, hbf, p90_error, bust_threshold, artifacts, needed)
+        cached[test_year], test_c, hbf, p90_error, bust_threshold, artifacts, needed,
+        bias_table=bias_table)
     for var, m in test_metrics.items():
         if var in artifacts:
             artifacts[var].metrics["test"] = m
@@ -1859,13 +1957,16 @@ def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
     for var, art in artifacts.items():
         registry.save_regressor(rid, var, art.model, art.feature_columns)
     registry.save_classifier(rid, clf_art.model, clf_art.feature_columns)
+    registry.save_calibrator(rid, clf_art.calibrator)
     registry.save_thresholds(rid, thresholds)
     registry.save_historical_bust_freq(rid, hbf)
+    registry.save_bias_table(rid, bias_table)
     registry.save_metrics(rid, {"regressors": report.regressor_metrics,
                                "classifier": report.classifier_metrics})
     from app.ml import provenance
     registry.save_manifest(rid, {
         "run_id": rid, "feature_version": FEATURE_VERSION,
+        "label_version": contracts.LABEL_VERSION,
         "pooled_train_years": train_years, "test_year": test_year,
         "split_cycles": report.split_cycles, "modelled_variables": report.modelled_variables,
         "skipped_variables": report.skipped_variables,

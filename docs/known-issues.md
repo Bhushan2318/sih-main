@@ -1233,6 +1233,28 @@ here rather than discovered live.
 
   The first command should reproduce the served run's recorded test score. That checks the
   method before the second is trusted.
+- **That check cannot pass, and the comparison was not like for like - corrected
+  2026-10-02.**
+  - The served run's recorded 0.8435 was measured against the one-day-late IMD rainfall
+    in its 2017 cache, while `score_run_on_year` reads the store's ERA5 rainfall.
+  - Each run was scored on its own events against its own thresholds, and nothing checked
+    that the events or labels matched.
+  - With bias-corrected busts (label version 2) the labels differ by design.
+  - So for a label-version-2 run, `scripts.score_shared_events` scores both runs as of
+    issue on the same year, joins them on the event keys (refusing duplicates or any
+    new-run event without an incumbent probability) and keeps the new run's label for
+    both.
+  - `publish_serving_model --shared-events` takes both metrics from that one file and
+    refuses it if the new run's score there differs from its recorded test score by more
+    than 0.002. The unchanged `_promotion_decision` then decides on them.
+  - `--incumbent-score` is refused for label version 2.
+  - `--incumbent-reference` checks, within 1e-5, that the served run is scored exactly as
+    the `pre-overhaul` code scored it:
+
+        python -m scripts.score_shared_events --new-run <new run> --incumbent run_20260922T043925Z \
+            --year 2017 --incumbent-reference <pre-overhaul score_run_on_year --as-of-issue output>
+        python -m scripts.publish_serving_model --run-id <new run> --dry-run \
+            --shared-events data/analysis/shared_events/<new run>_vs_run_20260922T043925Z_on_2017.parquet
 
 ### Found in the 2026-09-25 audit (each re-checked against data, not only read in code)
 
@@ -1248,6 +1270,27 @@ here rather than discovered live.
   - Consequence: a "bust" today is often "this district is always off", which NCMRWF's
     own bias correction removes.
   - Decided: the next retrain defines busts on bias-corrected error.
+  - **Implemented 2026-10-02 as label version 2** (`contracts.LABEL_VERSION`,
+    `app/features/bias.py`):
+    - **The table.** The training-period mean error of the ensemble mean per (district,
+      variable, lead, season), from training cycles only. A cell with fewer than 30
+      events backs off to the district's season across leads, then to its whole year.
+      A key thin at every level has no bias: its forecast is not compared, never
+      compared raw.
+    - **Where it applies.** It is subtracted from each member forecast wherever a
+      forecast meets its observation: the regressor target, the event label, the
+      thresholds and the out-of-fold models, in both trainers, and in live scoring and
+      `score_run_on_year` for runs that carry `bias_table.parquet`.
+    - **What a run reads.** The corrected forecast and the bias removed
+      (`bias_correction`).
+    - **What the label covers.** Wind direction is no longer a label variable, and
+      events with no corrected error for any label variable are dropped rather than
+      counted as "not a bust".
+    - **On the CI sample** (12 training cycles), the corrected humidity bust threshold
+      is 13.1 %RH; on real Nov 2017 a per-district-lead correction gave 10.4 against
+      27.6 raw.
+    - **The served run_20260922T043925Z** has no bias table, so it keeps label version 1
+      and is scored exactly as before until a retrained run replaces it.
 - **The event bust rate (~49% on the test year) changes meaning with lead.** An event busts
   if any available variable passes its own p90, and fewer variables exist from Day 4 and
   Day 6 (see the next item). So the rate steps down exactly there. That confounds the
@@ -1329,6 +1372,24 @@ here rather than discovered live.
     from 191.0° to 115.1°, and spread p90 from 118.0° to 55.0°. A cached year records its
     version and is rebuilt on a mismatch. Removing direction from the bust label is a
     separate change (the bias-corrected label).
+- **Bust probabilities were not calibrated, and the classifier's early stopping never
+  fired. Fixed 2026-10-04 for new runs.**
+  - The served run trained with `scale_pos_weight = neg/pos` and was never recalibrated.
+    That weighting pushes every probability up: as recorded in that run's
+    `metrics.json`, its lowest reliability bin predicted 0.158 against ~0.07 observed
+    on test.
+  - Its `best_iteration` was 399 of a 400-tree cap, so early stopping never stopped it.
+  - New runs drop the weighting, allow 3,000 trees with early stopping of 100 rounds on
+    validation, and fit Platt scaling on validation (`app/ml/calibration.py`, saved as
+    the run's `calibrator.json`). A fit whose slope is not positive is refused.
+  - **What it does not change.** Platt is monotone, so rankings and ROC-AUC, the number
+    the gate reads, are unchanged.
+  - **SHAP is on the uncalibrated margin.** Calibration multiplies that margin by `a` and
+    adds `b`, so the order and relative size of the contributions are the same, but they
+    sum to the classifier's raw log-odds, not to the calibrated probability's.
+  - **Validation is used three ways** (early stopping, calibration, and later tuning), so
+    validation scores are optimistic. Test is never used for any of them.
+  - The served run has no calibrator and is scored exactly as before.
 - **The serving box was at 509 MB of 512. Guarded 2026-09-25.**
   - Replay and the ensemble endpoint accepted any `init_date` and scored non-precomputed
     cycles on the box (1,406 MB peak).

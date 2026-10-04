@@ -543,8 +543,9 @@ Stated plainly, because a reader should hit these before drawing conclusions.
   model, and are the next evaluation.
 - **Most "busts" in some variables are steady bias.** For temperature, humidity and soil
   moisture, most large errors come from districts that are off the same way every day,
-  which ordinary bias correction removes. The next retrain defines busts on bias-corrected
-  error.
+  which ordinary bias correction removes. The training code now defines busts on
+  bias-corrected error and no longer counts wind direction as a bust; the model live
+  today was trained before that and still uses the raw error until it is replaced.
 - **Some variables stop early in the training archive:** 10 m wind at Day 5 and soil
   moisture at Day 3. They are not scored beyond that on the live feed.
 - **5 of 31 GEFS ensemble members**, so spread-derived features are a noisy estimate of
