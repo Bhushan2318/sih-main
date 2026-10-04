@@ -1196,6 +1196,28 @@ here rather than discovered live.
 
   The first command should reproduce the served run's recorded test score. That checks the
   method before the second is trusted.
+- **That check cannot pass, and the comparison was not like for like - corrected
+  2026-10-02.**
+  - The served run's recorded 0.8435 was measured against the one-day-late IMD rainfall
+    in its 2017 cache, while `score_run_on_year` reads the store's ERA5 rainfall.
+  - Each run was scored on its own events against its own thresholds, and nothing checked
+    that the events or labels matched.
+  - With bias-corrected busts (label version 2) the labels differ by design.
+  - So for a label-version-2 run, `scripts.score_shared_events` scores both runs as of
+    issue on the same year, joins them on the event keys (refusing duplicates or any
+    new-run event without an incumbent probability) and keeps the new run's label for
+    both.
+  - `publish_serving_model --shared-events` takes both metrics from that one file and
+    refuses it if the new run's score there differs from its recorded test score by more
+    than 0.002. The unchanged `_promotion_decision` then decides on them.
+  - `--incumbent-score` is refused for label version 2.
+  - `--incumbent-reference` checks, within 1e-5, that the served run is scored exactly as
+    the `pre-overhaul` code scored it:
+
+        python -m scripts.score_shared_events --new-run <new run> --incumbent run_20260922T043925Z \
+            --year 2017 --incumbent-reference <pre-overhaul score_run_on_year --as-of-issue output>
+        python -m scripts.publish_serving_model --run-id <new run> --dry-run \
+            --shared-events data/analysis/shared_events/<new run>_vs_run_20260922T043925Z_on_2017.parquet
 
 ### Found in the 2026-09-25 audit (each re-checked against data, not only read in code)
 
