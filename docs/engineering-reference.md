@@ -74,8 +74,9 @@ Only needed GRIB2 messages are pulled, via HTTP Range requests keyed off each
 file's `.idx` sidecar.
 
 **Observation side.** ERA5 (CC-BY 4.0, Copernicus C3S): from the Copernicus CDS
-for the training years, via the Open-Meteo Historical Weather API for recent/live
-days. **Trap (2026-09-25):** IMD-merged rainfall files for 2016-2019 were ingested
+for the training years, via the Open-Meteo Historical Weather API (`models=era5`) for
+recent/live days, both reduced by the same estimator (v2: RH and wind derived after the
+district mean, soil over ERA5 land cells). **Trap (2026-09-25):** IMD-merged rainfall files for 2016-2019 were ingested
 after ERA5 and won the dedupe, so the live run's validation and test rainfall truth is
 IMD (one day late), not ERA5. On 2026-09-26 the four batches were moved out of the
 training store (`backend/data/canonical_backup_imd_merged_20260926/`, restore notes in
@@ -206,8 +207,10 @@ them.
 - **ERA5 precipitation is weak over India** relative to gauge-based products, and
   rainfall is the hardest variable — zero-inflated, heavily skewed, and the driver
   of most busts. Being addressed via IMD gauge data.
-- **Open-Meteo does not serve ERA5 on its native 0.25° grid** — points snap to a
-  finer internal grid. Being addressed via Zarr on the native grid.
+- **Open-Meteo served its default model mix, not ERA5, on a finer grid.** Fixed
+  2026-10-04 for the final tier: `models=era5` answers from ERA5's own 0.25° cell
+  (docs/known-issues.md, live observations). Its surface pressure is still not ERA5's
+  and is not reported, and its hourly rain is rounded to 0.1 mm.
 - **The ground truth has its own error.** Measured over ~21,000 paired city-days,
   two leading reanalysis products disagree by roughly a quarter to a half of a
   bust threshold.

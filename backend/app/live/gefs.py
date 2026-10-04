@@ -17,6 +17,7 @@ import numpy as np
 import pandas as pd
 import requests
 
+from app.utils import humidity
 from app.utils.india_districts import get_aggregator, load_registry
 
 log = logging.getLogger("forecastguard.live.gefs")
@@ -273,6 +274,7 @@ def _extract_districts(blob: bytes, scratch: Path) -> dict:
         agg = get_aggregator()
 
         out: dict = {}
+        cells: dict = {}
         for ds in datasets:
             for col, spec in VAR_SPEC.items():
                 sn = spec["short_name"]
@@ -285,15 +287,40 @@ def _extract_districts(blob: bytes, scratch: Path) -> dict:
                     indexing="ij",
                 )
                 index = _prepared_index_for(glat, glon)
-                series = agg.aggregate_prepared(
-                    index, np.asarray(da.values, dtype=np.float64))
+                values = np.asarray(da.values, dtype=np.float64)
+                if col in _Q_INPUTS:
+                    cells[col] = (index, values)
+                series = agg.aggregate_prepared(index, values)
                 # Reindexed to the registry order, not the weight table's, so every step
                 # returns the same districts in the same positions - `_reduce_to_daily`
                 # stacks these arrays and would otherwise be aligning by luck.
                 out[col] = series.reindex(district_ids()).to_numpy(dtype=float)
+        q = _cell_specific_humidity(cells)
+        if q is not None:
+            out["q2m_kgkg"] = (agg.aggregate_prepared(*q)
+                               .reindex(district_ids()).to_numpy(dtype=float))
         return out
     finally:
         tmp.unlink(missing_ok=True)
+
+
+# Each cell's specific humidity, from GEFS's RH, T and surface pressure on the same grid.
+# The reforecast archive has SPFH and no RH, and its RH is derived from the district and
+# daily means of q, T and p; the live 0.25 deg file has RH and no SPFH at 2 m (verified
+# against the gefs.20261002 pgrb2s .idx: SPFH:2 m is only in the 0.5 deg b-file). Recovering
+# q per cell lets `_reduce_to_daily` build RH the reforecast's way.
+_Q_INPUTS = ("rh2m_pct", "t2m_c", "psfc_hpa")
+
+
+def _cell_specific_humidity(cells: dict):
+    """(index, q per cell) from the raw RH [%], T [K] and p [Pa] fields, or None."""
+    if not all(c in cells for c in _Q_INPUTS):
+        return None
+    (index, rh), (i_t, t_k), (i_p, p_pa) = (cells[c] for c in _Q_INPUTS)
+    if not (rh.shape == t_k.shape == p_pa.shape
+            and np.array_equal(index, i_t) and np.array_equal(index, i_p)):
+        return None
+    return index, humidity.specific_humidity_from_rh(rh, t_k, p_pa)
 
 
 def _lead_day_of(init_dt: datetime, fh: int) -> tuple:
@@ -430,7 +457,7 @@ def _reduce_to_daily(step_values: dict, init: date,
             record: dict = {}
             used_steps: dict = {}
 
-            for col, spec in VAR_SPEC.items():
+            for col, spec in [*VAR_SPEC.items(), ("q2m_kgkg", {"agg": "mean"})]:
                 step_mult = spec.get("step_multiple", STEP_HOURS)
                 hours = by_cadence[step_mult].get(lead, [])
                 if len(hours) < _expected_samples(step_mult):
@@ -459,6 +486,17 @@ def _reduce_to_daily(step_values: dict, init: date,
 
             for col, values in record.items():
                 block[col] = values[:n_region]
+
+            # RH from the day's district-mean q, T and p, as the reforecast's RH was built -
+            # not the mean of GEFS's RH product, which is a different estimator for the same
+            # air. Without q there is no RH, rather than the other estimator's.
+            if {"q2m_kgkg", "t2m_c", "psfc_hpa"}.issubset(block.columns):
+                block["rh2m_pct"] = humidity.rh_from_specific_humidity(
+                    block["q2m_kgkg"].to_numpy(), block["t2m_c"].to_numpy(),
+                    block["psfc_hpa"].to_numpy())
+            elif "rh2m_pct" in block.columns:
+                block = block.drop(columns="rh2m_pct")
+            block = block.drop(columns="q2m_kgkg", errors="ignore")
 
             if "t2m_c" in block:
                 block["t2m_c"] = block["t2m_c"] - 273.15

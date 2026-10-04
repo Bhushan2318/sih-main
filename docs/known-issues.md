@@ -1482,6 +1482,16 @@ here rather than discovered live.
   mean, with the same functions as the forecast side (`app/utils/humidity.py`). The
   2000-2019 observations are to be refetched this way before the next retrain. Until
   then, the archive and the served model use v1.
+- **v1 soil moisture over water is a fabricated zero.**
+  - ERA5 has no soil over water, and `swvl1` reads ~0 there. v1 averaged those cells in
+    as real values, so Nicobar Islands and Lakshadweep had an observed soil moisture of
+    0.0% on every day of Nov 2017. Every soil "bust" there was guaranteed.
+  - v2 (`to_districts_v2`) uses only cells that ERA5's own land-sea mask calls at least
+    half land (`--land-sea-mask`). A district with no such cell gets NaN, not 0.
+  - Nov 2017, v1 → v2: Nicobar 0.0 → NaN, Lakshadweep 0.0 → NaN, South Andaman 1.7 →
+    30.8%, Mumbai City 0.2 → 9.9%.
+  - The forecast side still averages GEFS's sea cells, which read ~100%. The soil land
+    mask removes those districts' soil from both sides.
 
 ### Replay's past events, added 2026-09-26
 
@@ -1533,3 +1543,56 @@ here rather than discovered live.
 - **What the numbers are.** Everything Replay shows for an event is read from its
   artifact. The only hand-written text is the four titles. No score for any event is
   written in this file or in source; the builder prints them, and the site serves them.
+
+### Live observations and live humidity, made the training estimator, added 2026-10-04
+
+- **The live "ERA5" was not ERA5.** The archive request had no `models=era5`, so
+  Open-Meteo answered from its default model mix on a finer grid. Measured 2026-10-04:
+  19.0 N 72.75 E came back from 19.016 N 72.781 E, at 01 UTC on 2026-09-20 with 2 m
+  temperature 24.7 C and column water vapour 55.7 kg/m2, where ERA5's own cell reads 26.6 C
+  and 45.0. With `models=era5` the answer is ERA5's 0.25 deg cell, at exactly the
+  coordinates asked; `elevation=nan` stops Open-Meteo shifting temperature to its 90 m terrain model.
+- **The day and the estimator differed from training.** The live day was the 00-23 UTC
+  stamps; Open-Meteo stamps rain at the end of its hour, so 00 UTC rain fell the day
+  before. RH and wind were means of per-cell hourly values. The live fetch now builds the
+  CDS fetch's per-cell components (q from the dewpoint and surface pressure, the eight
+  3-hourly instants 03-24 UTC, rain summed 01-24 UTC) and goes through
+  `district_observations.to_districts_v2`, with ERA5's land-sea mask (now in `data/geo`).
+- **How close it now is.** One day, 2017-11-15, 653 districts, live path against the CDS
+  estimator (live minus CDS): temperature +0.024 C on average (0.048 at most), RH within
+  0.09 %RH at the 99th percentile, MSLP, wind speed, soil and column water vapour within
+  0.03 at most; wind direction within 1.8 deg at the 99th percentile.
+- **Rain reads slightly low through Open-Meteo.** It rounds hourly rain to 0.1 mm, and drizzle
+  under 0.05 mm/h rounds to zero: -0.09 mm/day on average that day, -0.8 mm in Mahe
+  (1.4 mm by CDS). Not fixable through this API; ERA5T from CDS would be.
+- **Surface pressure is not reported live.** Open-Meteo's `surface_pressure` is its MSLP
+  reduced to its own terrain height: inverting the barometric formula gives back the
+  `elevation` in each response to within a metre. Against ERA5's `sp` it read +0.2 hPa
+  at 395 m, +0.8 at 629 m, +2.0 at 1,743 m and +4.3 at 4,835 m. Missing, not wrong:
+  the live store has no surface-pressure observations, so that variable cannot bust
+  live. It still converts the dewpoint to q, where 1 hPa moves q by about 0.1%.
+- **Lost batches made partial districts, and the run said complete.** The aggregator
+  renormalises around missing cells, which is right for soil over sea and wrong for a
+  gap. `refresh-data.yml` on 2026-10-04 06:11Z lost 5 of 17 batches to HTTP 429 (the
+  per-minute limit; Open-Meteo counts each location as a call) and recorded the run
+  `complete`. Now a district touching a missing cell has no value for that variable, a
+  minute's 429 is waited out, an hourly or daily one fails the batch at once, and a run
+  with lost batches is recorded `partial`.
+- **Live GEFS RH was a different estimator.** The reforecast has no 2 m RH: its RH is
+  derived from the district and daily means of q, T and p. The live 0.25 deg file has RH
+  and no SPFH at 2 m (`gefs.20261002` `.idx`: SPFH at 2 m is only in the 0.5 deg
+  b-file), and the live code averaged GEFS's RH. It now recovers each cell's q from RH,
+  T and p (the exact inverse of the Bolton formula), then derives RH as the reforecast
+  does. Checked on 3,720 points where the two grids coincide: Bolton RH from GEFS's own
+  SPFH minus GEFS's RH product averaged +0.04 %RH (-0.4 to -0.7 below 0 C, where GEFS
+  uses ice). On a real Day 1 (gefs.20261002 00Z, gep01, 666 districts) the new RH is
+  0.69 %RH below the old on average (5th-95th percentile -1.8 to +0.3).
+- **Live MSLP is the same quantity as the reforecast's.** The reforecast labels its field
+  `PRES:mean sea level`; the live file carries both `PRMSL` and `MSLET`, which differ by
+  about 3 hPa over India, and the live code reads `PRMSL`. Checked against ERA5 `msl`
+  (Day-1 means of the eight 3-hourly instants): the reforecast in 2017 (387,258 cell-days)
+  read -0.2 to -0.4 hPa below 1,000 m; live `PRMSL` on gefs.20260926 00Z (gec00 and gep01,
+  60 cells spread by height) read -0.05 to -0.39 there, while `MSLET` drifted with height:
+  -1.0 to -1.2 at 300-1,000 m, -3.3 at 1-2 km, -13 above 2 km. `PRMSL` stays. One live
+  day and 60 cells; a larger check would need more ERA5 days than Open-Meteo's free
+  allowance gives in an hour.

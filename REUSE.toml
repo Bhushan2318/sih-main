@@ -90,6 +90,16 @@ SPDX-FileCopyrightText = [
 ]
 SPDX-License-Identifier = "LicenseRef-NOAA-Open-Data"
 
+# ERA5's land-sea mask for the weight table's cells, from the Copernicus Climate Data Store.
+[[annotations]]
+path = "backend/data/geo/era5_land_sea_mask.parquet"
+precedence = "override"
+SPDX-FileCopyrightText = [
+  "Contains modified Copernicus Climate Change Service information 2026",
+  "2026 The Sanket contributors (Team Winging It)",
+]
+SPDX-License-Identifier = "CC-BY-4.0"
+
 # ERA5 observations, through Open-Meteo's Historical Weather API.
 [[annotations]]
 path = "backend/data/samples/era5_observations_india_2019.parquet"
