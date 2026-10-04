@@ -20,8 +20,11 @@ from app.features.pivot import classifier_feature_columns
 # district-identity feature - see app.ml.regressors.CATEGORICAL_FEATURES.
 CATEGORICAL = ["state_id", "season"]
 
+# n_estimators is a cap, not a target: early stopping on the validation year decides. The
+# served run stopped at its old cap of 400 (best_iteration 399) - it never early-stopped.
+# No scale_pos_weight: it pushed every probability up (see app/ml/calibration.py).
 XGB_PARAMS = dict(
-    n_estimators=400,
+    n_estimators=3000,
     max_depth=3,
     learning_rate=0.03,
     subsample=0.8,
@@ -36,7 +39,7 @@ XGB_PARAMS = dict(
     enable_categorical=True,
     n_jobs=0,
     random_state=42,
-    early_stopping_rounds=40,
+    early_stopping_rounds=100,
 )
 
 
@@ -48,6 +51,9 @@ class ClassifierArtifact:
     n_train: int
     n_val: int
     train_bust_rate: float
+    # Platt scaling fitted on the validation year (app/ml/calibration.py); None for runs
+    # trained before it, whose probabilities are used as they are.
+    calibrator: dict | None = None
 
 
 def _prep_X(df: pd.DataFrame, cols: list) -> pd.DataFrame:
@@ -110,8 +116,6 @@ def train_bust_classifier(
 ) -> ClassifierArtifact:
     cols = classifier_feature_columns(event_train)
     y = event_train["y_bust"].astype(int).to_numpy()
-    pos, neg = int(y.sum()), int(len(y) - y.sum())
-    spw = (neg / pos) if pos else 1.0
 
     params = dict(XGB_PARAMS)
     val_df: pd.DataFrame | None = (
@@ -123,20 +127,30 @@ def train_bust_classifier(
     Xtr = _prep_X(event_train, cols)
     if val_df is not None:
         Xva = _prep_X(val_df, cols)
-        model = xgb.XGBClassifier(**params, scale_pos_weight=spw)
+        model = xgb.XGBClassifier(**params)
         model.fit(Xtr, y, eval_set=[(Xva, val_df["y_bust"].astype(int).to_numpy())], verbose=False)
     else:
         params.pop("early_stopping_rounds", None)
-        model = xgb.XGBClassifier(**params, scale_pos_weight=spw)
+        model = xgb.XGBClassifier(**params)
         model.fit(Xtr, y)
 
-    metrics: dict = {"train": _evaluate(y, model.predict_proba(Xtr)[:, 1])}
+    from app.ml import calibration
+    calibrator = None
     n_val = 0
     if val_df is not None:
-        pv = model.predict_proba(_prep_X(val_df, cols))[:, 1]
+        raw_val = model.predict_proba(_prep_X(val_df, cols))[:, 1]
+        # Fitted on the same validation year early stopping used: its val metrics are
+        # therefore in-sample for the calibrator; test is untouched.
+        calibrator = calibration.fit_platt(raw_val, val_df["y_bust"].astype(int).to_numpy())
+        pv = calibration.apply(calibrator, raw_val)
+        metrics: dict = {"train": _evaluate(
+            y, calibration.apply(calibrator, model.predict_proba(Xtr)[:, 1]))}
         metrics["val"] = _evaluate(val_df["y_bust"], pv)
+        metrics["calibrator"] = calibrator
         n_val = len(val_df)
         metrics["best_iteration"] = int(getattr(model, "best_iteration", params["n_estimators"]) or 0)
+    else:
+        metrics = {"train": _evaluate(y, model.predict_proba(Xtr)[:, 1])}
 
     return ClassifierArtifact(
         model=model,
@@ -145,8 +159,11 @@ def train_bust_classifier(
         n_train=len(event_train),
         n_val=n_val,
         train_bust_rate=float(y.mean()),
+        calibrator=calibrator,
     )
 
 
 def predict_bust_probability(artifact: ClassifierArtifact, event_df: pd.DataFrame) -> np.ndarray:
-    return artifact.model.predict_proba(_prep_X(event_df, artifact.feature_columns))[:, 1]
+    from app.ml import calibration
+    raw = artifact.model.predict_proba(_prep_X(event_df, artifact.feature_columns))[:, 1]
+    return calibration.apply(getattr(artifact, "calibrator", None), raw)

@@ -28,6 +28,14 @@ def run_feature_version(manifest: dict) -> int:
     return int((manifest or {}).get("feature_version", contracts.LEGACY_FEATURE_VERSION))
 
 
+def bust_probability(state, X: pd.DataFrame) -> np.ndarray:
+    """The classifier's bust probability for prepared event features, through the run's
+    calibrator when it has one (app/ml/calibration.py)."""
+    from app.ml import calibration
+    raw = state.classifier.predict_proba(X)[:, 1]
+    return calibration.apply(getattr(state, "calibrator", None), raw)
+
+
 @dataclass
 class ModelState:
 
@@ -46,6 +54,8 @@ class ModelState:
     # Label version 2: the run's training-period bias table (app/features/bias.py), applied
     # to every frame it scores. None for a run trained before it - scored exactly as before.
     bias_table: Optional[pd.DataFrame] = None
+    # The classifier's Platt calibration (app/ml/calibration.py); None for older runs.
+    calibrator: Optional[dict] = None
     # Set instead of `regressors` on the serving box, which loads the models' names and not
     # the models (see _models_stay_off_this_box).
     regressor_names: list = field(default_factory=list)
@@ -208,6 +218,7 @@ def load_model_state(run_id: Optional[str] = None) -> Optional[ModelState]:
         jump = registry.load_jump_climatology(rid)
         shap_summary = _read_shap_summary(registry.run_dir(rid) / "shap_summary.parquet")
         bias_table = registry.load_bias_table(rid)
+        calibrator = registry.load_calibrator(rid)
 
     import json
     def _read(name):
@@ -227,6 +238,7 @@ def load_model_state(run_id: Optional[str] = None) -> Optional[ModelState]:
         metrics=_read("metrics.json"),
         regressor_names=names_only,
         bias_table=None if lean else bias_table,
+        calibrator=None if lean else calibrator,
     )
     with _lock:
         _state_cache = (rid, lean, state)
@@ -397,7 +409,7 @@ def score_cycle(
     )
     X_evt = _prep(events, state.classifier_columns,
                   categorical_features(state.classifier))
-    events["bust_probability"] = state.classifier.predict_proba(X_evt)[:, 1]
+    events["bust_probability"] = bust_probability(state, X_evt)
     events["risk_band"] = [state.thresholds.band_for(p) for p in events["bust_probability"]]
 
     events["dominant_variable"] = _dominant_variable(events, state.thresholds.bust_threshold)

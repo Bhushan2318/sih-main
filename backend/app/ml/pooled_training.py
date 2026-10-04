@@ -1310,6 +1310,7 @@ def finalize_for_serving(run_id: str, cache_dir: Path,
     del events
 
     art = clf_mod.ClassifierArtifact(model=clf, feature_columns=clf_cols, metrics={},
+                                         calibrator=registry.load_calibrator(run_id),
                                      n_train=0, n_val=len(event_va),
                                      train_bust_rate=float("nan"))
     got = clf_mod._evaluate(event_va["y_bust"], clf_mod.predict_bust_probability(art, event_va))
@@ -1556,6 +1557,7 @@ def emit_eval_events_for_run(run_id: str, cache_dir: Path,
         raise ValueError(f"{run_id}: rebuilt no test events from {cached[test_year]}")
 
     clf_art = clf_mod.ClassifierArtifact(model=clf, feature_columns=clf_cols, metrics={},
+                                         calibrator=registry.load_calibrator(run_id),
                                          n_train=0, n_val=len(event_te),
                                          train_bust_rate=float("nan"))
     got = clf_mod._evaluate(event_te["y_bust"],
@@ -1888,6 +1890,7 @@ def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
     for var, art in artifacts.items():
         registry.save_regressor(rid, var, art.model, art.feature_columns)
     registry.save_classifier(rid, clf_art.model, clf_art.feature_columns)
+    registry.save_calibrator(rid, clf_art.calibrator)
     registry.save_thresholds(rid, thresholds)
     registry.save_historical_bust_freq(rid, hbf)
     registry.save_bias_table(rid, bias_table)

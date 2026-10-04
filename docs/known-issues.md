@@ -1320,6 +1320,24 @@ here rather than discovered live.
     from 191.0° to 115.1°, and spread p90 from 118.0° to 55.0°. A cached year records its
     version and is rebuilt on a mismatch. Removing direction from the bust label is a
     separate change (the bias-corrected label).
+- **Bust probabilities were not calibrated, and the classifier's early stopping never
+  fired. Fixed 2026-10-04 for new runs.**
+  - The served run trained with `scale_pos_weight = neg/pos` and was never recalibrated.
+    That weighting pushes every probability up: as recorded in that run's
+    `metrics.json`, its lowest reliability bin predicted 0.158 against ~0.07 observed
+    on test.
+  - Its `best_iteration` was 399 of a 400-tree cap, so early stopping never stopped it.
+  - New runs drop the weighting, allow 3,000 trees with early stopping of 100 rounds on
+    validation, and fit Platt scaling on validation (`app/ml/calibration.py`, saved as
+    the run's `calibrator.json`). A fit whose slope is not positive is refused.
+  - **What it does not change.** Platt is monotone, so rankings and ROC-AUC, the number
+    the gate reads, are unchanged.
+  - **SHAP is on the uncalibrated margin.** Calibration multiplies that margin by `a` and
+    adds `b`, so the order and relative size of the contributions are the same, but they
+    sum to the classifier's raw log-odds, not to the calibrated probability's.
+  - **Validation is used three ways** (early stopping, calibration, and later tuning), so
+    validation scores are optimistic. Test is never used for any of them.
+  - The served run has no calibrator and is scored exactly as before.
 - **The serving box was at 509 MB of 512. Guarded 2026-09-25.**
   - Replay and the ensemble endpoint accepted any `init_date` and scored non-precomputed
     cycles on the box (1,406 MB peak).
