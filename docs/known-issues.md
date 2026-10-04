@@ -917,6 +917,9 @@ here rather than discovered live.
   1,050 test events this is not distinguishable from noise on its own (the reported 95%
   CI on ROC-AUC is roughly +-0.05 wide). Not proof C3 adds real skill; consistent with
   it not hurting.
+- **No longer a model input, 2026-10-01.** OMI is not published in real time, so live
+  cycles never have it. See "The MJO file stops at 2026-06-24" in the 2026-09-25 audit
+  below.
 
 ### Seventeen-year pooled training, added 2026-09-21
 
@@ -1251,12 +1254,27 @@ here rather than discovered live.
   take it directly, but takes every regressor's output, so held-out scores are inflated by
   an unknown amount until the retrain.
 - **The MJO file stops at 2026-06-24.**
-  - `data/mjo_omi_index.parquet` was committed once and nothing refreshes it.
+  - `data/mjo_omi_index.parquet` was committed once and nothing refreshes it. Refreshing
+    would not help: NOAA PSL's own `omi.1x.txt` also ended on 2026-06-24 when fetched on
+    2026-10-01.
   - The as-of join tolerates 5 days, so every live cycle gets NaN MJO features that
     training always had.
   - OMI may also be computed with future data. NOAA PSL publishes a real-time version
     (ROMI) for this use.
-  - Next retrain: use ROMI and refresh it in CI, or drop MJO.
+  - **Dropped from training, 2026-10-01.** New runs take none of `mjo_rmm1`, `mjo_rmm2`
+    or `mjo_amplitude`, in the regressors (`regressors.NUMERIC_FEATURES`) or the
+    classifier (`pivot.classifier_feature_columns`), and `tests/test_mjo_index.py` checks
+    both. The frames still carry the columns, because the served run_20260922T043925Z
+    was trained with them and scores with its own saved feature lists. They can go when
+    a run trained without them is served. ROMI, refreshed in CI, is the way to bring MJO
+    back.
+  - **The served run leans on them very little.** Their share of its mean |SHAP|, over
+    all districts and leads in its `shap_summary.parquet` (read 2026-10-01), is 0.0% for
+    the classifier and 0.1-1.1% for each regressor.
+  - **The gate's comparison still fills them in.** `score_run_on_year --as-of-issue`
+    blanks only inputs in `contracts.OBSERVATION_DERIVED`, so it scores the served run on
+    2017 with MJO filled in, while live it is NaN. With the weight above the difference
+    should be small, but it has not been measured.
 - **Wind-direction error is not circular.**
   - `engineering.py` takes a plain difference and `pivot.py` a plain mean of directions.
     Its p90 is ~189° raw against ~98° wrapped.
