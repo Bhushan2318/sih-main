@@ -1316,6 +1316,32 @@ here rather than discovered live.
   - Fix: a `use_precomputed=False` path for the precompute. Land it together with 00Z-only
     ingest, so forcing a re-score does not expose the collapse.
 
+### The two sides of the label reduce humidity and wind differently, added 2026-10-02
+
+- **What differs.** The forecast side averages q, T, surface pressure, u and v over the day
+  (the eight 3-hourly instants of day k) and over the district, and only then derives RH,
+  wind speed and direction (`fetch_gefs_reforecast_sample.py`, `pull_one_file` then
+  `_canonicalise`). The archive's observations (`fetch_era5_cds_district_observations.py`
+  `to_daily`, "v1") derive RH every hour and wind speed in every cell, over all 24 hours,
+  and the district mean then averages those. RH and speed are non-linear, so the order
+  changes the number.
+- **Measured on Nov 2017** (cached CDS download, 666 districts, 19,980 district-days),
+  the forecast side's method applied to ERA5 minus v1:
+  - rainfall 0.00000 mm (identical: both sum the same 24 hourly accumulations);
+  - temperature +0.111 °C mean, from sampling 8 instants instead of 24;
+  - RH -2.28 %RH mean, down to about -4 %RH per district in the Bihar and UP plains, where
+    November's diurnal range is large. Mixing cells of different temperature explains
+    almost none of it (-6%); it is the time averaging;
+  - wind speed -0.034 m/s mean.
+  - In the same month, v1's RH offset flipped 4.4% of humidity bust labels, or about 1.7%
+    after removing a per-district, per-lead mean error.
+- **Fix in progress.** `--estimator v2` writes per-cell daily components
+  (`_era5_cds_v2/cells_daily_YYYYMM.parquet`: q, T, sp, msl, u, v, tcwv, swvl1 at the
+  forecast's instants, rain over 24 h). The district step derives RH and wind after the
+  mean, with the same functions as the forecast side (`app/utils/humidity.py`). The
+  2000-2019 observations are to be refetched this way before the next retrain. Until
+  then, the archive and the served model use v1.
+
 ### Replay's past events, added 2026-09-26
 
 - **What they are.** Replay lists four cycles from the reforecast archive above its recent
