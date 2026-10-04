@@ -1327,6 +1327,14 @@ here rather than discovered live.
     `paired_2017.parquet`, which predate the move. The serving bundle never held these
     batches (0 IMD batches in its `metadata.db`), so the live site is unaffected.
   - Still open: caching a year does not yet refuse stale IMD batches by itself.
+  - **Closed 2026-10-02.** The quarantine is now enforced, not only recorded:
+    `parquet_store.assert_no_excluded_batches()` refuses to build any training or
+    scoring frame while a batch whose `upload_batch.status` is `quarantined` or
+    `retired` has files in the store. Restoring the IMD files per `MOVED.md` would now
+    stop training rather than silently win the dedupe. And each cached year records the
+    store batches that reach it (`parquet_store.year_batch_signature`: id, rows, bytes),
+    so `cache_year` rebuilds a year when they change. A cache written before this has no
+    record and is rebuilt; a batch for another year leaves it alone.
 - **`forecast_error_lag` leaks** (entry above, added the same day). The classifier does not
   take it directly, but takes every regressor's output, so held-out scores are inflated by
   an unknown amount until the retrain.

@@ -760,10 +760,18 @@ def _cache_with_inf(path, bad_col="laf_spread_ratio"):
 def _stamp_as_current_cache(path, row_group_size=None):
     """Mark a hand-written cache as built by the current code (feature version in its
     footer, as cache_year writes it), so cache_year reuses it rather than rebuilding."""
+    import json
+    import re
+
     import pyarrow.parquet as pq
+    from app.storage import parquet_store
     t = pq.read_table(path)
     meta = dict(t.schema.metadata or {})
     meta[pt._FEATURE_VERSION_KEY] = str(pt.FEATURE_VERSION).encode()
+    # ...and the store batches it was built from, as of now (cached_store_signature).
+    year = int(re.search(r"paired_(\d{4})", str(path)).group(1))
+    meta[pt._STORE_SIGNATURE_KEY] = json.dumps(parquet_store.year_batch_signature(year),
+                                               sort_keys=True).encode()
     pq.write_table(t.replace_schema_metadata(meta), path, row_group_size=row_group_size)
 
 
