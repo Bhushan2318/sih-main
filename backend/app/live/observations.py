@@ -138,10 +138,11 @@ def _fetch_cell_batch(lats, lons, start: date, end: date, tier: str) -> list:
 
     `models=era5` makes the archive answer from ERA5's own 0.25 deg cell. Without it the
     answer comes from Open-Meteo's default model mix on a finer grid - measured 2026-10-04,
-    19.0 N 72.75 E came back from 19.016 N 72.781 E, 1.9 C warmer than ERA5's cell. ERA5
-    has no near-real-time feed, so the provisional tier keeps the forecast API's default
-    and says so in its source. `elevation=nan` (one per coordinate) stops Open-Meteo
-    shifting temperature to a 90 m terrain model, on both tiers.
+    19.0 N 72.75 E came back from 19.016 N 72.781 E, 1.9 C colder than ERA5's cell at
+    01 UTC on 2026-09-20. ERA5 has no near-real-time feed, so the provisional tier keeps
+    the forecast API's default and says so in its source. `elevation=nan` (one per
+    coordinate) stops Open-Meteo shifting temperature to a 90 m terrain model, on both
+    tiers.
     """
     params = {
         "latitude": ",".join(f"{v:.4f}" for v in lats),

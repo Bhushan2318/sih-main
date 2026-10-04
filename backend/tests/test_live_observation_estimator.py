@@ -2,8 +2,9 @@
 
 Measured against the real archive API on 2026-10-04 (four 0.25 deg cells, 2026-09-20):
 - Without `models=era5` Open-Meteo answers from its default model mix, snapped to a finer
-  grid: 19.0 N 72.75 E came back from 19.016 N 72.781 E, with 2 m temperature 24.7 C and
-  column water vapour 55.7 kg/m2 where ERA5's own cell reads 26.6 C and 45.0. With
+  grid: 19.0 N 72.75 E came back from 19.016 N 72.781 E, at 01 UTC on 2026-09-20 with 2 m
+  temperature 24.7 C and column water vapour 55.7 kg/m2, where ERA5's own cell reads 26.6 C
+  and 45.0. With
   `models=era5` it answers from ERA5's 0.25 deg cell itself, at exactly the coordinates
   asked. The live rows were labelled ERA5 without being ERA5.
 - `elevation` defaults to a 90 m terrain model, and Open-Meteo shifts temperature to it;
