@@ -139,8 +139,11 @@ _D = pd.Timestamp("2026-09-15").date()
 
 
 def _hourly(temp: float, wind_dir: float = 90.0, wind_speed: float = 3.0,
-            hours: int = 24) -> dict:
+            hours: int = 48) -> dict:
     """One location's hourly block, shaped as Open-Meteo returns it.
+
+    Starts 00 UTC on _D: the request runs to the day after, because _D's day is the
+    stamps 01 UTC on _D to 00 UTC on _D+1.
 
     Synthetic and labelled as such: it exercises shape, batching and the wind maths. The
     values carry no meaning and nothing here produces a metric.
@@ -149,7 +152,7 @@ def _hourly(temp: float, wind_dir: float = 90.0, wind_speed: float = 3.0,
     return {
         "time": [t.strftime("%Y-%m-%dT%H:%M") for t in times],
         "temperature_2m": [temp] * hours,
-        "relative_humidity_2m": [60.0] * hours,
+        "dew_point_2m": [15.0] * hours,
         "precipitation": [0.0] * hours,
         "pressure_msl": [1008.0] * hours,
         "surface_pressure": [1000.0] * hours,

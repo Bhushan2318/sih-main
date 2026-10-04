@@ -1,7 +1,8 @@
 """Moisture and wind arithmetic shared by both sides of the bust label.
 
-The forecast fetch (scripts/fetch_gefs_reforecast_sample.py) and the observation fetch
-(scripts/fetch_era5_cds_district_observations.py) import these from here rather than
+The forecast fetches (scripts/fetch_gefs_reforecast_sample.py, app/live/gefs.py) and the
+observation fetches (scripts/fetch_era5_cds_district_observations.py,
+app/live/observations.py) import these from here rather than
 keeping a copy each. Two copies of a saturation formula drift, and the drift is invisible:
 both keep producing plausible humidities, and the humidity bust label quietly records the
 difference between them.
@@ -30,6 +31,19 @@ def specific_humidity_from_dewpoint(td_k: np.ndarray, p_pa: np.ndarray) -> np.nd
     e = q*p / (eps + (1-eps)*q) used by `rh_from_specific_humidity`.
     """
     e = saturation_vapour_pressure_pa(td_k)
+    p_pa = np.asarray(p_pa, dtype=float)
+    return _EPS * e / (p_pa - _ONE_MINUS_EPS * e)
+
+
+def specific_humidity_from_rh(rh_pct: np.ndarray, t_k: np.ndarray,
+                              p_pa: np.ndarray) -> np.ndarray:
+    """Specific humidity [kg/kg] from relative humidity [%], temperature [K], pressure [Pa].
+
+    The exact inverse of `rh_from_specific_humidity` (below 100%): e = RH * es(T), then
+    q = eps*e / (p - (1-eps)*e). The live GEFS feed carries RH but not specific humidity at
+    0.25 deg, so this recovers each cell's q before anything is averaged.
+    """
+    e = np.asarray(rh_pct, dtype=float) / 100.0 * saturation_vapour_pressure_pa(t_k)
     p_pa = np.asarray(p_pa, dtype=float)
     return _EPS * e / (p_pa - _ONE_MINUS_EPS * e)
 

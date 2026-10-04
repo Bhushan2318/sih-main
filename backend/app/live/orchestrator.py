@@ -196,9 +196,13 @@ def run_observation_refresh(
                                    verification_status=tier)
             detail = (f"tier={tier} cells={report.cells} rows={result.row_count_ingested} "
                       f"in {report.seconds:.0f}s")
+            # Districts a lost batch touched have no row (observations.py), so what was
+            # ingested is right but not everything; 'partial' is not 'complete', and the
+            # next tick tries the window again.
+            status = "partial" if report.failures else "complete"
             if report.failures:
                 detail += f"; failed_batches={'; '.join(report.failures)}"
-            _finish_run(session, session.get(IngestRun, run_id), "complete",
+            _finish_run(session, session.get(IngestRun, run_id), status,
                         upload_batch_id=result.batch_id,
                         rows_ingested=result.row_count_ingested,
                         detail=detail)
@@ -211,7 +215,8 @@ def run_observation_refresh(
             else (tier == "final"
                   and result.row_count_ingested >= settings.live_retrain_min_new_rows)
         )
-        out = {"status": "complete", "target": target, "tier": tier,
+        out = {"status": status, "target": target, "tier": tier,
+               "failed_batches": len(report.failures),
                "rows_ingested": result.row_count_ingested,
                "batch_id": result.batch_id, "retrain_triggered": bool(should_retrain)}
 
