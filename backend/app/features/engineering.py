@@ -159,6 +159,29 @@ def _circular_spread(paired: pd.DataFrame) -> None:
     paired.loc[circ, "ensemble_spread"] = np.where(n >= 2, spread, np.nan)
 
 
+def drop_implausible(df: pd.DataFrame) -> "tuple[pd.DataFrame, int]":
+    """Rows whose value is outside contracts.PLAUSIBLE_RANGE for their variable, removed.
+
+    Missing, never replaced: a corrupt member is dropped and the ensemble is the members
+    left. NaN values and variables without a range pass through. Returns (frame, dropped).
+    """
+    if df is None or df.empty or not {"variable", "value"}.issubset(df.columns):
+        return df, 0
+    v = df["value"].to_numpy(dtype=float)
+    var = df["variable"].astype(str)
+    lo = var.map({k: r[0] for k, r in contracts.PLAUSIBLE_RANGE.items()}).to_numpy(dtype=float)
+    hi = var.map({k: r[1] for k, r in contracts.PLAUSIBLE_RANGE.items()}).to_numpy(dtype=float)
+    bad = ~np.isnan(v) & ~np.isnan(lo) & ((v < lo) | (v > hi))
+    n = int(bad.sum())
+    if n:
+        import logging
+        logging.getLogger(__name__).warning(
+            "dropped %d physically impossible value(s): %s", n,
+            df.loc[bad, "variable"].astype(str).value_counts().to_dict())
+        df = df.loc[~bad]
+    return df, n
+
+
 def build_training_frame(
     canonical: pd.DataFrame,
     historical_bust_freq: dict | None = None,
@@ -175,7 +198,8 @@ def build_training_frame(
     `jump_climatology` is fitted on training rows only (compute_jump_climatology); without
     it `jump_rel_climatology` is NaN, exactly as the historical bust frequency is.
     """
-    df = canonical.copy()
+    df, _ = drop_implausible(canonical)
+    df = df.copy()
     df = df[df["region_id"].notna()]
     if feature_version >= 2:
         excluded = soil_excluded_districts()
@@ -183,6 +207,8 @@ def build_training_frame(
             sea_soil = ((df["variable"].astype(str) == "soil_moisture_pct")
                         & df["region_id"].astype(str).isin(excluded))
             df = df[~sea_soil]
+    if forecast_history is not None:
+        forecast_history, _ = drop_implausible(forecast_history)
     fc = df[df["value_type"] == FORECAST].copy()
     trajectories = [forecast_trajectories(fc)]
     if forecast_history is not None and not forecast_history.empty:
