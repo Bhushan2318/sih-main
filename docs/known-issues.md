@@ -1399,10 +1399,10 @@ here rather than discovered live.
   CDS fetch's per-cell components (q from the dewpoint and surface pressure, the eight
   3-hourly instants 03-24 UTC, rain summed 01-24 UTC) and goes through
   `district_observations.to_districts_v2`, with ERA5's land-sea mask (now in `data/geo`).
-- **How close it now is.** One day, 2017-11-15, live path against the CDS estimator
-  (district differences, live minus CDS): temperature +0.02 C, RH under 0.1 %RH at the
-  99th percentile, MSLP, wind speed, soil and column water vapour within 0.03.
-  __FULLCHECK__
+- **How close it now is.** One day, 2017-11-15, 653 districts, live path against the CDS
+  estimator (live minus CDS): temperature +0.024 C on average (0.048 at most), RH within
+  0.09 %RH at the 99th percentile, MSLP, wind speed, soil and column water vapour within
+  0.03 at most; wind direction within 1.8 deg at the 99th percentile.
 - **Rain is about 2% low through Open-Meteo.** It rounds hourly rain to 0.1 mm, and drizzle
   under 0.05 mm/h rounds to zero: -0.11 mm/day on average that day, -0.8 mm in Mahe
   (1.4 mm by CDS). Not fixable through this API; ERA5T from CDS would be.
