@@ -1323,6 +1323,16 @@ here rather than discovered live.
   mean, with the same functions as the forecast side (`app/utils/humidity.py`). The
   2000-2019 observations are to be refetched this way before the next retrain. Until
   then, the archive and the served model use v1.
+- **v1 soil moisture over water is a fabricated zero.**
+  - ERA5 has no soil over water, and `swvl1` reads ~0 there. v1 averaged those cells in
+    as real values, so Nicobar Islands and Lakshadweep had an observed soil moisture of
+    0.0% on every day of Nov 2017. Every soil "bust" there was guaranteed.
+  - v2 (`to_districts_v2`) uses only cells that ERA5's own land-sea mask calls at least
+    half land (`--land-sea-mask`). A district with no such cell gets NaN, not 0.
+  - Nov 2017, v1 → v2: Nicobar 0.0 → NaN, Lakshadweep 0.0 → NaN, South Andaman 1.7 →
+    30.8%, Mumbai City 0.2 → 9.9%.
+  - The forecast side still averages GEFS's sea cells, which read ~100%. The soil land
+    mask removes those districts' soil from both sides.
 
 ### Replay's past events, added 2026-09-26
 
