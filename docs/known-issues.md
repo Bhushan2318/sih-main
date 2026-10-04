@@ -553,6 +553,18 @@ here rather than discovered live.
 
 ## Data
 
+- **Two corrupt member-days in the reforecast archive. Dropped from 2026-10-04.** Found by
+  `scripts/diagnose_label_drift.py` over 2000-2019: member `p03` of 2004-03-05, Day 2 2 m
+  temperature, -23,380,072 to +21,808,336 C in all 666 districts (other members -18.5 to
+  32.4); member `p01` of 2019-02-09, Day 1 column water vapour, 12,500-12,546 kg/m2 (others
+  0.7-55.3). 2004 is a training year: one such member put that year's temperature RMSE at
+  34,612 C, and a per-(district, lead, season) bias would carry it into every spring Day 2.
+  `engineering.drop_implausible` now removes any value outside
+  `contracts.PLAUSIBLE_RANGE` at the start of `build_training_frame`, the path training,
+  scoring, live and replay share; the ensemble is then the members left. On the real store
+  it drops exactly 666 rows on each of those cycles and none on a clean one (2017-07-01).
+  The run that is served trained with the 2004 member in it.
+
 - **17 reforecast cycles are missing from the 2000-2019 store** (`canonical_full`, counted
   2026-10-04 from Parquet footers: 7,288 of 7,305 days). 2004: Sep 13, Sep 26, Oct 7,
   Oct 11, Oct 29, Nov 1, Nov 2, Nov 12, Dec 6, Dec 16. 2006: Jan 13, Feb 27, Aug 25,
