@@ -106,7 +106,7 @@ def score_run_on_year(run_id: str, year: int, as_of_issue_time: bool = False) ->
 
     X_evt = inference._prep(events, state.classifier_columns,
                             inference.categorical_features(state.classifier))
-    events["model_proba"] = state.classifier.predict_proba(X_evt)[:, 1]
+    events["model_proba"] = inference.bust_probability(state, X_evt)
     events["split"] = "test"
     events["scored_run_id"] = run_id
     events["scored_year"] = year

@@ -165,6 +165,21 @@ def load_regressors(run_id: str) -> dict:
     return out
 
 
+def save_calibrator(run_id: str, calibrator) -> None:
+    """The classifier's Platt calibration (app/ml/calibration.py); nothing written if None."""
+    if not calibrator:
+        return
+    d = run_dir(run_id)
+    d.mkdir(parents=True, exist_ok=True)
+    _atomic_write(d / "calibrator.json", json.dumps(calibrator, indent=2))
+
+
+def load_calibrator(run_id: str):
+    """None for a run trained before calibration - its probabilities are used as they are."""
+    p = run_dir(run_id) / "calibrator.json"
+    return json.loads(p.read_text()) if p.exists() else None
+
+
 def load_classifier(run_id: str):
     p = run_dir(run_id) / "classifier.json"
     if not p.exists():

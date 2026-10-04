@@ -477,6 +477,7 @@ def full_retrain(triggered_by_batch_id: str | None = None, make_current: bool = 
         for var, art in artifacts.items():
             registry.save_regressor(run_id, var, art.model, art.feature_columns)
         registry.save_classifier(run_id, clf_art.model, clf_art.feature_columns)
+        registry.save_calibrator(run_id, clf_art.calibrator)
         registry.save_thresholds(run_id, thresholds)
         registry.save_historical_bust_freq(run_id, hbf)
         registry.save_jump_climatology(run_id, jump_clim)
