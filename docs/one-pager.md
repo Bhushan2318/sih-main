@@ -64,9 +64,9 @@ What is stable enough to write down is the shape of the evidence:
 - **Real data end to end.** NOAA GEFS (reforecast for training, operational feed live) and
   ERA5 reanalysis for verification, across all 666 districts.
 - **Leakage is tested for, and what the tests missed is written down.** Bust thresholds
-  are fitted on the training split only, out-of-fold folds are grouped by forecast cycle
-  so no cycle spans a fold, and no observed day appears on both sides of the train/test
-  split — each a test in the suite. An audit on 2026-09-25 still found one leaking input;
+  are fitted on the training split only, out-of-fold folds are 30-day blocks of forecast
+  cycles, and every split and fold boundary keeps a 10-day gap so no observed day appears
+  on both sides — each a test in the suite. An audit on 2026-09-25 still found one leaking input;
   it is documented and removed in the next retrain.
 - **The ground truth's own uncertainty is measured.** Measured across ERA5 vs MERRA-2
   over **21,492** paired city-days: **24–43%** of the bust threshold, depending on the
