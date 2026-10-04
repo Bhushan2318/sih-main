@@ -191,3 +191,20 @@ def example_column(name: str, n: int) -> pd.Series:
     if kind == "C":
         return pd.Series([f"{name}_{i}" for i in range(n)], dtype="category")
     return pd.Series([f"{name}_{i}" for i in range(n)], dtype="object")
+
+
+# Physically possible values per canonical variable, inclusive, in canonical units. A member
+# value outside is a corrupt message, not weather: the archive holds two (2004-03-05 p03
+# Day-2 temperature at +-2e7 C; 2019-02-09 p01 Day-1 column water vapour at ~12,500
+# kg/m2). `engineering.drop_implausible` removes such rows before any frame is built.
+# Real 2017 extremes sit well inside: temperature -33.1..42.9, MSLP 985..1050, rain to 367.
+PLAUSIBLE_RANGE: dict = {
+    "temperature_c": (-80.0, 60.0),
+    "humidity_pct": (0.0, 100.5),
+    "rainfall_mm": (0.0, 1500.0),
+    "pressure_hpa": (870.0, 1085.0),
+    "wind_speed_ms": (0.0, 75.0),
+    "wind_direction_deg": (0.0, 360.0),
+    "soil_moisture_pct": (-0.5, 100.5),
+    "atmospheric_moisture_kgm2": (0.0, 100.0),
+}
