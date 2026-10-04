@@ -73,6 +73,11 @@ def score_run_on_year(run_id: str, year: int, as_of_issue_time: bool = False) ->
         feature_version=inference.run_feature_version(getattr(state, "manifest", None)))
     if paired.empty:
         raise ValueError(f"no paired forecast+observation data for {year} in the store")
+    bias_table = getattr(state, "bias_table", None)
+    if bias_table is not None:
+        # Label version 2: the run's own training-period bias, as in its training.
+        from app.features.bias import apply_bias
+        paired = apply_bias(paired, bias_table)
 
     # The run's own train-split historical bust frequency, not one recomputed on the
     # scoring year - see the docstring above.
@@ -101,7 +106,7 @@ def score_run_on_year(run_id: str, year: int, as_of_issue_time: bool = False) ->
 
     X_evt = inference._prep(events, state.classifier_columns,
                             inference.categorical_features(state.classifier))
-    events["model_proba"] = state.classifier.predict_proba(X_evt)[:, 1]
+    events["model_proba"] = inference.bust_probability(state, X_evt)
     events["split"] = "test"
     events["scored_run_id"] = run_id
     events["scored_year"] = year

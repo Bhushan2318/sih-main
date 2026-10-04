@@ -96,6 +96,47 @@ def incumbent_as_of_issue(scores: Path, live_run_id: "str | None", test_year: in
     return clf_mod._evaluate(ev["y_bust"], ev["model_proba"])
 
 
+def shared_metrics(path: Path, run_id: str, live_run_id: "str | None", test_year: int):
+    """Both runs' metrics from one `scripts.score_shared_events` file: the same events,
+    the new run's label. Refuses a file for another run, incumbent or year."""
+    import pandas as pd
+    from app.ml import classifier as clf_mod
+
+    ev = pd.read_parquet(path)
+    for col, want in (("new_run_id", run_id), ("incumbent_run_id", live_run_id),
+                      ("year", test_year)):
+        got = sorted(set(ev[col].astype(str)))
+        if got != [str(want)]:
+            raise ValueError(f"{path} has {col} {got}, not {want}")
+    return (clf_mod._evaluate(ev["y_bust"], ev["proba_new"]),
+            clf_mod._evaluate(ev["y_bust"], ev["proba_incumbent"]))
+
+
+# How far the new run's score on the shared events may sit from the test score it recorded.
+# Both are the same run, year and inputs, read once from the training cache and once from
+# the store; a gap beyond float rounding means they are not the same events.
+RECORDED_SCORE_TOLERANCE = 0.002
+
+
+def check_recorded_score(shared_new: dict, metrics: dict) -> None:
+    recorded = ((metrics.get("classifier") or {}).get("test") or {}).get("roc_auc")
+    if recorded is None:
+        raise ValueError("the run recorded no held-out ROC-AUC to check the shared events against")
+    if abs(float(shared_new["roc_auc"]) - float(recorded)) > RECORDED_SCORE_TOLERANCE:
+        raise ValueError(f"the run scores {shared_new['roc_auc']:.4f} on the shared events but "
+                         f"recorded {float(recorded):.4f} on its own test year - these are not "
+                         "the events it was tested on; refusing")
+
+
+def refuse_incumbent_score_for_new_labels(manifest: dict) -> None:
+    """An --incumbent-score file is the served run on its own label. A label-version-2 run
+    is judged on a different label, so comparing the two is not like for like."""
+    if int((manifest or {}).get("label_version", 1)) >= 2:
+        raise ValueError("this run defines busts on bias-corrected error (label version 2): "
+                         "compare it with --shared-events (scripts.score_shared_events), not "
+                         "--incumbent-score")
+
+
 def gate_decision(new_metrics: dict, live_root: Path, live_run_id: "str | None",
                   incumbent: "dict | None" = None) -> tuple:
     """The training pipeline's own promotion gate, asked about this model against the
@@ -177,6 +218,10 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true", help="check and pack, upload nothing")
     ap.add_argument("--deploy", action="store_true",
                     help="after uploading, dispatch the refresh workflow so the site picks it up")
+    ap.add_argument("--shared-events", type=Path, default=None,
+                    help="scripts.score_shared_events output: this run and the served run on the "
+                         "same events and the same (this run's) label; the gate compares both "
+                         "metrics from it (see shared_metrics)")
     ap.add_argument("--incumbent-score", type=Path, default=None,
                     help="scripts.score_run_on_year --as-of-issue output for the served run on this "
                          "run's test year: the gate compares against that instead of the score the "
@@ -201,7 +246,26 @@ def main() -> int:
         td = Path(td)
         live_root, live_run_id = fetch_live_bundle(td / "live")
         incumbent = None
+        man = run_dir / "manifest.json"
+        run_manifest = json.loads(man.read_text()) if man.is_file() else {}
+        if args.shared_events is not None and args.incumbent_score is not None:
+            print("give --shared-events or --incumbent-score, not both", file=sys.stderr)
+            return 1
+        if args.shared_events is not None:
+            test_year = run_manifest.get("test_year")
+            if test_year is None:
+                print(f"--shared-events needs {args.run_id}'s test_year in its manifest.json",
+                      file=sys.stderr)
+                return 1
+            shared_new, incumbent = shared_metrics(args.shared_events, args.run_id,
+                                                   live_run_id, int(test_year))
+            check_recorded_score(shared_new, metrics)
+            metrics = {**metrics, "classifier": {**(metrics.get("classifier") or {}),
+                                                 "test": shared_new}}
+            print(f"shared events, {test_year}: this run roc_auc {shared_new['roc_auc']:.4f}, "
+                  f"served run {live_run_id} roc_auc {incumbent['roc_auc']:.4f}")
         if args.incumbent_score is not None:
+            refuse_incumbent_score_for_new_labels(run_manifest)
             man = run_dir / "manifest.json"
             test_year = json.loads(man.read_text()).get("test_year") if man.is_file() else None
             if test_year is None:
@@ -230,7 +294,9 @@ def main() -> int:
             "held_out": ((metrics.get("classifier") or {}).get("test")
                          or (metrics.get("classifier") or {}).get("val") or {}),
             "replaces": live_run_id,
-            "compared_against": ({"run_id": live_run_id, "as_of_issue": incumbent}
+            "compared_against": ({"run_id": live_run_id, "as_of_issue": incumbent,
+                                  "shared_events": (str(args.shared_events)
+                                                    if args.shared_events else None)}
                                  if incumbent is not None else None),
         }
         (td / MANIFEST_NAME).write_text(json.dumps(manifest, indent=2))

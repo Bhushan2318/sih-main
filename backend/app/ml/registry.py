@@ -90,6 +90,23 @@ def load_jump_climatology(run_id: str) -> dict:
     return {tuple(k.split("||")): v for k, v in raw.items()}
 
 
+def save_bias_table(run_id: str, table) -> None:
+    """The run's training-period bias per (district, variable, lead, season) - label
+    version 2 (app/features/bias.py). Scoring the run applies exactly this table."""
+    d = run_dir(run_id)
+    d.mkdir(parents=True, exist_ok=True)
+    tmp = d / "bias_table.parquet.tmp"
+    table.to_parquet(tmp, index=False)
+    tmp.replace(d / "bias_table.parquet")
+
+
+def load_bias_table(run_id: str):
+    """None for a run trained before bias-corrected busts (label version 1)."""
+    import pandas as pd
+    path = run_dir(run_id) / "bias_table.parquet"
+    return pd.read_parquet(path) if path.exists() else None
+
+
 def save_metrics(run_id: str, metrics: dict) -> None:
     _atomic_write(run_dir(run_id) / "metrics.json", json.dumps(metrics, indent=2, default=str))
 
@@ -146,6 +163,21 @@ def load_regressors(run_id: str) -> dict:
         _restore_categorical(m)
         out[var] = (m, cols.get(f"regressor::{var}", []))
     return out
+
+
+def save_calibrator(run_id: str, calibrator) -> None:
+    """The classifier's Platt calibration (app/ml/calibration.py); nothing written if None."""
+    if not calibrator:
+        return
+    d = run_dir(run_id)
+    d.mkdir(parents=True, exist_ok=True)
+    _atomic_write(d / "calibrator.json", json.dumps(calibrator, indent=2))
+
+
+def load_calibrator(run_id: str):
+    """None for a run trained before calibration - its probabilities are used as they are."""
+    p = run_dir(run_id) / "calibrator.json"
+    return json.loads(p.read_text()) if p.exists() else None
 
 
 def load_classifier(run_id: str):

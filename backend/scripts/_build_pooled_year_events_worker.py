@@ -65,7 +65,8 @@ def main() -> int:
         # a 1.14 GiB allocation failed on both attempts.
         result["event_frame"] = year_event_frame(
             job["cached_path"], job["train_cycles"], job["hbf"], job["p90_error"],
-            job["bust_threshold"], job["fold_models"], job["fold_of"], job["columns"])
+            job["bust_threshold"], job["fold_models"], job["fold_of"], job["columns"],
+            bias_table=job.get("bias_table"))
     except Exception:
         result["error"] = traceback.format_exc()
 

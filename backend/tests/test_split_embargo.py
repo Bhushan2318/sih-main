@@ -81,11 +81,11 @@ def test_oof_fold_models_fit_on_the_embargoed_cycles(monkeypatch, tmp_path):
     fold_of = pt.assign_folds(cycles)
     seen = {}
 
-    def fake_fit(cached, years, variable, chunks, cols, hbf, cache_dir, device):
+    def fake_fit(cached, years, variable, chunks, cols, hbf, cache_dir, device, **_):
         seen[len(seen)] = set().union(*chunks)
         return None, None
     monkeypatch.setattr(pt, "_fit_booster", fake_fit)
-    monkeypatch.setattr(pt, "_feature_columns_for", lambda cached, years: ["x"])
+    monkeypatch.setattr(pt, "_feature_columns_for", lambda cached, years, **_: ["x"])
     pt.oof_fold_models({}, [2000], "temperature_c", cycles, {}, fold_of, tmp_path)
     for fold, used in seen.items():
         held = {c for c, f in fold_of.items() if f == fold}

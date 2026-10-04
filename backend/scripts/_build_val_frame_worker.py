@@ -41,13 +41,15 @@ def main() -> int:
     try:
         import pandas as pd
 
-        from app.ml.pooled_training import attach_hbf_column
+        from app.ml.pooled_training import _bias_read_columns, _with_bias, attach_hbf_column
 
         out_dir = Path(job["out_dir"])
         shutil.rmtree(out_dir, ignore_errors=True)
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        columns = sorted(job["columns"])
+        bias_table = job.get("bias_table")
+        columns = _bias_read_columns(sorted(c for c in job["columns"] if c != "bias_correction"),
+                                     bias_table)
         val_cycles = job["val_cycles"]
         hbf = job["hbf"]
         next_row = 0
@@ -57,6 +59,7 @@ def main() -> int:
             if part.empty:
                 del part
                 continue
+            part = _with_bias(part, bias_table)
             # One shared row numbering across years, so the parent can hold a plain
             # RangeIndex for val_pred rather than a 77-million-element index array.
             part = part.reset_index(drop=True)

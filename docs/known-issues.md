@@ -811,6 +811,30 @@ here rather than discovered live.
   fixed here - fixing it means deciding the land-mask rule once and re-ingesting the
   affected years, not patching the reader, and it should be one decision rather than four
   districts' worth of special cases.
+
+  **Decided and implemented 2026-10-02 (feature version 2).**
+  - **Why a district list and not a cell mask.** The ideal fix, a land mask in the
+    weight table, would need the forecast side re-aggregated cell by cell. The archive
+    holds district means per member, and the grid bundles only the ensemble mean and
+    spread, so that means refetching GEFS (CONTRIBUTING.md rule 7).
+  - **The rule.** Soil moisture is dropped, on both sides, for a district whose weight
+    is more than 5% GEFS sea (`engineering.SOIL_SEA_FRACTION_MAX`).
+  - **The mask.** `data/geo/soil_land_mask.parquet`, built by
+    `scripts/build_soil_land_mask.py`. A GEFS sea cell is one at ≥ 0.9 in at least 95%
+    of the 730 valid 2017-2018 cycles; that gives 8,586 of the domain's 20,445 cells.
+  - **The 18 districts excluded:** Nicobar Islands, Lakshadweep, Diu, Mumbai City, Mahe,
+    Daman, South Andaman, Gir Somnath, Kachchh, Kasaragod, Ramanathapuram, North &
+    Middle Andaman, Udupi, Mumbai Suburban, Kannur, Junagadh, Dakshina Kannada,
+    Jagatsinghapur. Every other variable in them is kept.
+  - **Below 5%,** sea moves a district's GEFS soil by at most ~3.5 points, mostly
+    steadily, and the bias correction removes the steady part.
+  - **The observation side** needs no district rule: estimator-v2 observations average
+    ERA5 soil over cells ERA5's own mask calls at least half land.
+  - **Why ERA5 water is not a criterion.** Excluding on it too would have dropped 26 more
+    coastal districts (Kerala, Goa, the Odisha coast) whose GEFS cells are land.
+  - **This assumes v2 observations;** v1 averaged ERA5's water in as ~0.
+  - **Not covered:** Lahul & Spiti's high soil values (snow or ice) are not sea, and are
+    left to the bias correction.
 - **The parser test's collected count is not portable across machines.**
   `tests/test_parsers.py` runs one test per real file `conftest.iter_sample_files()`
   finds, which scans two roots: `backend/data/samples/` (repo, real fetch output) and,
@@ -1245,6 +1269,28 @@ here rather than discovered live.
 
   The first command should reproduce the served run's recorded test score. That checks the
   method before the second is trusted.
+- **That check cannot pass, and the comparison was not like for like - corrected
+  2026-10-02.**
+  - The served run's recorded 0.8435 was measured against the one-day-late IMD rainfall
+    in its 2017 cache, while `score_run_on_year` reads the store's ERA5 rainfall.
+  - Each run was scored on its own events against its own thresholds, and nothing checked
+    that the events or labels matched.
+  - With bias-corrected busts (label version 2) the labels differ by design.
+  - So for a label-version-2 run, `scripts.score_shared_events` scores both runs as of
+    issue on the same year, joins them on the event keys (refusing duplicates or any
+    new-run event without an incumbent probability) and keeps the new run's label for
+    both.
+  - `publish_serving_model --shared-events` takes both metrics from that one file and
+    refuses it if the new run's score there differs from its recorded test score by more
+    than 0.002. The unchanged `_promotion_decision` then decides on them.
+  - `--incumbent-score` is refused for label version 2.
+  - `--incumbent-reference` checks, within 1e-5, that the served run is scored exactly as
+    the `pre-overhaul` code scored it:
+
+        python -m scripts.score_shared_events --new-run <new run> --incumbent run_20260922T043925Z \
+            --year 2017 --incumbent-reference <pre-overhaul score_run_on_year --as-of-issue output>
+        python -m scripts.publish_serving_model --run-id <new run> --dry-run \
+            --shared-events data/analysis/shared_events/<new run>_vs_run_20260922T043925Z_on_2017.parquet
 
 ### Found in the 2026-09-25 audit (each re-checked against data, not only read in code)
 
@@ -1260,6 +1306,27 @@ here rather than discovered live.
   - Consequence: a "bust" today is often "this district is always off", which NCMRWF's
     own bias correction removes.
   - Decided: the next retrain defines busts on bias-corrected error.
+  - **Implemented 2026-10-02 as label version 2** (`contracts.LABEL_VERSION`,
+    `app/features/bias.py`):
+    - **The table.** The training-period mean error of the ensemble mean per (district,
+      variable, lead, season), from training cycles only. A cell with fewer than 30
+      events backs off to the district's season across leads, then to its whole year.
+      A key thin at every level has no bias: its forecast is not compared, never
+      compared raw.
+    - **Where it applies.** It is subtracted from each member forecast wherever a
+      forecast meets its observation: the regressor target, the event label, the
+      thresholds and the out-of-fold models, in both trainers, and in live scoring and
+      `score_run_on_year` for runs that carry `bias_table.parquet`.
+    - **What a run reads.** The corrected forecast and the bias removed
+      (`bias_correction`).
+    - **What the label covers.** Wind direction is no longer a label variable, and
+      events with no corrected error for any label variable are dropped rather than
+      counted as "not a bust".
+    - **On the CI sample** (12 training cycles), the corrected humidity bust threshold
+      is 13.1 %RH; on real Nov 2017 a per-district-lead correction gave 10.4 against
+      27.6 raw.
+    - **The served run_20260922T043925Z** has no bias table, so it keeps label version 1
+      and is scored exactly as before until a retrained run replaces it.
 - **The event bust rate (~49% on the test year) changes meaning with lead.** An event busts
   if any available variable passes its own p90, and fewer variables exist from Day 4 and
   Day 6 (see the next item). So the rate steps down exactly there. That confounds the
@@ -1296,6 +1363,14 @@ here rather than discovered live.
     `paired_2017.parquet`, which predate the move. The serving bundle never held these
     batches (0 IMD batches in its `metadata.db`), so the live site is unaffected.
   - Still open: caching a year does not yet refuse stale IMD batches by itself.
+  - **Closed 2026-10-02.** The quarantine is now enforced, not only recorded:
+    `parquet_store.assert_no_excluded_batches()` refuses to build any training or
+    scoring frame while a batch whose `upload_batch.status` is `quarantined` or
+    `retired` has files in the store. Restoring the IMD files per `MOVED.md` would now
+    stop training rather than silently win the dedupe. And each cached year records the
+    store batches that reach it (`parquet_store.year_batch_signature`: id, rows, bytes),
+    so `cache_year` rebuilds a year when they change. A cache written before this has no
+    record and is rebuilt; a batch for another year leaves it alone.
 - **`forecast_error_lag` leaks** (entry above, added the same day). The classifier does not
   take it directly, but takes every regressor's output, so held-out scores are inflated by
   an unknown amount until the retrain.
@@ -1341,6 +1416,24 @@ here rather than discovered live.
     from 191.0° to 115.1°, and spread p90 from 118.0° to 55.0°. A cached year records its
     version and is rebuilt on a mismatch. Removing direction from the bust label is a
     separate change (the bias-corrected label).
+- **Bust probabilities were not calibrated, and the classifier's early stopping never
+  fired. Fixed 2026-10-04 for new runs.**
+  - The served run trained with `scale_pos_weight = neg/pos` and was never recalibrated.
+    That weighting pushes every probability up: as recorded in that run's
+    `metrics.json`, its lowest reliability bin predicted 0.158 against ~0.07 observed
+    on test.
+  - Its `best_iteration` was 399 of a 400-tree cap, so early stopping never stopped it.
+  - New runs drop the weighting, allow 3,000 trees with early stopping of 100 rounds on
+    validation, and fit Platt scaling on validation (`app/ml/calibration.py`, saved as
+    the run's `calibrator.json`). A fit whose slope is not positive is refused.
+  - **What it does not change.** Platt is monotone, so rankings and ROC-AUC, the number
+    the gate reads, are unchanged.
+  - **SHAP is on the uncalibrated margin.** Calibration multiplies that margin by `a` and
+    adds `b`, so the order and relative size of the contributions are the same, but they
+    sum to the classifier's raw log-odds, not to the calibrated probability's.
+  - **Validation is used three ways** (early stopping, calibration, and later tuning), so
+    validation scores are optimistic. Test is never used for any of them.
+  - The served run has no calibrator and is scored exactly as before.
 - **The serving box was at 509 MB of 512. Guarded 2026-09-25.**
   - Replay and the ensemble endpoint accepted any `init_date` and scored non-precomputed
     cycles on the box (1,406 MB peak).
@@ -1401,6 +1494,16 @@ here rather than discovered live.
   mean, with the same functions as the forecast side (`app/utils/humidity.py`). The
   2000-2019 observations are to be refetched this way before the next retrain. Until
   then, the archive and the served model use v1.
+- **v1 soil moisture over water is a fabricated zero.**
+  - ERA5 has no soil over water, and `swvl1` reads ~0 there. v1 averaged those cells in
+    as real values, so Nicobar Islands and Lakshadweep had an observed soil moisture of
+    0.0% on every day of Nov 2017. Every soil "bust" there was guaranteed.
+  - v2 (`to_districts_v2`) uses only cells that ERA5's own land-sea mask calls at least
+    half land (`--land-sea-mask`). A district with no such cell gets NaN, not 0.
+  - Nov 2017, v1 → v2: Nicobar 0.0 → NaN, Lakshadweep 0.0 → NaN, South Andaman 1.7 →
+    30.8%, Mumbai City 0.2 → 9.9%.
+  - The forecast side still averages GEFS's sea cells, which read ~100%. The soil land
+    mask removes those districts' soil from both sides.
 
 ### Replay's past events, added 2026-09-26
 
@@ -1452,3 +1555,56 @@ here rather than discovered live.
 - **What the numbers are.** Everything Replay shows for an event is read from its
   artifact. The only hand-written text is the four titles. No score for any event is
   written in this file or in source; the builder prints them, and the site serves them.
+
+### Live observations and live humidity, made the training estimator, added 2026-10-04
+
+- **The live "ERA5" was not ERA5.** The archive request had no `models=era5`, so
+  Open-Meteo answered from its default model mix on a finer grid. Measured 2026-10-04:
+  19.0 N 72.75 E came back from 19.016 N 72.781 E, at 01 UTC on 2026-09-20 with 2 m
+  temperature 24.7 C and column water vapour 55.7 kg/m2, where ERA5's own cell reads 26.6 C
+  and 45.0. With `models=era5` the answer is ERA5's 0.25 deg cell, at exactly the
+  coordinates asked; `elevation=nan` stops Open-Meteo shifting temperature to its 90 m terrain model.
+- **The day and the estimator differed from training.** The live day was the 00-23 UTC
+  stamps; Open-Meteo stamps rain at the end of its hour, so 00 UTC rain fell the day
+  before. RH and wind were means of per-cell hourly values. The live fetch now builds the
+  CDS fetch's per-cell components (q from the dewpoint and surface pressure, the eight
+  3-hourly instants 03-24 UTC, rain summed 01-24 UTC) and goes through
+  `district_observations.to_districts_v2`, with ERA5's land-sea mask (now in `data/geo`).
+- **How close it now is.** One day, 2017-11-15, 653 districts, live path against the CDS
+  estimator (live minus CDS): temperature +0.024 C on average (0.048 at most), RH within
+  0.09 %RH at the 99th percentile, MSLP, wind speed, soil and column water vapour within
+  0.03 at most; wind direction within 1.8 deg at the 99th percentile.
+- **Rain reads slightly low through Open-Meteo.** It rounds hourly rain to 0.1 mm, and drizzle
+  under 0.05 mm/h rounds to zero: -0.09 mm/day on average that day, -0.8 mm in Mahe
+  (1.4 mm by CDS). Not fixable through this API; ERA5T from CDS would be.
+- **Surface pressure is not reported live.** Open-Meteo's `surface_pressure` is its MSLP
+  reduced to its own terrain height: inverting the barometric formula gives back the
+  `elevation` in each response to within a metre. Against ERA5's `sp` it read +0.2 hPa
+  at 395 m, +0.8 at 629 m, +2.0 at 1,743 m and +4.3 at 4,835 m. Missing, not wrong:
+  the live store has no surface-pressure observations, so that variable cannot bust
+  live. It still converts the dewpoint to q, where 1 hPa moves q by about 0.1%.
+- **Lost batches made partial districts, and the run said complete.** The aggregator
+  renormalises around missing cells, which is right for soil over sea and wrong for a
+  gap. `refresh-data.yml` on 2026-10-04 06:11Z lost 5 of 17 batches to HTTP 429 (the
+  per-minute limit; Open-Meteo counts each location as a call) and recorded the run
+  `complete`. Now a district touching a missing cell has no value for that variable, a
+  minute's 429 is waited out, an hourly or daily one fails the batch at once, and a run
+  with lost batches is recorded `partial`.
+- **Live GEFS RH was a different estimator.** The reforecast has no 2 m RH: its RH is
+  derived from the district and daily means of q, T and p. The live 0.25 deg file has RH
+  and no SPFH at 2 m (`gefs.20261002` `.idx`: SPFH at 2 m is only in the 0.5 deg
+  b-file), and the live code averaged GEFS's RH. It now recovers each cell's q from RH,
+  T and p (the exact inverse of the Bolton formula), then derives RH as the reforecast
+  does. Checked on 3,720 points where the two grids coincide: Bolton RH from GEFS's own
+  SPFH minus GEFS's RH product averaged +0.04 %RH (-0.4 to -0.7 below 0 C, where GEFS
+  uses ice). On a real Day 1 (gefs.20261002 00Z, gep01, 666 districts) the new RH is
+  0.69 %RH below the old on average (5th-95th percentile -1.8 to +0.3).
+- **Live MSLP is the same quantity as the reforecast's.** The reforecast labels its field
+  `PRES:mean sea level`; the live file carries both `PRMSL` and `MSLET`, which differ by
+  about 3 hPa over India, and the live code reads `PRMSL`. Checked against ERA5 `msl`
+  (Day-1 means of the eight 3-hourly instants): the reforecast in 2017 (387,258 cell-days)
+  read -0.2 to -0.4 hPa below 1,000 m; live `PRMSL` on gefs.20260926 00Z (gec00 and gep01,
+  60 cells spread by height) read -0.05 to -0.39 there, while `MSLET` drifted with height:
+  -1.0 to -1.2 at 300-1,000 m, -3.3 at 1-2 km, -13 above 2 km. `PRMSL` stays. One live
+  day and 60 cells; a larger check would need more ERA5 days than Open-Meteo's free
+  allowance gives in an hour.

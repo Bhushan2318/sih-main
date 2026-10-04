@@ -123,6 +123,9 @@ def _build_paired_in_chunks(init_date_max=None, init_date_min=None,
     in the same store: --init-date-max alone would silently pull every earlier year in as
     training data too. A cross-year run needs to name both ends of its training window.
     """
+    # A quarantined or retired batch on disk must never reach a frame - see
+    # parquet_store.assert_no_excluded_batches.
+    parquet_store.assert_no_excluded_batches()
     # From Parquet footers, not by reading every forecast row's init_date: at 20 years
     # that column is ~1.3 billion values and the listing alone needed a ~9.7 GiB
     # allocation, once per call - so once per cached year. Measured 2026-09-21: 7.4 s and
@@ -385,6 +388,26 @@ def full_retrain(triggered_by_batch_id: str | None = None, make_current: bool = 
         va = paired[paired["init_date"].isin(val_c)].copy()
         te = paired[paired["init_date"].isin(test_c)].copy()
 
+        # Label version 2: remove each district/variable/lead/season's training-mean error
+        # before anything compares a forecast with its observation (app/features/bias.py).
+        from app.features import bias as bias_mod
+        bias_events = (tr.groupby(fe.EVENT_KEYS + ["variable", "season"], observed=True)
+                         .agg(fc_mean=("forecast_value", "mean"),
+                              obs=("observed_value", "mean")).reset_index())
+        bias_table = bias_mod.fit_bias_table(bias_events)
+        del bias_events
+        for frame in (tr, va, te):
+            if not frame.empty:
+                bias_mod.apply_bias(frame, bias_table)
+        # A label-variable forecast whose bias cell is empty has no corrected error, so it is
+        # neither a training target nor part of a label - never a raw error standing in.
+        def _labelled(frame):
+            if frame.empty:
+                return frame
+            label_rows = bias_mod.label_variable_mask(frame["variable"])
+            return frame[~label_rows | np.isfinite(frame["abs_error"].to_numpy(dtype=float))]
+        tr, va, te = _labelled(tr), _labelled(va), _labelled(te)
+
         hbf = fe.compute_historical_bust_frequency(tr)
         for frame in (tr, va, te):
             if frame.empty:
@@ -395,6 +418,7 @@ def full_retrain(triggered_by_batch_id: str | None = None, make_current: bool = 
 
         p90_error = compute_member_p90(tr[["variable", "abs_error"]])
         event_err_tr = _event_mean_error(tr)
+        event_err_tr = event_err_tr[bias_mod.label_variable_mask(event_err_tr["variable"])]
         bust_threshold = compute_error_thresholds(event_err_tr, percentile=90.0)
 
         artifacts: dict = {}
@@ -402,7 +426,8 @@ def full_retrain(triggered_by_batch_id: str | None = None, make_current: bool = 
         val_pred = pd.Series(np.nan, index=va.index, dtype=float)
         test_pred = pd.Series(np.nan, index=te.index, dtype=float)
 
-        for var in sorted(tr["variable"].unique()):
+        for var in sorted(v for v in tr["variable"].unique()
+                          if str(v) in contracts.LABEL_VARIABLES):
             n_var = int((tr["variable"] == var).sum())
             if n_var < reg_mod.MIN_ROWS:
                 report.skipped_variables[var] = f"only {n_var} paired train rows (<{reg_mod.MIN_ROWS})"
@@ -481,9 +506,11 @@ def full_retrain(triggered_by_batch_id: str | None = None, make_current: bool = 
         for var, art in artifacts.items():
             registry.save_regressor(run_id, var, art.model, art.feature_columns)
         registry.save_classifier(run_id, clf_art.model, clf_art.feature_columns)
+        registry.save_calibrator(run_id, clf_art.calibrator)
         registry.save_thresholds(run_id, thresholds)
         registry.save_historical_bust_freq(run_id, hbf)
         registry.save_jump_climatology(run_id, jump_clim)
+        registry.save_bias_table(run_id, bias_table)
         if not shap_summary.empty:
             shap_summary.to_parquet(registry.run_dir(run_id) / "shap_summary.parquet", index=False)
         registry.save_metrics(run_id, {
@@ -495,6 +522,7 @@ def full_retrain(triggered_by_batch_id: str | None = None, make_current: bool = 
         registry.save_manifest(run_id, {
             "run_id": run_id,
             "feature_version": contracts.FEATURE_VERSION,
+            "label_version": contracts.LABEL_VERSION,
             "triggered_by_batch_id": triggered_by_batch_id,
             "data_rows": report.data_rows,
             "paired_rows": report.paired_rows,
