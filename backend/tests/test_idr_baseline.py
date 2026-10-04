@@ -22,6 +22,14 @@ from app.ml.baselines import ALL_BASELINES, IDRBaseline, brier, fit_all
 rng = np.random.default_rng(0)
 
 
+def _with_event_context(df: pd.DataFrame) -> pd.DataFrame:
+    """Every ladder file carries the event keys and season; the district x season
+    rung reads them. Placeholder district ids, a separate generator so the
+    fixture's own draws are unchanged."""
+    r = np.random.default_rng(99)
+    return df.assign(region_id=r.choice(["D1", "D2", "D3"], len(df)), season="JJAS")
+
+
 def _events(n=2000, seed=0):
     """Bust probability genuinely increasing in spread - the structure IDR exists to
     exploit. Not a metric fixture: this is plumbing, no score from it is reported."""
@@ -33,7 +41,7 @@ def _events(n=2000, seed=0):
         "spread_mean": spread,
         "lead_time_days": r.integers(1, 11, n),
         "y_bust": y,
-    })
+    }).pipe(_with_event_context)
 
 
 def test_it_is_on_the_ladder():
