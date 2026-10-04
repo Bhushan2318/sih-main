@@ -325,7 +325,7 @@ def pooled_split(cached_paths: dict, test_year: int):
     return set(train), set(val), test_cycles
 
 
-_BIAS_READ_COLUMNS = ["region_id", "variable", "lead_time_days", "season",
+_BIAS_READ_COLUMNS = ["region_id", "variable", "lead_time_days", "month",
                       "forecast_value", "observed_value"]
 
 
@@ -340,7 +340,7 @@ def pooled_bias_table(cached_paths: dict, train_years: list, train_cycles: set):
         df = df[df["init_date"].isin(train_cycles)]
         if df.empty:
             continue
-        ev = (df.groupby(fe.EVENT_KEYS + ["variable", "season"], observed=True)
+        ev = (df.groupby(fe.EVENT_KEYS + ["variable", "month"], observed=True)
                 .agg(fc_mean=("forecast_value", "mean"), obs=("observed_value", "mean"))
                 .reset_index())
         del df
@@ -1779,7 +1779,7 @@ def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
     # Label version 2: each district/variable/lead/season's training-mean error is removed
     # before anything compares a forecast with its observation (app/features/bias.py).
     bias_table = pooled_bias_table(cached, train_years, train_c)
-    report.split_cycles["bias_cells"] = int((bias_table["level"] == "lead_season").sum())
+    report.split_cycles["bias_cells"] = int((bias_table["level"] == "lead_period").sum())
     hbf, p90_error, bust_threshold = pooled_stats(cached, train_years, train_c,
                                                   bias_table=bias_table)
     if not hbf and not p90_error:

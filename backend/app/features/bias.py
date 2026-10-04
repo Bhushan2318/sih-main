@@ -19,11 +19,16 @@ import pandas as pd
 
 from app import contracts
 
-BIAS_KEYS = ["region_id", "variable", "lead_time_days", "season"]
+# The bias is keyed by calendar month of the valid date. Leave-one-year-out over 2000-2019
+# (scripts/diagnose_label_drift.py, #72) left less error with a monthly key than a seasonal
+# one for every variable - humidity 54.4 against 66.8 (%RH)^2, temperature 1.57 against
+# 1.90 C^2 - with ~480 training events per (district, variable, lead, month) cell.
+BIAS_PERIOD = "month"
+BIAS_KEYS = ["region_id", "variable", "lead_time_days", BIAS_PERIOD]
 
 # A cell needs this many training events for its mean to be a bias rather than noise. At
-# 2000-2015 daily cycles a (district, variable, lead, season) cell holds roughly 970 (Oct-Nov)
-# to 1,950 (Jun-Sep) events, so only genuinely thin cells fall below it; those back off to a
+# 2000-2015 daily cycles a (district, variable, lead, month) cell holds roughly 480
+# events, so only genuinely thin cells fall below it; those back off to a
 # coarser level (LEVELS). A key thin at every level has no bias - the forecast then has no
 # corrected value, which is missing, never zero.
 # 30 is the usual floor for estimating a mean (its standard error is then under a fifth
@@ -37,7 +42,12 @@ def _keys_as_str(df: pd.DataFrame) -> pd.DataFrame:
     out = pd.DataFrame(index=df.index)
     for k in BIAS_KEYS:
         col = df[k]
-        out[k] = col.astype(int) if k == "lead_time_days" else col.astype(str)
+        if k == "lead_time_days":
+            out[k] = col.astype(int)
+        elif k == BIAS_PERIOD:
+            out[k] = col.map(_period_str)
+        else:
+            out[k] = col.astype(str)
     return out
 
 
@@ -65,7 +75,7 @@ def accumulate_bias(acc: "pd.DataFrame | None", events: pd.DataFrame) -> pd.Data
 # over training events of the same district and variable, so a coarser level is a smoother
 # estimate of the same offset, not a different quantity. A key that is too thin even at the
 # coarsest level has no bias at all.
-LEVELS = ("lead_season", "season", "all")
+LEVELS = ("lead_period", "period", "all")
 _ANY_LEAD = -1
 _ANY_SEASON = "*"
 
@@ -78,10 +88,10 @@ def finish_bias_table(acc: "pd.DataFrame | None") -> pd.DataFrame:
         return pd.DataFrame(columns=cols)
     a = acc.copy()
     a["n"] = a["n"].astype(int)
-    by_season = (a.groupby(["region_id", "variable", "season"], sort=False)[["s", "n"]]
+    by_season = (a.groupby(["region_id", "variable", BIAS_PERIOD], sort=False)[["s", "n"]]
                  .sum().reset_index().assign(lead_time_days=_ANY_LEAD))
     by_all = (a.groupby(["region_id", "variable"], sort=False)[["s", "n"]].sum()
-              .reset_index().assign(lead_time_days=_ANY_LEAD, season=_ANY_SEASON))
+              .reset_index().assign(lead_time_days=_ANY_LEAD, **{BIAS_PERIOD: _ANY_SEASON}))
     parts = []
     for level, t in zip(LEVELS, (a, by_season, by_all)):
         t = t[t["n"] >= MIN_BIAS_EVENTS].copy()
@@ -110,7 +120,7 @@ def bias_for(frame: pd.DataFrame, table: pd.DataFrame) -> np.ndarray:
     """
     if frame.empty:
         return np.empty(0, dtype=float)
-    lookup = {(str(r), str(v), int(l), str(s)): float(b)
+    lookup = {(str(r), str(v), int(l), _period_str(s)): float(b)
               for r, v, l, s, b in table[BIAS_KEYS + ["bias"]].itertuples(index=False)}
 
     def _get(r, v, k, s):
@@ -121,18 +131,18 @@ def bias_for(frame: pd.DataFrame, table: pd.DataFrame) -> np.ndarray:
         return np.nan
     rc, r_cats = _codes(frame["region_id"])
     vc, v_cats = _codes(frame["variable"])
-    sc, s_cats = _codes(frame["season"])
+    sc, s_cats = _codes(frame[BIAS_PERIOD])
     lead = pd.to_numeric(frame["lead_time_days"], errors="coerce").to_numpy(dtype=float)
     lc = np.where(np.isfinite(lead), lead, -1).astype(np.int64)
     n_lead = int(lc.max()) + 1 if (lc >= 0).any() else 1
-    # Dense (district, variable, lead, season) grid: ~666 x 8 x 11 x 6 cells, built from
+    # Dense (district, variable, lead, month) grid: ~666 x 8 x 11 x 13 cells, built from
     # the frame's own category lists, then indexed by integer codes.
     dense = np.full((len(r_cats), len(v_cats), n_lead, len(s_cats)), np.nan)
     for i, r in enumerate(r_cats):
         for j, v in enumerate(v_cats):
             for k in range(n_lead):
                 for m, s in enumerate(s_cats):
-                    dense[i, j, k, m] = _get(str(r), str(v), k, str(s))
+                    dense[i, j, k, m] = _get(str(r), str(v), k, _period_str(s))
     out = np.full(len(frame), np.nan)
     ok = (rc >= 0) & (vc >= 0) & (sc >= 0) & (lc >= 0)
     out[ok] = dense[rc[ok], vc[ok], lc[ok], sc[ok]]
@@ -145,6 +155,14 @@ def label_variable_mask(variable: pd.Series) -> np.ndarray:
     codes, cats = _codes(variable)
     keep = np.array([str(c) in contracts.LABEL_VARIABLES for c in cats] + [False])
     return keep[np.where(codes >= 0, codes, len(cats))]
+
+
+def _period_str(x) -> str:
+    """A period key as a string: months 6, 6.0 and "6" are the same key; "*" stays "*"."""
+    try:
+        return str(int(float(x)))
+    except (TypeError, ValueError):
+        return str(x)
 
 
 def _codes(col: pd.Series):
