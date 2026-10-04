@@ -11,6 +11,8 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
+from app import contracts
+
 warnings.filterwarnings("ignore")
 
 from pathlib import Path
@@ -109,7 +111,8 @@ def _downcast_paired(df: "pd.DataFrame") -> "pd.DataFrame":
     return df
 
 
-def _build_paired_in_chunks(init_date_max=None, init_date_min=None) -> "tuple[pd.DataFrame, int]":
+def _build_paired_in_chunks(init_date_max=None, init_date_min=None,
+                           feature_version=None) -> "tuple[pd.DataFrame, int]":
     """init_date_max bounds which forecast cycles are read. Without it, a year still being
     ingested - or an observation file running a few days into the next year - lands a
     partial, sparsely labelled month at the end of the time-ordered split, i.e. in test.
@@ -165,7 +168,9 @@ def _build_paired_in_chunks(init_date_max=None, init_date_min=None) -> "tuple[pd
         rows_read += len(fc) + len(ob)
         part = fe.build_training_frame(
             pd.concat([fc, ob], ignore_index=True), historical_bust_freq=None,
-            forecast_history=history)
+            forecast_history=history,
+            feature_version=(contracts.FEATURE_VERSION if feature_version is None
+                             else feature_version))
         if not part.empty:
             # Downcast per chunk, not after the concat: the whole point is never to hold
             # the expensive version of a year at once.
@@ -489,6 +494,7 @@ def full_retrain(triggered_by_batch_id: str | None = None, make_current: bool = 
                         if not shap_summary.empty else {})
         registry.save_manifest(run_id, {
             "run_id": run_id,
+            "feature_version": contracts.FEATURE_VERSION,
             "triggered_by_batch_id": triggered_by_batch_id,
             "data_rows": report.data_rows,
             "paired_rows": report.paired_rows,

@@ -221,6 +221,7 @@ def test_full_retrain_pooled_end_to_end(tmp_path, _ingested_slice):
         for col in ("init_date", "valid_date"):
             shifted[col] = pd.to_datetime(shifted[col]) + pd.DateOffset(years=offset)
         shifted.to_parquet(cache_dir / f"paired_{year}.parquet", index=False)
+        _stamp_as_current_cache(cache_dir / f"paired_{year}.parquet")
 
     report = full_retrain_pooled(train_years=[2000, 2001], test_year=2002, cache_dir=cache_dir)
 
@@ -377,7 +378,7 @@ def test_cache_year_rebuilds_a_truncated_cache_file(tmp_path, monkeypatch):
 
     built = {}
 
-    def fake_build(init_date_min=None, init_date_max=None):
+    def fake_build(init_date_min=None, init_date_max=None, **_):
         built["called"] = True
         return pd.DataFrame({"init_date": [pd.Timestamp("2000-01-01")], "x": [1.0]}), 1
 
@@ -392,7 +393,7 @@ def test_cache_year_writes_atomically(tmp_path, monkeypatch):
     """A killed write must leave no file at all, never a partial one at the real path."""
     from app.ml import pooled_training as pt
 
-    def exploding_build(init_date_min=None, init_date_max=None):
+    def exploding_build(init_date_min=None, init_date_max=None, **_):
         raise KeyboardInterrupt("killed mid-build")
 
     monkeypatch.setattr(pt, "_build_paired_in_chunks", exploding_build)
@@ -575,6 +576,7 @@ def test_full_retrain_pooled_sends_every_variable_to_cuda_when_a_gpu_exists(
         for col in ("init_date", "valid_date"):
             shifted[col] = pd.to_datetime(shifted[col]) + pd.DateOffset(years=offset)
         shifted.to_parquet(cache_dir / f"paired_{year}.parquet", index=False)
+        _stamp_as_current_cache(cache_dir / f"paired_{year}.parquet")
 
     dispatched = {}
     real = pt._run_variable_subprocess
@@ -619,6 +621,7 @@ def test_full_retrain_pooled_reuses_finished_variables_on_a_rerun(
         for col in ("init_date", "valid_date"):
             shifted[col] = pd.to_datetime(shifted[col]) + pd.DateOffset(years=offset)
         shifted.to_parquet(cache_dir / f"paired_{year}.parquet", index=False)
+        _stamp_as_current_cache(cache_dir / f"paired_{year}.parquet")
 
     monkeypatch.setattr(pt, "_cuda_available", lambda: False)
     first = pt.full_retrain_pooled(train_years=[2000, 2001], test_year=2002, cache_dir=cache_dir)
@@ -714,6 +717,7 @@ def test_full_retrain_pooled_fits_regressors_on_the_capped_sample(
         for col in ("init_date", "valid_date"):
             shifted[col] = pd.to_datetime(shifted[col]) + pd.DateOffset(years=offset)
         shifted.to_parquet(cache_dir / f"paired_{year}.parquet", index=False)
+        _stamp_as_current_cache(cache_dir / f"paired_{year}.parquet")
 
     n_train = len(pt.pooled_split({y: cache_dir / f"paired_{y}.parquet" for y in (2000, 2001, 2002)},
                                   2002)[0])
@@ -745,7 +749,18 @@ def _cache_with_inf(path, bad_col="laf_spread_ratio"):
     df.loc[df.index[::7], bad_col] = np.inf
     df.loc[df.index[::11], bad_col] = -np.inf
     df.to_parquet(path, index=False, row_group_size=64)
+    _stamp_as_current_cache(path, row_group_size=64)
     return df
+
+
+def _stamp_as_current_cache(path, row_group_size=None):
+    """Mark a hand-written cache as built by the current code (feature version in its
+    footer, as cache_year writes it), so cache_year reuses it rather than rebuilding."""
+    import pyarrow.parquet as pq
+    t = pq.read_table(path)
+    meta = dict(t.schema.metadata or {})
+    meta[pt._FEATURE_VERSION_KEY] = str(pt.FEATURE_VERSION).encode()
+    pq.write_table(t.replace_schema_metadata(meta), path, row_group_size=row_group_size)
 
 
 def test_ensure_finite_cache_turns_ratio_inf_into_missing_and_keeps_everything_else(tmp_path):
@@ -848,6 +863,7 @@ def test_full_retrain_pooled_staged_fits_every_training_cycle_in_chunks(
         for col in ("init_date", "valid_date"):
             shifted[col] = pd.to_datetime(shifted[col]) + pd.DateOffset(years=offset)
         shifted.to_parquet(cache_dir / f"paired_{year}.parquet", index=False)
+        _stamp_as_current_cache(cache_dir / f"paired_{year}.parquet")
 
     n_train = len(pt.pooled_split({y: cache_dir / f"paired_{y}.parquet" for y in (2000, 2001, 2002)},
                                   2002)[0])
@@ -1048,6 +1064,7 @@ def test_classifier_training_events_come_from_the_fit_sample(tmp_path, _ingested
         for col in ("init_date", "valid_date"):
             shifted[col] = pd.to_datetime(shifted[col]) + pd.DateOffset(years=offset)
         shifted.to_parquet(cache_dir / f"paired_{year}.parquet", index=False)
+        _stamp_as_current_cache(cache_dir / f"paired_{year}.parquet")
     n_train = len(pt.pooled_split({y: cache_dir / f"paired_{y}.parquet" for y in (2000, 2001, 2002)},
                                   2002)[0])
     cap = max(2, n_train - 2)
@@ -1082,6 +1099,7 @@ def _pooled_run_on_slice(tmp_path, monkeypatch):
         for col in ("init_date", "valid_date"):
             shifted[col] = pd.to_datetime(shifted[col]) + pd.DateOffset(years=offset)
         shifted.to_parquet(cache_dir / f"paired_{year}.parquet", index=False)
+        _stamp_as_current_cache(cache_dir / f"paired_{year}.parquet")
     monkeypatch.setattr(pt, "_cuda_available", lambda: False)
     report = pt.full_retrain_pooled(train_years=[2000, 2001], test_year=2002, cache_dir=cache_dir)
     assert report.status == "success", report.error

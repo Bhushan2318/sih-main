@@ -50,6 +50,7 @@ import numpy as np
 import pandas as pd
 import xgboost as xgb
 
+from app.contracts import FEATURE_VERSION
 from app.features import engineering as fe
 from app.features import pivot as pv
 from app.ml import classifier as clf_mod
@@ -84,23 +85,47 @@ def cache_year(year: int, cache_dir: Path) -> Path:
     # every later run reused it unread, and the pooled run died nine hours on in
     # pooled_split, after re-caching seventeen other years for nothing.
     if path.exists():
-        if _readable_parquet(path):
+        if _readable_parquet(path) and cached_feature_version(path) == FEATURE_VERSION:
             _report_finite_repair(path)
             return path
+        if _readable_parquet(path):
+            print(f"[pooled] {path.name} was built with feature version "
+                  f"{cached_feature_version(path)}, not {FEATURE_VERSION}: rebuilding",
+                  file=sys.stderr, flush=True)
         path.unlink()
     lo, hi = pd.Timestamp(f"{year}-01-01"), pd.Timestamp(f"{year}-12-31")
-    paired, _ = _build_paired_in_chunks(init_date_min=lo, init_date_max=hi)
+    paired, _ = _build_paired_in_chunks(init_date_min=lo, init_date_max=hi,
+                                        feature_version=FEATURE_VERSION)
     if paired.empty:
         raise ValueError(f"no paired forecast+observation data for {year} in the store")
     # Written under a temporary name and renamed into place, so an interrupted write
     # leaves no file rather than a plausible-looking partial one - the same convention
     # parquet_store already uses for a batch.
     tmp = path.with_name(path.name + ".tmp")
-    paired.to_parquet(tmp, index=False)
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    table = pa.Table.from_pandas(paired, preserve_index=False)
     del paired
+    meta = dict(table.schema.metadata or {})
+    meta[_FEATURE_VERSION_KEY] = str(FEATURE_VERSION).encode()
+    pq.write_table(table.replace_schema_metadata(meta), tmp)
+    del table
     tmp.replace(path)
     _report_finite_repair(path)
     return path
+
+
+_FEATURE_VERSION_KEY = b"sanket_feature_version"
+
+
+def cached_feature_version(path: Path) -> int:
+    """The feature version a cached year was built with. A cache written before versions
+    were recorded is version 1 (contracts.LEGACY_FEATURE_VERSION)."""
+    import pyarrow.parquet as pq
+    from app import contracts
+    meta = pq.ParquetFile(path).schema_arrow.metadata or {}
+    raw = meta.get(_FEATURE_VERSION_KEY)
+    return int(raw) if raw else contracts.LEGACY_FEATURE_VERSION
 
 
 def _report_finite_repair(path: Path) -> None:
@@ -1840,7 +1865,8 @@ def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
                                "classifier": report.classifier_metrics})
     from app.ml import provenance
     registry.save_manifest(rid, {
-        "run_id": rid, "pooled_train_years": train_years, "test_year": test_year,
+        "run_id": rid, "feature_version": FEATURE_VERSION,
+        "pooled_train_years": train_years, "test_year": test_year,
         "split_cycles": report.split_cycles, "modelled_variables": report.modelled_variables,
         "skipped_variables": report.skipped_variables,
         "provenance": {**provenance.run_provenance(fit_mode=fit_mode,

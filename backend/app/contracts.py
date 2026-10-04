@@ -121,6 +121,15 @@ NULLABLE: frozenset[str] = frozenset({
 
 # Columns that exist only because an observation arrived after the forecast was issued.
 # The first three are what the label is built from and are never model inputs.
+# How the feature frame is computed. A run records the version it was trained with in its
+# manifest (`feature_version`) and is always scored with that version, so a change to the
+# arithmetic never silently changes what an already-trained model receives.
+#   1 - the original arithmetic. Runs without a recorded version (run_20260922T043925Z).
+#   2 - wind direction on the circle: shortest-way abs_error, circular ensemble spread,
+#       and a time-lagged pool of unit vectors (2026-10-02).
+LEGACY_FEATURE_VERSION = 1
+FEATURE_VERSION = 2
+
 # `forecast_error_lag` was a model input, and no live forecast can have it: it made every
 # held-out score better than live scoring (docs/known-issues.md, 2026-09-25 and 2026-09-28).
 # regressors.feature_columns refuses any of these as an input.
