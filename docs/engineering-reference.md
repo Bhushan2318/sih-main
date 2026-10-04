@@ -196,7 +196,8 @@ them.
   keeps the live feed from being scored beyond that.
 - **Most busts in temperature, humidity and soil moisture are steady per-district
   bias** (64-90% of squared error, measured 2026-09-25), so lead day barely
-  predicts a bust. Decided: the next retrain defines busts on bias-corrected error.
+  predicts a bust. Implemented 2026-10-02 as label version 2 (`app/features/bias.py`):
+  bias-corrected error, wind direction out of the label. The served run predates it.
 - **`forecast_error_lag` is a leak** (previous lead's realised error of the same
   forecast); all 8 regressors of the live run use it. Removed in the next retrain.
 - **5 of 31 GEFS ensemble members.** The reforecast archive only *has* 5 daily

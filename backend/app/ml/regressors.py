@@ -28,6 +28,10 @@ NUMERIC_FEATURES = [
     # saw labelled in training still has a latitude, a size and a distance from the
     # country's edge, so these generalise where a 666-level categorical cannot.
     "centroid_lat", "centroid_lon", "area_km2", "border_distance_km", "elevation_mean",
+    # Label version 2: the training-period bias removed from this forecast (app/features/
+    # bias.py) - known at issue time, fitted on training cycles only. Present only in
+    # frames the bias was applied to, so runs before it never see it.
+    "bias_correction",
     # C3: global daily MJO state (see app.features.engineering.MJO_FEATURES), attached by
     # an as-of join on init_date - identical for every district issued the same day.
     "mjo_rmm1", "mjo_rmm2", "mjo_amplitude",

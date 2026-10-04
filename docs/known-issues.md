@@ -1235,6 +1235,27 @@ here rather than discovered live.
   - Consequence: a "bust" today is often "this district is always off", which NCMRWF's
     own bias correction removes.
   - Decided: the next retrain defines busts on bias-corrected error.
+  - **Implemented 2026-10-02 as label version 2** (`contracts.LABEL_VERSION`,
+    `app/features/bias.py`):
+    - **The table.** The training-period mean error of the ensemble mean per (district,
+      variable, lead, season), from training cycles only. A cell with fewer than 30
+      events backs off to the district's season across leads, then to its whole year.
+      A key thin at every level has no bias: its forecast is not compared, never
+      compared raw.
+    - **Where it applies.** It is subtracted from each member forecast wherever a
+      forecast meets its observation: the regressor target, the event label, the
+      thresholds and the out-of-fold models, in both trainers, and in live scoring and
+      `score_run_on_year` for runs that carry `bias_table.parquet`.
+    - **What a run reads.** The corrected forecast and the bias removed
+      (`bias_correction`).
+    - **What the label covers.** Wind direction is no longer a label variable, and
+      events with no corrected error for any label variable are dropped rather than
+      counted as "not a bust".
+    - **On the CI sample** (12 training cycles), the corrected humidity bust threshold
+      is 13.1 %RH; on real Nov 2017 a per-district-lead correction gave 10.4 against
+      27.6 raw.
+    - **The served run_20260922T043925Z** has no bias table, so it keeps label version 1
+      and is scored exactly as before until a retrained run replaces it.
 - **The event bust rate (~49% on the test year) changes meaning with lead.** An event busts
   if any available variable passes its own p90, and fewer variables exist from Day 4 and
   Day 6 (see the next item). So the rate steps down exactly there. That confounds the

@@ -130,6 +130,19 @@ NULLABLE: frozenset[str] = frozenset({
 LEGACY_FEATURE_VERSION = 1
 FEATURE_VERSION = 2
 
+# What a bust is. A run records `label_version` in its manifest.
+#   1 - any of the eight variables' raw ensemble-mean error over its training p90.
+#   2 - bias-corrected error (app/features/bias.py): each district/variable/lead/season's
+#       training-mean error is removed first, so a bust is a forecast failure rather than a
+#       steady offset. Wind direction is not a label variable: a daily resultant direction
+#       is mostly noise in light wind, and 86.5% of its "busts" were angle arithmetic
+#       (docs/known-issues.md). It stays an input. (2026-10-02)
+LABEL_VERSION = 2
+LABEL_VARIABLES: frozenset[str] = frozenset({
+    "atmospheric_moisture_kgm2", "humidity_pct", "pressure_hpa", "rainfall_mm",
+    "soil_moisture_pct", "temperature_c", "wind_speed_ms",
+})
+
 # `forecast_error_lag` was a model input, and no live forecast can have it: it made every
 # held-out score better than live scoring (docs/known-issues.md, 2026-09-25 and 2026-09-28).
 # regressors.feature_columns refuses any of these as an input.

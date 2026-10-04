@@ -89,6 +89,10 @@ def build_event_frame(
             if col in pe.columns and thr and thr > 0:
                 ratios.append(pe[col] / thr)
         pe["bust_ratio"] = pd.concat(ratios, axis=1).max(axis=1) if ratios else np.nan
+        if "bias_correction" in paired.columns:
+            # Label version 2 (bias-corrected): an event with no corrected error for any
+            # label variable has no label. It is dropped, never scored as "not a bust".
+            pe = pe[pe["bust_ratio"].notna()].reset_index(drop=True)
         pe["y_bust"] = (pe["bust_ratio"] >= 1.0).astype(int)
 
     return pe
