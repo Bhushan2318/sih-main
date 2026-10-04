@@ -123,6 +123,9 @@ def _build_paired_in_chunks(init_date_max=None, init_date_min=None,
     in the same store: --init-date-max alone would silently pull every earlier year in as
     training data too. A cross-year run needs to name both ends of its training window.
     """
+    # A quarantined or retired batch on disk must never reach a frame - see
+    # parquet_store.assert_no_excluded_batches.
+    parquet_store.assert_no_excluded_batches()
     # From Parquet footers, not by reading every forecast row's init_date: at 20 years
     # that column is ~1.3 billion values and the listing alone needed a ~9.7 GiB
     # allocation, once per call - so once per cached year. Measured 2026-09-21: 7.4 s and
