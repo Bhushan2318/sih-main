@@ -10,6 +10,8 @@ without a translation layer.
 """
 from __future__ import annotations
 
+import functools
+
 import numpy as np
 import pandas as pd
 
@@ -18,6 +20,20 @@ from app.utils import india_districts as idist
 VALUE_COLUMNS = [
     "t2m_c", "rh2m_pct", "precip_mm", "mslp_hpa", "psfc_hpa",
     "wspd10m_ms", "wdir10m_deg", "soil_moisture_pct", "pwat_kgm2",
+]
+
+# The per-cell daily components estimator v2 aggregates. Written by the CDS fetch
+# (`to_cells_daily`) and built the same way by the live fetch.
+CELL_DAILY_COLUMNS = [
+    "t2m_k",        # 2 m temperature, K
+    "q2m_kgkg",     # 2 m specific humidity, kg/kg, from dewpoint and surface pressure
+    "sp_pa",        # surface pressure, Pa
+    "msl_pa",       # mean sea level pressure, Pa
+    "u10_ms",       # 10 m wind components, m/s
+    "v10_ms",
+    "tcwv_kgm2",    # total column water vapour, kg/m2
+    "swvl1_m3m3",   # volumetric soil water, layer 1 (0-7 cm), m3/m3
+    "tp_mm",        # 24 h total precipitation, mm
 ]
 
 # Direction is circular: a plain mean of 350 and 10 degrees is 180, which points the
@@ -72,6 +88,24 @@ def to_districts(cell_rows: pd.DataFrame, cells: pd.DataFrame,
 # least half land. ERA5 has no soil over water (swvl1 reads ~0 there), so a coastal
 # district's soil value would otherwise be dragged toward zero by its sea cells.
 LAND_FRACTION_MIN = 0.5
+
+# ERA5's land-sea mask (lat, lon, lsm) for every weight-table cell, fetched once from CDS by
+# `fetch_era5_cds_district_observations.py --land-sea-mask`. It lives beside the weight
+# table because the live fetch needs it too, and there is one copy.
+ERA5_LAND_SEA_MASK_FILENAME = "era5_land_sea_mask.parquet"
+
+
+def era5_land_sea_mask_path():
+    return idist.geo_dir() / ERA5_LAND_SEA_MASK_FILENAME
+
+
+@functools.lru_cache(maxsize=1)
+def era5_land_sea_mask() -> pd.DataFrame:
+    path = era5_land_sea_mask_path()
+    if not path.exists():
+        raise FileNotFoundError(f"no ERA5 land-sea mask at {path}; run "
+                                "fetch_era5_cds_district_observations.py --land-sea-mask")
+    return pd.read_parquet(path)
 
 
 def to_districts_v2(cells_daily: pd.DataFrame, cells: pd.DataFrame,

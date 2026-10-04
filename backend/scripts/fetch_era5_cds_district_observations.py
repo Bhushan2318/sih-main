@@ -76,9 +76,11 @@ sys.path.insert(0, str(BACKEND_DIR))
 from app.utils import humidity  # noqa: E402
 from app.utils import india_districts as idist  # noqa: E402
 # One weight table, one aggregator - shared with the Open-Meteo fetch so the two cannot
-# drift apart. See app/utils/district_observations.py.
+# drift apart. See app/utils/district_observations.py. CELL_DAILY_COLUMNS too: the live
+# fetch (app/live/observations.py) builds the same per-cell components.
 from app.utils.district_observations import (  # noqa: E402
-    VALUE_COLUMNS, district_metadata, grid_cells, to_districts,
+    CELL_DAILY_COLUMNS, VALUE_COLUMNS, district_metadata, era5_land_sea_mask_path,
+    grid_cells, to_districts,
 )
 
 OUT_DIR = BACKEND_DIR / "data" / "samples"
@@ -197,18 +199,6 @@ def to_daily(hourly: pd.DataFrame) -> pd.DataFrame:
 # is sampled at the same eight instants rather than all 24 hours.
 INSTANT_STEP_HOURS = 3
 INSTANTS_PER_DAY = 24 // INSTANT_STEP_HOURS
-
-CELL_DAILY_COLUMNS = [
-    "t2m_k",        # 2 m temperature, K
-    "q2m_kgkg",     # 2 m specific humidity, kg/kg, from dewpoint and surface pressure
-    "sp_pa",        # surface pressure, Pa
-    "msl_pa",       # mean sea level pressure, Pa
-    "u10_ms",       # 10 m wind components, m/s
-    "v10_ms",
-    "tcwv_kgm2",    # total column water vapour, kg/m2
-    "swvl1_m3m3",   # volumetric soil water, layer 1 (0-7 cm), m3/m3
-    "tp_mm",        # 24 h total precipitation, mm
-]
 
 # Only soil may be missing (ERA5 has no soil over water); anything else missing is refused.
 _MAY_BE_NAN = {"swvl1_m3m3"}
@@ -423,7 +413,7 @@ SOURCE_V2 = (SOURCE + "; estimator v2: daily means of q, T, sp, u, v at the fore
 
 
 def land_sea_mask_path() -> Path:
-    return V2_DIR / "land_sea_mask.parquet"
+    return era5_land_sea_mask_path()
 
 
 def build_v2_district_year(year: int) -> Path:
@@ -498,7 +488,7 @@ def fetch_land_sea_mask(client=None) -> Path:
     df = df[[k in want for k in zip(np.round(df.lat, 4), np.round(df.lon, 4))]]
     if len(df) != len(cells) or df["lsm"].isna().any():
         raise RuntimeError(f"land-sea mask covers {len(df)} of {len(cells)} cells")
-    out = V2_DIR / "land_sea_mask.parquet"
+    out = land_sea_mask_path()
     df.to_parquet(out, index=False)
     for p in (raw, V2_DIR / "_land_sea_mask.nc"):
         p.unlink(missing_ok=True)
