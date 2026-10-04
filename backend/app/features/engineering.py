@@ -63,6 +63,31 @@ TRAJECTORY_COLUMNS = _TRAJECTORY_KEYS + ["fc_mean"]
 _SOIL_SATURATED = 99.5
 
 
+# Soil moisture is a land quantity. GEFS fills its sea cells with ~1.0 and ERA5 reads ~0
+# over water, and a district value is an area mean over every cell the district touches -
+# so in a coastal district with much sea, the soil "forecast" and "observation" are largely
+# two different sea conventions, and their difference a bust by construction. From feature
+# version 2, soil is dropped on both sides for a district whose weight is more than this
+# fraction GEFS sea - estimator-v2 observations already use ERA5 land cells only
+# (data/geo/soil_land_mask.parquet, built by
+# scripts/build_soil_land_mask.py). Below it, sea moves a district's GEFS soil by at most
+# ~3.5 points, mostly steadily, which the bias correction removes.
+SOIL_SEA_FRACTION_MAX = 0.05
+SOIL_LAND_MASK_PATH = idist.geo_dir() / "soil_land_mask.parquet"
+
+
+@functools.lru_cache(maxsize=1)
+def soil_excluded_districts() -> frozenset:
+    """Districts whose soil moisture is not compared (see SOIL_SEA_FRACTION_MAX)."""
+    if not SOIL_LAND_MASK_PATH.exists():
+        raise FileNotFoundError(
+            f"no soil land mask at {SOIL_LAND_MASK_PATH}; build it with "
+            "scripts/build_soil_land_mask.py - feature version 2 refuses to compare soil "
+            "moisture over sea")
+    m = pd.read_parquet(SOIL_LAND_MASK_PATH, columns=["region_id", "soil_excluded"])
+    return frozenset(m.loc[m["soil_excluded"].astype(bool), "region_id"].astype(str))
+
+
 def circular_abs_diff_deg(a, b) -> np.ndarray:
     """|a - b| the short way round the circle, in [0, 180]."""
     d = np.abs(np.asarray(a, dtype=float) - np.asarray(b, dtype=float)) % 360.0
@@ -152,6 +177,12 @@ def build_training_frame(
     """
     df = canonical.copy()
     df = df[df["region_id"].notna()]
+    if feature_version >= 2:
+        excluded = soil_excluded_districts()
+        if excluded:
+            sea_soil = ((df["variable"].astype(str) == "soil_moisture_pct")
+                        & df["region_id"].astype(str).isin(excluded))
+            df = df[~sea_soil]
     fc = df[df["value_type"] == FORECAST].copy()
     trajectories = [forecast_trajectories(fc)]
     if forecast_history is not None and not forecast_history.empty:
