@@ -453,7 +453,11 @@ here rather than discovered live.
 
 ## Geography
 
-- **Surface pressure error is dominated by elevation, not by forecast difficulty.**
+- **Pressure error is dominated by elevation, not by forecast difficulty.** (Corrected
+  2026-10-04: the variable is mean-sea-level pressure, `pressure_hpa` from `mslp_hpa` on both
+  sides; surface pressure is never a label. The elevation effect is real all the same: below
+  ground, MSLP is an extrapolation, and two models' reductions disagree most where there is
+  most terrain to reduce through.)
   Median absolute pressure error per district on the held-out split of
   `run_20260910T064804Z`, worst first: Leh **5.32 hPa**, Srinagar 2.56, East Sikkim 1.90,
   Shimla 1.83, Papum Pare 1.77 — against an all-district median of **0.555**. The best are
@@ -548,6 +552,19 @@ here rather than discovered live.
   something to do untested. Found 2026-09-20.
 
 ## Data
+
+- **17 reforecast cycles are missing from the 2000-2019 store** (`canonical_full`, counted
+  2026-10-04 from Parquet footers: 7,288 of 7,305 days). 2004: Sep 13, Sep 26, Oct 7,
+  Oct 11, Oct 29, Nov 1, Nov 2, Nov 12, Dec 6, Dec 16. 2006: Jan 13, Feb 27, Aug 25,
+  Sep 15, Sep 26. 2008: Nov 21, Dec 16. The cause was not recorded at ingest; the fetch
+  refuses incomplete cycles rather than storing part of one, which is the likely reason.
+  Training and every score simply have no events on those dates. Refetching them is a
+  fetch-once question (CONTRIBUTING.md rule 7), not a quiet fix.
+- **GEFS 2 m humidity runs much drier than ERA5 at Day 1.** Nov 2017, 666 districts:
+  forecast minus observation -16.1 %RH on average (district 10th percentile -32.6), against
+  -0.03 C for temperature and -0.1 hPa for MSLP. Before bias correction this made the
+  humidity bust threshold 27.6 %RH; after a per-district, per-lead correction it is 10.4.
+  This is why label version 2 defines busts on bias-corrected error.
 
 - **A packaged cycle verifies as its observations arrive; what the model said does not
   change.** Each CI run re-reads the observations of every cycle in Replay's window and
