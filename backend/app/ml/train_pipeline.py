@@ -388,10 +388,10 @@ def full_retrain(triggered_by_batch_id: str | None = None, make_current: bool = 
         va = paired[paired["init_date"].isin(val_c)].copy()
         te = paired[paired["init_date"].isin(test_c)].copy()
 
-        # Label version 2: remove each district/variable/lead/season's training-mean error
+        # Label version 2: remove each district/variable/lead/month's training-mean error
         # before anything compares a forecast with its observation (app/features/bias.py).
         from app.features import bias as bias_mod
-        bias_events = (tr.groupby(fe.EVENT_KEYS + ["variable", "season"], observed=True)
+        bias_events = (tr.groupby(fe.EVENT_KEYS + ["variable", bias_mod.BIAS_PERIOD], observed=True)
                          .agg(fc_mean=("forecast_value", "mean"),
                               obs=("observed_value", "mean")).reset_index())
         bias_table = bias_mod.fit_bias_table(bias_events)

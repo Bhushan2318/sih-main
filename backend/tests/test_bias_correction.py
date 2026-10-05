@@ -24,10 +24,10 @@ from app import contracts
 from app.features import bias
 
 
-def _events(n, region="D1", variable="temperature_c", lead=1, season="JJAS",
+def _events(n, region="D1", variable="temperature_c", lead=1, month=7,
             fc=30.0, obs=28.0):
     return pd.DataFrame({"region_id": region, "variable": variable,
-                         "lead_time_days": lead, "season": season,
+                         "lead_time_days": lead, "month": month,
                          "fc_mean": np.full(n, fc, dtype=float),
                          "obs": np.full(n, obs, dtype=float)})
 
@@ -38,7 +38,7 @@ def test_the_bias_is_the_mean_signed_error_of_each_cell():
     ev = pd.concat([_events(150, fc=30.0, obs=28.0),                 # +2.0
                     _events(150, region="D2", fc=20.0, obs=21.5)])   # -1.5
     t = bias.fit_bias_table(ev)
-    got = t[t["level"] == "lead_season"].set_index("region_id")["bias"]
+    got = t[t["level"] == "lead_period"].set_index("region_id")["bias"]
     assert got["D1"] == pytest.approx(2.0)
     assert got["D2"] == pytest.approx(-1.5)
 
@@ -46,12 +46,12 @@ def test_the_bias_is_the_mean_signed_error_of_each_cell():
 def test_each_lead_and_season_has_its_own_bias():
     ev = pd.concat([_events(150, lead=1, fc=30.0, obs=29.0),
                     _events(150, lead=5, fc=30.0, obs=27.0),
-                    _events(150, lead=1, season="DJF", fc=10.0, obs=10.5)])
+                    _events(150, lead=1, month=1, fc=10.0, obs=10.5)])
     t = bias.fit_bias_table(ev)
-    t = t[t["level"] == "lead_season"].set_index(["lead_time_days", "season"])["bias"]
-    assert t[(1, "JJAS")] == pytest.approx(1.0)
-    assert t[(5, "JJAS")] == pytest.approx(3.0)
-    assert t[(1, "DJF")] == pytest.approx(-0.5)
+    t = t[t["level"] == "lead_period"].set_index(["lead_time_days", "month"])["bias"]
+    assert t[(1, "7")] == pytest.approx(1.0)
+    assert t[(5, "7")] == pytest.approx(3.0)
+    assert t[(1, "1")] == pytest.approx(-0.5)
 
 
 def test_a_thin_cell_has_no_bias_not_zero():
@@ -74,8 +74,8 @@ def test_a_thin_lead_backs_off_to_the_district_season_across_leads():
 
 
 def test_a_season_never_trained_on_backs_off_to_the_district_all_year():
-    t = bias.fit_bias_table(_events(150, season="JJAS", fc=30.0, obs=28.5))
-    got = bias.bias_for(_members([30.0], [28.0], season="DJF"), t)[0]
+    t = bias.fit_bias_table(_events(150, month=7, fc=30.0, obs=28.5))
+    got = bias.bias_for(_members([30.0], [28.0], month=1), t)[0]
     assert got == pytest.approx(1.5)
 
 
@@ -89,7 +89,7 @@ def test_fitting_year_by_year_equals_fitting_at_once():
     acc = bias.accumulate_bias(acc, b)
     streamed = bias.finish_bias_table(acc)
     pd.testing.assert_frame_equal(streamed, whole)
-    finest = streamed[streamed["level"] == "lead_season"]
+    finest = streamed[streamed["level"] == "lead_period"]
     assert finest["bias"].iloc[0] == pytest.approx((2.0 * 120 + 3.0 * 80) / 200)
     assert finest["n"].iloc[0] == 200
 
@@ -102,16 +102,16 @@ def test_wind_direction_has_no_bias():
 
 # --------------------------------------------------------------- applying it
 
-def _members(fc, obs, region="D1", variable="temperature_c", lead=1, season="JJAS"):
+def _members(fc, obs, region="D1", variable="temperature_c", lead=1, month=7):
     return pd.DataFrame({"region_id": region, "variable": variable,
-                         "lead_time_days": lead, "season": season,
+                         "lead_time_days": lead, "month": month,
                          "forecast_value": np.asarray(fc, dtype=float),
                          "observed_value": np.asarray(obs, dtype=float)})
 
 
 def _table(b=2.0, **keys):
     row = {"region_id": "D1", "variable": "temperature_c", "lead_time_days": 1,
-           "season": "JJAS", "bias": b, "n": 500, "level": "lead_season"}
+           "month": "7", "bias": b, "n": 500, "level": "lead_period"}
     row.update(keys)
     return pd.DataFrame([row])
 
@@ -148,7 +148,7 @@ def test_live_rows_without_an_observation_still_get_the_corrected_forecast():
 
 def test_categorical_keys_work_like_strings():
     df = _members([30.0, 30.0], [28.0, 28.0])
-    for c in ("region_id", "variable", "season"):
+    for c in ("region_id", "variable", "month"):
         df[c] = df[c].astype("category")
     out = bias.apply_bias(df, _table(2.0))
     assert out["forecast_value"].tolist() == pytest.approx([28.0, 28.0])

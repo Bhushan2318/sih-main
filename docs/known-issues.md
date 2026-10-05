@@ -558,7 +558,7 @@ here rather than discovered live.
   temperature, -23,380,072 to +21,808,336 C in all 666 districts (other members -18.5 to
   32.4); member `p01` of 2019-02-09, Day 1 column water vapour, 12,500-12,546 kg/m2 (others
   0.7-55.3). 2004 is a training year: one such member put that year's temperature RMSE at
-  34,612 C, and a per-(district, lead, season) bias would carry it into every spring Day 2.
+  34,612 C, and a per-(district, lead, month) bias would carry it into every spring Day 2.
   `engineering.drop_implausible` now removes any value outside
   `contracts.PLAUSIBLE_RANGE` at the start of `build_training_frame`, the path training,
   scoring, live and replay share; the ensemble is then the members left. On the real store
@@ -1309,8 +1309,11 @@ here rather than discovered live.
   - **Implemented 2026-10-02 as label version 2** (`contracts.LABEL_VERSION`,
     `app/features/bias.py`):
     - **The table.** The training-period mean error of the ensemble mean per (district,
-      variable, lead, season), from training cycles only. A cell with fewer than 30
-      events backs off to the district's season across leads, then to its whole year.
+      variable, lead, month of the valid date), from training cycles only - monthly, not
+      seasonal, since 2026-10-05: leave-one-year-out over 2000-2019 left less error for
+      every variable (humidity 54.4 against 66.8 (%RH)^2; scripts/diagnose_label_drift.py).
+      A cell with fewer than 30 events backs off to the district's month across leads,
+      then to its whole year.
       A key thin at every level has no bias: its forecast is not compared, never
       compared raw.
     - **Where it applies.** It is subtracted from each member forecast wherever a

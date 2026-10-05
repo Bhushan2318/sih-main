@@ -19,7 +19,7 @@ def _cached_year(path, year, fc=30.0, obs=28.0, region="D1", variable="temperatu
     rows = []
     for d in pd.date_range(f"{year}-06-01", periods=n_days):
         for m in range(members):
-            rows.append({"region_id": region, "variable": variable, "season": "JJAS",
+            rows.append({"region_id": region, "variable": variable, "season": "JJAS", "month": 6,
                          "init_date": d, "valid_date": d, "lead_time_days": 1,
                          "ensemble_member_id": f"m{m}", "forecast_value": fc + 0.1 * m,
                          "observed_value": obs, "abs_error": abs(fc + 0.1 * m - obs),
@@ -41,7 +41,7 @@ def two_years(tmp_path):
 def test_the_bias_is_fitted_on_training_cycles_only(two_years):
     train = set(pd.date_range("2000-06-01", periods=150))
     t = pt.pooled_bias_table(two_years, [2000, 2001], train)
-    t = t[t["level"] == "lead_season"]
+    t = t[t["level"] == "lead_period"]
     # Only 2000 is training: mean(fc_mean - obs) = (30.05 - 28) = 2.05, never 2001's 3.05.
     assert t["bias"].iloc[0] == pytest.approx(2.05)
     assert t["n"].iloc[0] == 150
@@ -51,7 +51,7 @@ def test_streamed_table_equals_one_fit_over_every_training_event(two_years):
     train = (set(pd.date_range("2000-06-01", periods=150))
              | set(pd.date_range("2001-06-01", periods=150)))
     t = pt.pooled_bias_table(two_years, [2000, 2001], train)
-    t = t[t["level"] == "lead_season"]
+    t = t[t["level"] == "lead_period"]
     assert t["bias"].iloc[0] == pytest.approx((2.05 * 150 + 3.05 * 150) / 300)
 
 
