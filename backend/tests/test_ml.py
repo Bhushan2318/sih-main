@@ -251,7 +251,7 @@ def test_thresholds_are_fit_on_the_train_split_only(_retrain):
     # bias.py) and thresholds label variables only - recompute the same way. The bias is
     # itself fitted on the training split, so the full-data comparison below uses it too.
     from app.features import bias as bias_mod
-    bias_events = (tr.groupby(fe.EVENT_KEYS + ["variable", "season"], observed=True)
+    bias_events = (tr.groupby(fe.EVENT_KEYS + ["variable", bias_mod.BIAS_PERIOD], observed=True)
                      .agg(fc_mean=("forecast_value", "mean"), obs=("observed_value", "mean"))
                      .reset_index())
     table = bias_mod.fit_bias_table(bias_events)
