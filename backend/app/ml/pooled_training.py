@@ -1955,7 +1955,9 @@ def full_retrain_pooled(train_years: list, test_year: int, cache_dir: Path,
         if var in artifacts:
             artifacts[var].metrics["test"] = m
 
-    clf_art = clf_mod.train_bust_classifier(event_tr, event_va)
+    # On the regressors' device. On CPU this fit ran ~1 min per round on the 17-year pool
+    # (measured 2026-10-07, py-spy on the live run) - up to ~50 h for its 3000 rounds.
+    clf_art = clf_mod.train_bust_classifier(event_tr, event_va, device=device)
     report.classifier_metrics = dict(clf_art.metrics)
     if not event_te.empty and "y_bust" in event_te:
         proba_te = clf_mod.predict_bust_probability(clf_art, event_te)

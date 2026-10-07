@@ -112,12 +112,15 @@ def _reliability(y_true, proba, bins: int = 5) -> list:
 
 
 def train_bust_classifier(
-    event_train: pd.DataFrame, event_val: pd.DataFrame | None = None
+    event_train: pd.DataFrame, event_val: pd.DataFrame | None = None,
+    device: str = "cpu",
 ) -> ClassifierArtifact:
+    """`device` is where the fit runs ("cuda" on the training box). The returned model is
+    always reset to CPU: it ships to a box with no GPU, and SHAP runs on it there."""
     cols = classifier_feature_columns(event_train)
     y = event_train["y_bust"].astype(int).to_numpy()
 
-    params = dict(XGB_PARAMS)
+    params = dict(XGB_PARAMS, device=device)
     val_df: pd.DataFrame | None = (
         event_val
         if (event_val is not None and len(event_val) >= 10 and "y_bust" in event_val
@@ -133,6 +136,7 @@ def train_bust_classifier(
         params.pop("early_stopping_rounds", None)
         model = xgb.XGBClassifier(**params)
         model.fit(Xtr, y)
+    model.set_params(device="cpu")
 
     from app.ml import calibration
     calibrator = None

@@ -95,3 +95,27 @@ def test_live_scoring_applies_a_runs_calibrator_and_leaves_older_runs_alone():
     assert inference.bust_probability(State(), X)[0] == pytest.approx(0.5)
     State.calibrator = {"method": "platt", "a": 1.0, "b": -1.0}
     assert inference.bust_probability(State(), X)[0] == pytest.approx(1.0 / (1.0 + np.exp(1.0)))
+
+
+def test_the_classifier_fits_on_the_device_it_is_given_and_ships_for_cpu(monkeypatch):
+    """The pooled run fits the classifier on CUDA when the regressors did. Measured
+    2026-10-07 on the 17-year pool: on CPU it ran ~1 min per boosting round, up to ~50 h
+    for the 3000-round budget. The shipped model must still be a CPU model - Render has no
+    GPU - so the device is reset after the fit. Shape fixture: random values, plumbing
+    only, never reaches a metric."""
+    seen = []
+    real = clf_mod.xgb.XGBClassifier
+
+    class Spy(real):
+        def fit(self, *a, **k):
+            seen.append(self.get_params().get("device"))
+            return super().fit(*a, **k)
+
+    monkeypatch.setattr(clf_mod.xgb, "XGBClassifier", Spy)
+    monkeypatch.setitem(clf_mod.XGB_PARAMS, "n_estimators", 5)
+    rng = np.random.default_rng(0)
+    df = pd.DataFrame({"lead_time_days": rng.integers(1, 11, 400).astype(float),
+                       "y_bust": rng.integers(0, 2, 400)})
+    art = clf_mod.train_bust_classifier(df, None, device="cpu")
+    assert seen == ["cpu"]
+    assert art.model.get_params()["device"] == "cpu"
