@@ -81,7 +81,7 @@ def _metrics(y, proba, ref, cycles, y_calib, p_calib) -> dict:
     """Reuses the classifier's own _evaluate so every number here is computed by exactly
     the same code that produced the model's reported metrics.
 
-    D1/D2 additions, per docs/team-brief-2026-09-15-updated.md Section 6: a block
+    D1/D2 additions: a block
     bootstrap CI around ROC-AUC, resampled by forecast cycle (never by row - rows in
     the same cycle share the same synoptic situation), and the binormal Z-AUC estimate
     alongside the trapezoidal one already in `_evaluate`.

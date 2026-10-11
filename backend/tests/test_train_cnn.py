@@ -298,8 +298,7 @@ def test_fit_streaming_trains_on_cuda_without_error(tmp_path, region_ids):
 
 
 # --- reproducibility (E1) ---------------------------------------------------------------
-# docs/team-brief-2026-09-15-updated.md Section 6, PHASE 1, E1: "Assert two runs with the
-# same seed give bit-identical weights." No test anywhere did this before now -
+# Workstream E1: assert two runs with the same seed give bit-identical weights. No test anywhere did this before now -
 # test_streaming_predictions_agree_between_cpu_and_cuda above loads ONE state_dict onto two
 # devices and checks inference agrees; it assumes the weights already match. This checks
 # whether training itself, run twice, produces them.

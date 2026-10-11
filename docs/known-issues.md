@@ -346,7 +346,7 @@ here rather than discovered live.
   attempts before the working run above. Measured 2026-09-13/14.
 - **Block-bootstrap AUC intervals are coarse below roughly 20 held-out cycles.**
   `app/ml/verification.py`'s `block_bootstrap_ci` resamples whole forecast cycles
-  (deliberately - see D1 in `docs/team-brief-2026-09-15-updated.md`), but with only N
+  (deliberately - workstream D1), but with only N
   cycles there are only on the order of N distinct resample compositions the bootstrap
   distribution can concentrate near, so the reported 95% interval is itself quantized
   rather than smooth. Demonstrated directly with a hand-constructed 2-cycle case in
@@ -374,7 +374,7 @@ here rather than discovered live.
   analog 0.6114 (its `baselines.json`). A model must clearly beat it to show it reads the
   forecast rather than the calendar and the map.
 - **`fit_streaming` (the CNN training loop) was not bit-reproducible on CUDA with the
-  same seed - fixed 2026-09-17.** E1 of `docs/team-brief-2026-09-15-updated.md` Section 6
+  same seed - fixed 2026-09-17.** Workstream E1
   required a test asserting two same-seed runs produce identical weights; none existed
   before 2026-09-17. Added (`tests/test_train_cnn.py::test_same_seed_gives_bit_identical_
   weights_on_{cpu,cuda}`): the CPU version passed outright from the start. The CUDA
@@ -400,8 +400,7 @@ here rather than discovered live.
 - **The ONNX-serving memory/timing claim in `app/ml/cnn.py`'s `export_encoder` docstring
   does not reproduce exactly on this machine.** Documented: "+51 MB, 490 ms for all 10
   lead days". Re-measured 2026-09-17 (Windows, RTX 4060 laptop) with
-  `scripts/measure_cnn_onnx_serving_memory.py`, which - per E4 of
-  `docs/team-brief-2026-09-15-updated.md` Section 6 - exports a real-shaped model (666
+  `scripts/measure_cnn_onnx_serving_memory.py`, which - per workstream E4 - exports a real-shaped model (666
   districts, 24 data channels) and measures a genuinely separate, torch-free subprocess
   scoring 10 lead days one at a time: **+57.1 MB, 65 ms**. Memory is close (12% higher -
   plausibly Windows `peak_wset` accounting for RSS differently than whatever produced the
@@ -648,7 +647,7 @@ here rather than discovered live.
   with ERA5 at lag 0.
 - **Every `imd_merged_district_observations_india_*` file is one day out, and is now
   refused.** They were written by the old join. Being gitignored, they exist only on local
-  disks - `docs/workstream-prompts-2026-09-15.md` records them for 2016-2019.
+  disks (2016-2019).
   `ingest_backfill.observation_file` raises on one unless an `imd_aligned_*` file for the
   same year exists, rather than letting it keep winning file selection. Regenerate with
   `python -m scripts.fetch_imd_district_rainfall --years <year>`, then delete the old file.

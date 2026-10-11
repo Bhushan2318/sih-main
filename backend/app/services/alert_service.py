@@ -4,7 +4,6 @@ from datetime import datetime, timezone
 from typing import Optional
 
 import pandas as pd
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api import schemas
@@ -77,9 +76,3 @@ def persist_alerts_for_run(session: Session, run_id: str) -> int:
         ))
     session.flush()
     return len(resp.alerts)
-
-
-def stored_alert_count(session: Session, run_id: str) -> int:
-    return len(list(session.scalars(
-        select(AlertRow).where(AlertRow.training_run_id == run_id)
-    )))

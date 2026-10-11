@@ -254,9 +254,6 @@ class MappingResult:
     def needs_confirmation(self) -> bool:
         return not self.auto_accepted
 
-    def by_role(self, role: str) -> list:
-        return [p for p in self.proposals if p.role == role]
-
     def measurement_map(self) -> dict:
         out = {}
         for p in self.proposals:

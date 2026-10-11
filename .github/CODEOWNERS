@@ -1,5 +1,4 @@
-# Who to route review requests to, per workstream (docs/team-brief-2026-09-15-updated.md
-# Section 6). Later, more specific patterns win over earlier, more general ones - so this
+# Who to route review requests to, per workstream. Later, more specific patterns win over earlier, more general ones - so this
 # file goes general (workstream A, the default) to specific (individual modules) in that
 # order, per GitHub's own last-match-wins rule.
 #
@@ -43,7 +42,7 @@
 /backend/app/ml/verification.py   @Aryakuna14
 /backend/scripts/run_baselines.py @Aryakuna14
 
-# ---- E: CNN (closed per docs/team-brief - not accepting new model changes,
+# ---- E: CNN (closed - not accepting new model changes,
 # owner working through Bhushan2318 in practice) -----------------------------------------
 /backend/app/ml/cnn.py            @Bhushan2318
 /backend/app/ml/train_cnn.py      @Bhushan2318

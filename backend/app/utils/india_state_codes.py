@@ -62,7 +62,6 @@ for _rec in STATES:
         _LOOKUP_BY_NAME[_normalize(_alias)] = _rec
 
 _LOOKUP_BY_REGION_ID: dict[str, StateRecord] = {r.region_id: r for r in STATES}
-_LOOKUP_BY_ST_CODE: dict[str, StateRecord] = {r.st_code: r for r in STATES}
 
 
 def resolve_by_name(raw_name: str) -> StateRecord | None:
@@ -71,7 +70,3 @@ def resolve_by_name(raw_name: str) -> StateRecord | None:
 
 def resolve_by_region_id(region_id: str) -> StateRecord | None:
     return _LOOKUP_BY_REGION_ID.get(region_id)
-
-
-def resolve_by_st_code(st_code: str) -> StateRecord | None:
-    return _LOOKUP_BY_ST_CODE.get(st_code)

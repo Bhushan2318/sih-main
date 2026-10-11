@@ -57,11 +57,6 @@ def replace_column_mappings(
     return created
 
 
-def get_column_mappings(session: Session, batch_id: str) -> list[ColumnMapping]:
-    stmt = select(ColumnMapping).where(ColumnMapping.upload_batch_id == batch_id)
-    return list(session.scalars(stmt))
-
-
 def find_source_profile(session: Session, fingerprint: str) -> SourceProfile | None:
     stmt = select(SourceProfile).where(SourceProfile.fingerprint == fingerprint)
     return session.scalars(stmt).first()
@@ -69,23 +64,6 @@ def find_source_profile(session: Session, fingerprint: str) -> SourceProfile | N
 
 def all_source_profiles(session: Session) -> list[SourceProfile]:
     return list(session.scalars(select(SourceProfile)))
-
-
-def find_similar_source_profiles(
-    session: Session, header_set: Sequence[str], min_jaccard: float = 0.6
-) -> list[tuple[SourceProfile, float]]:
-    target = set(header_set)
-    out: list[tuple[SourceProfile, float]] = []
-    for profile in all_source_profiles(session):
-        stored = set(profile.header_list_json or [])
-        if not stored:
-            continue
-        union = stored | target
-        j = len(stored & target) / len(union) if union else 0.0
-        if j >= min_jaccard:
-            out.append((profile, j))
-    out.sort(key=lambda t: t[1], reverse=True)
-    return out
 
 
 def upsert_source_profile(
