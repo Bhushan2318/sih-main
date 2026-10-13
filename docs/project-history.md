@@ -10,7 +10,7 @@ wrong afterwards. This file records *what happened and why*, which does not go s
 
 ## Before the first commit · The plan
 
-`docs/plan.md`, written against an empty directory, fixed the things that everything after
+The implementation plan, written against an empty directory, fixed the things that everything after
 it inherited: the canonical internal schema, the schema-mapping algorithm, the two-head ML
 architecture (per-variable error regression feeding a bust classifier), the API contract,
 and a phased build order with explicit checkpoints.

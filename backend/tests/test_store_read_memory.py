@@ -15,9 +15,8 @@ cartesian product of the categories unless every call passes `observed=True`, wh
 turned build_training_frame's 24,928 rows into 90,032. Ten modules under app/ group by
 these columns, so landing this means auditing all of them.
 
-It was mandatory at Render's 512 MB ceiling, where /api/alerts measured 740 MB. Moving
-serving to a 12 GB Oracle Ampere VM removes that ceiling, and docs/migration-oracle-vm.md
-puts this fix on the other side of the finale. The tests stay because the measurement and
+It was mandatory at Render's 512 MB ceiling, where /api/alerts measured 740 MB. This
+fix is deferred until after the finale. The tests stay because the measurement and
 the trap are worth keeping executable - drop the xfail markers when the audit happens.
 """
 
@@ -30,7 +29,7 @@ from app.storage import parquet_store
 
 
 @pytest.mark.xfail(reason="deferred until after the finale - needs an observed=True "
-                        "audit across app/; see docs/migration-oracle-vm.md",
+                        "audit across app/",
                  strict=False)
 def test_low_cardinality_columns_come_back_categorical(fresh_store):
     """value_type, variable and the member id have a handful of distinct values across

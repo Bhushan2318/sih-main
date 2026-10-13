@@ -27,7 +27,7 @@ Checked directly, not assumed:
 **This means the project notes' claim that "the boundary depiction used for display is under
 review separately from the geometry used for aggregation" is now stale.** That was true
 when the map was state-level (Datameet for display, GADM for aggregation, per
-`docs/plan.md` line 45). Since the districts migration (`82af129`/`a24a663`), both layers
+the original implementation plan). Since the districts migration (`82af129`/`a24a663`), both layers
 are the same GADM file. There is one geometry now, not two — which simplifies this
 review, but also means whatever is true of GADM's licence and India's boundary rules
 applies to what every visitor sees, not just to an internal computation.

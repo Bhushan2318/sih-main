@@ -305,11 +305,10 @@ def fit_streaming(seed, index: "FieldIndex", tr_idx, va_idx,
     torch.manual_seed(seed)
     np.random.seed(seed)
     rng = np.random.default_rng(seed)
-    # Same seed must give bit-identical weights (E1, docs/team-brief-2026-09-15-updated.md
-    # Section 6) - true on CPU by default, not true on CUDA without this. deterministic
-    # algorithms cost some speed; this model is 43,969 parameters and already the slower
-    # of the two model families to iterate, so the trade is worth it for a result that has
-    # to be trusted, not just fast.
+    # Same seed must give bit-identical weights (workstream E1) - true on CPU by default,
+    # not true on CUDA without this. deterministic algorithms cost some speed; this model
+    # is 43,969 parameters and already the slower of the two model families to iterate, so
+    # the trade is worth it for a result that has to be trusted, not just fast.
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
     torch.use_deterministic_algorithms(True)
@@ -466,17 +465,6 @@ def _fit_one(seed, Xtr, Mtr, EXtr, Ytr, AUXtr, Xva, Mva, EXva, Yva,
         model.load_state_dict(best_state)
     model.eval()
     return model, best
-
-
-def _predict(model, X, M, EX, chunk=8) -> np.ndarray:
-    import torch
-    out = []
-    with torch.no_grad():
-        for i in range(0, len(X), chunk):
-            out.append(torch.sigmoid(model(
-                torch.from_numpy(X[i:i + chunk]), torch.from_numpy(M[i:i + chunk]),
-                torch.from_numpy(EX[i:i + chunk]))).numpy())
-    return np.concatenate(out)
 
 
 def splits_from_eval(ev) -> dict:

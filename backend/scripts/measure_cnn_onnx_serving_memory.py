@@ -1,5 +1,4 @@
-"""Reproduce the CNN's ONNX-serving memory/timing claim (E4, docs/team-brief-2026-09-15-
-updated.md Section 6, PHASE 1).
+"""Reproduce the CNN's ONNX-serving memory/timing claim (workstream E4).
 
 `app/ml/cnn.py`'s `export_encoder` docstring and the measured facts in docs/engineering-reference.md both state:
 "+51 MB, 490 ms for all 10 lead days via onnxruntime, scoring one lead at a time". Per the

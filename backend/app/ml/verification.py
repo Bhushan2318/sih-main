@@ -6,8 +6,7 @@ callers own reading the eval-events frame and writing the result. Consumed by
 ``scripts/run_baselines.py``, which already has both the arrays and the ``init_date``
 cycle id on the held-out test split.
 
-Five things live here, per D1/D2/D3/D4/D6 of ``docs/team-brief-2026-09-15-updated.md``
-Section 6:
+Five things live here, per workstreams D1/D2/D3/D4/D6:
 
 - ``block_bootstrap_ci``: a confidence interval for any ladder metric, resampling whole
   forecast cycles rather than rows.
