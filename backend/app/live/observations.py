@@ -60,6 +60,21 @@ POLITE_GAP_S = 1.2
 # minute waits it out; one for the hour or the day fails the batch at once.
 RATE_LIMIT_WAIT_S = 61.0
 
+
+def _batch_starts(n_cells: int, rotation: int) -> list:
+    """Batch start offsets, rotated so each run begins at a different batch.
+
+    The final window is three weeks of all 4,902 cells, which spends Open-Meteo's hourly
+    allowance before the last batches (refresh-data.yml 2026-10-06..11: five of six runs
+    lost cells 3600-4901, the same ones every time, so those districts were never verified).
+    Rotating the start leaves a different tail unserved each run, and the districts a run
+    misses are the next run's first batches. What is ingested is unchanged: a district
+    touched by a failed batch still has no row.
+    """
+    begins = list(range(0, n_cells, CELL_BATCH))
+    k = rotation % len(begins)
+    return begins[k:] + begins[:k]
+
 _session = requests.Session()
 _session.headers["User-Agent"] = "Sanket/phase6-live (SIH 2026; NCMRWF PS 26079)"
 
@@ -362,7 +377,9 @@ def fetch_observations(start: date, end: date, tier: str = "final") -> tuple:
             d[col] = np.full(n_cells, np.nan, dtype=float)
         return d[col]
 
-    for begin in range(0, n_cells, CELL_BATCH):
+    # Hours since the epoch: consecutive scheduled runs are hours apart, so each starts
+    # somewhere else in the grid.
+    for begin in _batch_starts(n_cells, rotation=int(time.time() // 3600)):
         sl = slice(begin, min(begin + CELL_BATCH, n_cells))
         try:
             blocks = _fetch_cell_batch(lats[sl], lons[sl], start, end, tier)

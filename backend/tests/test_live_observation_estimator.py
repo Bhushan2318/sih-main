@@ -307,3 +307,21 @@ def test_a_refresh_that_lost_batches_is_recorded_as_partial(session, monkeypatch
     run = session.query(IngestRun).filter(IngestRun.kind == "observations_final").one()
     assert run.status == "partial"
     assert "failed_batches" in (run.detail or "")
+
+
+def test_batch_order_covers_every_cell_once():
+    begins = obs._batch_starts(4902, rotation=7)
+    assert sorted(begins) == list(range(0, 4902, obs.CELL_BATCH))
+
+
+def test_the_batch_order_rotates_so_a_quota_cannot_starve_the_same_cells():
+    # refresh-data.yml 2026-10-06..11: five of six runs spent Open-Meteo's hourly quota at
+    # batch 12 of 17 and lost cells 3600-4901 every time, because every run started at 0.
+    n = 4902
+    n_batches = len(range(0, n, obs.CELL_BATCH))
+    served_last = set()
+    for rotation in range(n_batches):
+        served_last.add(obs._batch_starts(n, rotation=rotation)[-1])
+    assert len(served_last) == n_batches      # every batch is sometimes last, none always
+    assert obs._batch_starts(n, rotation=0)[0] == 0
+    assert obs._batch_starts(n, rotation=n_batches) == obs._batch_starts(n, rotation=0)
