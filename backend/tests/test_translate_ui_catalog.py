@@ -186,3 +186,18 @@ def test_tidy_restores_colons_written_as_visarga_but_keeps_real_visarga():
 
 def test_checker_flags_a_colon_written_as_visarga():
     assert any(k == "colon" for _, k, _ in cut.check("bn", {"x": "Start here: go"}, {"x": "এখানে শুরু করুনঃ যান"}))
+
+
+def test_tidy_handles_every_scripts_visarga_and_the_odia_pipe():
+    assert tuc.tidy("Bust probability: {{p}}", "બસ્ટ સંભાવનાઃ {{p}}", "gu") == "બસ્ટ સંભાવના: {{p}}"
+    assert tuc.tidy("Bust probability: {{p}}", "ಬಸ್ಟ್ ಸಂಭವನೀಯತೆಃ {{p}}", "kn") == "ಬಸ್ಟ್ ಸಂಭವನೀಯತೆ: {{p}}"
+    assert tuc.tidy("It goes wrong. Then", "ଭୁଲ୍ ହୋଇଯାଏ | ତାପରେ", "or") == "ଭୁଲ୍ ହୋଇଯାଏ। ତାପରେ"
+    assert tuc.tidy("Where it goes wrong", "<0>ଭୁଲ୍ ହୋଇଯାଏ |</0>", "or") == "<0>ଭୁଲ୍ ହୋଇଯାଏ।</0>"
+
+
+def test_glossary_mask_swallows_a_leading_article():
+    import json
+    gloss = tuc.load_glossary("or")
+    masked, toks = tuc.mask("A bust is a forecast. The bust band.", gloss)
+    assert "A " not in masked and "The " not in masked
+    assert any(k == "article" for _, k, _ in cut.check("or", {"x": "A bust is"}, {"x": "A ବଷ୍ଟ ହେଉଛି"}))

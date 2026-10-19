@@ -49,7 +49,10 @@ function formatDayMonthUtc(iso: string): string {
   const [y, m, d] = iso.split("-").map(Number);
   if (!y || !m || !d || m > 12) return iso;
   if (locale() !== "en-GB") {
-    return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString(locale(), { day: "numeric", month: "short", timeZone: "UTC" });
+    const local = new Date(Date.UTC(y, m - 1, d)).toLocaleDateString(locale(), { day: "numeric", month: "short", timeZone: "UTC" });
+    // A browser without month names for this language (Chrome has none for Odia) answers
+    // in English; plain numbers read the same in every language.
+    return /[A-Za-z]/.test(local) ? `${d}/${m}` : local;
   }
   return `${d} ${MONTHS[m - 1]}`;
 }

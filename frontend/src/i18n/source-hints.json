@@ -35,5 +35,6 @@
   "focus.why": "the biggest cause across this whole forecast run",
   "rung.climatology": "Long-run average",
   "miss.title": "Where the model was wrong",
-  "ab.t4": "<0>Even the “truth” we compare against is uncertain.</0> Two leading global weather records differ from each other by about a quarter to a half of a bust threshold, measured over about 21,000 city-days. We say this openly instead of waiting to be asked."
+  "ab.t4": "<0>Even the “truth” we compare against is uncertain.</0> Two leading global weather records differ from each other by about a quarter to a half of a bust threshold, measured over about 21,000 city-days. We say this openly instead of waiting to be asked.",
+  "ab.q4": "We call a forecast a <0>bust</0> when its error lands in the tail of that variable’s own historical error distribution — the 90th percentile, computed on training data only. Each variable therefore has its own threshold, in its own units:"
 }

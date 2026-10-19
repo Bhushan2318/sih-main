@@ -11,6 +11,8 @@ catches the failure modes IndicTrans2 is known for on short UI text:
   repeat      the same word three or more times in a row (decoder loop)
   debris      a mangled placeholder or a leftover <ID1>-style marker shown to the reader
   colon       the English has a colon and the translation has a visarga/aytham instead
+  pipe        an ASCII "|" the English does not have (Odia's danda written wrongly)
+  article     a stray English "a"/"an"/"the" left in the translation
   symbol      a comparison sign (≥ ≤ < > ±) lost or flipped - it reverses the meaning
   glossary    uses a glossary term in English but not its fixed rendering
   hazard      a rendering of a technical term known to be wrong (see HAZARDS)
@@ -127,8 +129,12 @@ def check(code: str, en: dict[str, str], cat: dict[str, str]) -> list[tuple[str,
         # with its markup dropped whole, see translate_ui_catalog.py).
         if sorted(SYMBOLS.findall(TAGS.sub("", src))) != sorted(SYMBOLS.findall(TAGS.sub("", out))):
             issues.append((key, "symbol", out))
-        if src.count(":") > out.count(":") and re.search(r"[ஃःঃ](?=\s|$)", out):
+        if src.count(":") > out.count(":") and re.search(r"[ஃःঃઃಃഃଃਃః](?=\s|$)", out):
             issues.append((key, "colon", out))
+        if "|" in out and "|" not in src:
+            issues.append((key, "pipe", out))
+        if re.search(r"(?<![A-Za-z.])(?:A|An|The|a|an|the)(?![A-Za-z.])", re.sub(r"\{\{\w+\}\}", "", out)):
+            issues.append((key, "article", out))
         if has_loop(out):
             issues.append((key, "repeat", out))
         for pattern, rendering in gloss:

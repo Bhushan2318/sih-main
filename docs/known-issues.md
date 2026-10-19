@@ -5,7 +5,10 @@ here rather than discovered live.
 
 ## Behaviour a visitor could notice
 
-- **Indian-language screens are machine-translated and not yet reviewed.** The UI text
+- **Indian-language screens are machine-translated and not yet reviewed.** Ten languages
+  ship (Hindi, Tamil, Bengali, Marathi, Telugu, Gujarati, Kannada, Malayalam, Odia,
+  Punjabi); the other twelve Eighth Schedule languages are listed in the code but have no
+  catalogue yet, so the picker does not offer them. The UI text
   (`frontend/src/i18n/locales/en.json`) is translated offline by AI4Bharat's IndicTrans2
   En->Indic 1B (`backend/scripts/translate_ui_catalog.py`); every key carries
   `reviewed: false` until a speaker checks it, and the language picker says so. Found in
@@ -20,7 +23,8 @@ here rather than discovered live.
   a reviewer. Other traps, each now guarded in the translator: the model translated the
   names inside `{{day}}` (77 of 535 Hindi strings refused) until placeholders were
   numbered; it flipped `≥` to `≤` and dropped arrows; IndicTransToolkit replaced a file
-  name with an `<ID1>` marker and did not restore it. A string that still loses a
+  name with an `<ID1>` marker and did not restore it; it writes a colon as the script's
+  visarga or aytham (`ஃ ः ঃ ః …`) and Odia's danda as an ASCII `|`. A string that still loses a
   number, tag or term is refused and shows in English - a handful per language, mostly
   the longest About and Model paragraphs. Text the backend writes - Replay narration,
   the hero's notes, risk-band definitions, API `message`s - is still English in every

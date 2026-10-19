@@ -65,7 +65,7 @@ def clean(text: str) -> bool:
 
 
 # Sentence-final marks the model adds to short UI labels ("Alerts" -> "...."), per script.
-FINAL_MARKS = (".", "।", "॥", "۔")
+FINAL_MARKS = (".", "।", "॥", "۔", "|")
 
 
 NAMED = re.compile(r"\{\{(\w+)\}\}")
@@ -99,7 +99,10 @@ def load_glossary(code: str) -> list[tuple[re.Pattern, str]]:
     if not GLOSSARY.exists():
         return []
     terms = json.loads(GLOSSARY.read_text())["terms"]
-    return [(re.compile(t["match"]), t[code]) for t in terms.values() if code in t]
+    # A leading "a"/"an"/"the" goes into the mask with the term: these languages have no
+    # articles, and left outside it the model kept it verbatim ("A ବଷ୍ଟ ହେଉଛି").
+    article = r"(?:\b(?:[Aa]n?|[Tt]he)\s+)?"
+    return [(re.compile(article + t["match"]), t[code]) for t in terms.values() if code in t]
 
 
 def mask(src: str, glossary: list[tuple[re.Pattern, str]] = ()) -> tuple[str, list[str]]:
@@ -155,7 +158,10 @@ def tidy(src: str, out: str, code: str = "") -> str:
     # turned back as the English has colons, and only before a space or the end.
     need = src.count(":") - out.count(":")
     if need > 0:
-        out = re.sub(r"[ஃःঃ](?=\s|$)", ":", out, count=need)
+        out = re.sub(r"[ஃःঃઃಃഃଃਃః](?=\s|$)", ":", out, count=need)
+    # Odia: the processor writes the danda as an ASCII pipe ("ଭୁଲ୍ ହୋଇଯାଏ |").
+    if code == "or":
+        out = re.sub(r"\s*\|(?=\s|$|<)", "।", out)
     if not src.rstrip().endswith(FINAL_MARKS):
         while out.endswith(FINAL_MARKS):
             out = out[:-1].rstrip()
@@ -268,6 +274,7 @@ def main() -> int:
     ap.add_argument("--langs", nargs="+", default=list(FLORES), choices=list(FLORES))
     ap.add_argument("--batch", type=int, default=8)
     ap.add_argument("--redo", nargs="*", default=[], help="keys to retranslate even if unchanged")
+    ap.add_argument("--only", action="store_true", help="translate the --redo keys and nothing else")
     args = ap.parse_args()
 
     en: dict[str, str] = json.loads((LOCALES / "en.json").read_text())
@@ -292,6 +299,8 @@ def main() -> int:
         existing = json.loads(path.read_text()) if path.exists() else {}
         glossary = load_glossary(code)
         todo = plan(en, existing) + [k for k in args.redo if k in en and k not in plan(en, existing)]
+        if args.only:
+            todo = [k for k in args.redo if k in en]
         t0 = time.monotonic()
         refused: list[str] = []
         meta = existing.setdefault("_meta", {})
