@@ -1,3 +1,5 @@
+import { rich } from "../../i18n/rich";
+import { translate } from "../../i18n";
 import { useState } from "react";
 import {
   Area, CartesianGrid, ComposedChart, Line, ReferenceLine, ResponsiveContainer,
@@ -27,14 +29,13 @@ export function HeroDivergence({ data, riskCuts }: {
       <section className="hero hero--empty" aria-live="polite">
         <div className="hero__grid">
           <div className="hero__lead">
-            <div className="hero__kick"><i aria-hidden="true" /><span>NO SCORE YET</span></div>
-            <h1 className="hero__head">No scored cycle <em>yet.</em></h1>
+            <div className="hero__kick"><i aria-hidden="true" /><span>{translate("hero.noScoreKick")}</span></div>
+            <h1 className="hero__head">{rich("hero.noScoreHead", undefined, [<em />])}</h1>
             <p className="hero__sub">
-              {data.message ?? "The model is available, but this store has no forecast cycle it can score."}
+              {data.message ?? translate("hero.noScoreSub")}
             </p>
             <p className="hero__why">
-              A model response without a probability is unscored; it has no risk band. The
-              dashboard will show the map and KPIs as soon as a scoreable cycle is available.
+              {translate("hero.noScoreWhy")}
             </p>
           </div>
         </div>
@@ -56,32 +57,31 @@ export function HeroDivergence({ data, riskCuts }: {
           </div>
 
           <h1 className="hero__head">
-            {apart ? (
-              <>Where the forecast comes <em>apart.</em></>
-            ) : (
-              <>Where the forecast <em>holds.</em></>
-            )}
+            {rich(apart ? "hero.apart" : "hero.holds", undefined, [<em />])}
           </h1>
 
           <p className="hero__sub">{data.national_note ?? data.headline_note}</p>
 
           <p className="hero__why">
-            Averaged across every region scored in this forecast run — one run is all ten
-            days issued at a single hour. A bust is a forecast whose error lands in the worst
-            10% of that variable's own past errors.
+            {translate("hero.why")}
           </p>
 
           {mean != null ? (
             <div className="hero__gauge">
               <Ring value={mean} cuts={riskCuts} />
               <div className="hero__gaugemeta">
-                <span className="hero__gaugelabel">Average bust risk · all 10 days</span>
+                <span className="hero__gaugelabel">{translate("hero.gauge")}</span>
                 <strong className="hero__gaugebig">
-                  {data.n_high_regions} of {data.n_scored_regions} districts reach the bust band on at least one day
+                  {translate("hero.reach", { high: data.n_high_regions, n: data.n_scored_regions })}
                 </strong>
                 {delta != null ? (
                   <span className={deltaClass(delta)}>
-                    {delta >= 0 ? "▲" : "▼"} {delta >= 0 ? "+" : ""}{(delta * 100).toFixed(1)} points vs run {data.prior_init_date}
+                    {translate("hero.delta", {
+                      arrow: delta >= 0 ? "▲" : "▼",
+                      sign: delta >= 0 ? "+" : "",
+                      pts: (delta * 100).toFixed(1),
+                      date: data.prior_init_date ?? "",
+                    })}
                   </span>
                 ) : (
                   <span className="hero__delta hero__delta--none">{data.prior_note}</span>
@@ -93,20 +93,20 @@ export function HeroDivergence({ data, riskCuts }: {
 
         <figure className="hero__panel">
           <figcaption className="hero__panelhead">
-            <div className="hero__tabs" role="tablist" aria-label="Hero chart">
+            <div className="hero__tabs" role="tablist" aria-label={translate("hero.tabsAria")}>
               <button
                 type="button" role="tab" aria-selected={tab === "national"}
                 className={tab === "national" ? "hero__tab is-active" : "hero__tab"}
                 onClick={() => setTab("national")}
               >
-                Risk by lead day
+                {translate("hero.tabNational")}
               </button>
               <button
                 type="button" role="tab" aria-selected={tab === "skill"}
                 className={tab === "skill" ? "hero__tab is-active" : "hero__tab"}
                 onClick={() => setTab("skill")}
               >
-                Were we right?
+                {translate("hero.tabSkill")}
               </button>
             </div>
           </figcaption>
@@ -117,19 +117,19 @@ export function HeroDivergence({ data, riskCuts }: {
 
           {tab === "national" ? (
             <div className="hero__key">
-              <b><i style={{ background: CHART.forecast }} />Mean across regions</b>
-              <b><i style={{ background: CHART.member }} />Calmest to worst region</b>
+              <b><i style={{ background: CHART.forecast }} />{translate("hero.keyMean")}</b>
+              <b><i style={{ background: CHART.member }} />{translate("hero.keyRange")}</b>
             </div>
           ) : (
             <div className="hero__key">
-              <b><i style={{ background: CHART.forecast }} />What actually happened</b>
-              <b><i style={{ background: CHART.axis }} />Where dots would sit if always right</b>
+              <b><i style={{ background: CHART.forecast }} />{translate("hero.keyActual")}</b>
+              <b><i style={{ background: CHART.axis }} />{translate("hero.keyIdeal")}</b>
             </div>
           )}
 
           <p className="hero__source">
             {tab === "national"
-              ? `${data.source ?? ""} · cycle ${data.init_date}`
+              ? translate("hero.source", { source: data.source ?? "", date: data.init_date ?? "" })
               : skillCaption(data)}
           </p>
         </figure>
@@ -147,7 +147,7 @@ function NationalChart({ data }: { data: EnsembleDivergenceResponse }) {
     high: n.n_high_regions,
     n: n.n_regions,
   }));
-  if (!rows.length) return <Empty>No scored regions in this cycle.</Empty>;
+  if (!rows.length) return <Empty>{translate("hero.noRegions")}</Empty>;
 
   return (
     <ResponsiveContainer width="100%" height="100%">
@@ -155,31 +155,31 @@ function NationalChart({ data }: { data: EnsembleDivergenceResponse }) {
         <CartesianGrid strokeDasharray="3 3" stroke={CHART.grid} vertical={false} />
         <XAxis
           dataKey="lead" tickFormatter={dayLabel} stroke={CHART.axis} tickLine={false}
-          label={{ value: "Lead day", position: "insideBottom", offset: -12, fontSize: 11, fill: CHART.axis }}
+          label={{ value: translate("lead.label"), position: "insideBottom", offset: -12, fontSize: 11, fill: CHART.axis }}
         />
         <YAxis
           domain={[0, 100]} width={46} stroke={CHART.axis} tickLine={false}
           tickFormatter={(v: number) => `${v}%`}
-          label={{ value: "Bust risk", angle: -90, position: "insideLeft", offset: -2, fontSize: 11, fill: CHART.axis }}
+          label={{ value: translate("hero.axisRisk"), angle: -90, position: "insideLeft", offset: -2, fontSize: 11, fill: CHART.axis }}
         />
         <Tooltip
-          labelFormatter={(l) => `Lead day ${l}`}
+          labelFormatter={(l) => translate("lead.day", { d: l })}
           formatter={(v: number | number[], _n: string, item) => {
             if (Array.isArray(v)) {
-              return [`${v[0].toFixed(0)}% – ${v[1].toFixed(0)}%`, "Calmest to worst region"];
+              return [`${v[0].toFixed(0)}% – ${v[1].toFixed(0)}%`, translate("hero.keyRange")];
             }
             return [
-              `${v.toFixed(1)}%  ·  ${item.payload.high}/${item.payload.n} in the top band`,
-              "Mean bust risk",
+              translate("hero.tipTop", { pct: v.toFixed(1), high: item.payload.high, n: item.payload.n }),
+              translate("hero.meanRisk"),
             ];
           }}
         />
         <Area
           dataKey="band" stroke="none" fill={CHART.member} fillOpacity={0.4}
-          isAnimationActive={false} name="Calmest to worst region"
+          isAnimationActive={false} name={translate("hero.keyRange")}
         />
         <Line
-          type="monotone" dataKey="mean" name="Mean bust risk"
+          type="monotone" dataKey="mean" name={translate("hero.meanRisk")}
           stroke={CHART.forecast} strokeWidth={2.6} dot={{ r: 2.5 }}
         />
       </ComposedChart>
@@ -189,7 +189,7 @@ function NationalChart({ data }: { data: EnsembleDivergenceResponse }) {
 
 function SkillChart({ data }: { data: EnsembleDivergenceResponse }) {
   const skill = data.skill;
-  if (!skill) return <Empty>This run recorded no accuracy metrics.</Empty>;
+  if (!skill) return <Empty>{translate("hero.noSkill")}</Empty>;
 
   if (!skill.calibration.length) {
     return (
@@ -236,10 +236,10 @@ function SkillChart({ data }: { data: EnsembleDivergenceResponse }) {
 function SkillNumbers({ skill }: { skill: NonNullable<EnsembleDivergenceResponse["skill"]> }) {
   return (
     <dl className="hero__skill">
-      <div><dt>Ranking (ROC-AUC)</dt><dd>{num(skill.roc_auc, 3)}</dd></div>
-      <div><dt>Warnings right</dt><dd>{num(skill.precision, 2)}</dd></div>
-      <div><dt>Busts caught</dt><dd>{num(skill.recall, 2)}</dd></div>
-      <div><dt>Probability error</dt><dd>{num(skill.brier, 3)}</dd></div>
+      <div><dt>{translate("hero.auc")}</dt><dd>{num(skill.roc_auc, 3)}</dd></div>
+      <div><dt>{translate("hero.precision")}</dt><dd>{num(skill.precision, 2)}</dd></div>
+      <div><dt>{translate("hero.recall")}</dt><dd>{num(skill.recall, 2)}</dd></div>
+      <div><dt>{translate("hero.brier")}</dt><dd>{num(skill.brier, 3)}</dd></div>
     </dl>
   );
 }
@@ -252,9 +252,9 @@ function CalibrationTip({ active, payload }: {
   const p = payload[0].payload;
   return (
     <div className="hero__tip">
-      <strong>Sanket said {p.predicted.toFixed(0)}%</strong>
-      <span>it actually busted {p.observed.toFixed(0)}% of the time</span>
-      <span className="hero__tipmeta">across {p.n.toLocaleString()} forecasts</span>
+      <strong>{translate("hero.tipSaid", { p: p.predicted.toFixed(0) })}</strong>
+      <span>{translate("hero.tipBusted", { p: p.observed.toFixed(0) })}</span>
+      <span className="hero__tipmeta">{translate("hero.tipAcross", { n: p.n.toLocaleString() })}</span>
     </div>
   );
 }
@@ -292,8 +292,8 @@ function Empty({ children }: { children: React.ReactNode }) {
 
 function skillCaption(data: EnsembleDivergenceResponse): string {
   const s = data.skill;
-  if (!s?.n) return "No accuracy metrics recorded for this run";
-  return `${s.n.toLocaleString()} forecasts on the held-out ${s.split} split — data this model never trained on`;
+  if (!s?.n) return translate("hero.noMetrics");
+  return translate("hero.caption", { n: s.n.toLocaleString(), split: s.split ?? "" });
 }
 
 function deltaClass(delta: number): string {

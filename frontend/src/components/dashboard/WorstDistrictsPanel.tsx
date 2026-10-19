@@ -1,4 +1,7 @@
+import { translate } from "../../i18n";
 import type { RegionsResponse } from "../../api/types";
+import { rich } from "../../i18n/rich";
+
 import { dayLabel } from "../../lib/format";
 import { isScoredRegion, riskBandForRegion, type RiskCuts } from "../../lib/riskBands";
 import { EmptyState } from "../common/States";
@@ -24,7 +27,7 @@ export function WorstDistrictsPanel({ day, riskCuts, onSelect }: {
   if (!day || !scored.length) {
     return (
       <aside className="panel">
-        <EmptyState title="No region selected" message="Open a state on the map and pick a district — or search for one directly." />
+        <EmptyState title={translate("worst.emptyTitle")} message={translate("worst.emptyMsg")} />
       </aside>
     );
   }
@@ -46,19 +49,19 @@ export function WorstDistrictsPanel({ day, riskCuts, onSelect }: {
   }));
 
   return (
-    <aside className="panel" aria-label="Worst districts">
+    <aside className="panel" aria-label={translate("worst.aria")}>
       <header className="panel__head">
         <div>
-          <h2>Worst districts · {dayLabel(day.lead_time_days)}</h2>
+          <h2>{translate("worst.title", { day: dayLabel(day.lead_time_days) })}</h2>
           <p className="muted small">
-            {day.valid_date ? `valid ${day.valid_date} · ` : ""}
-            <b>{bust}</b> in the bust band · <b>{watch}</b> on watch · of {scored.length} districts
+            {day.valid_date ? translate("worst.valid", { date: day.valid_date }) : ""}
+            {rich("worst.counts", { bust, watch, n: scored.length }, [<b />])}
           </p>
         </div>
       </header>
-      <TopDistrictsList items={items} onSelect={onSelect} selectTitle="Open this district" />
+      <TopDistrictsList items={items} onSelect={onSelect} selectTitle={translate("worst.open")} />
       <p className="muted small worst__hint">
-        Click one to open it, or pick any district on the map or search for it.
+        {translate("worst.hint")}
       </p>
     </aside>
   );

@@ -1,0 +1,37 @@
+{
+  "_about": "Fixed renderings of Sanket's risk vocabulary. The translator masks these words before IndicTrans2 sees them and writes the rendering here instead, because the model translates them literally: 'bust' came back as 'bomb explosion' and 'chest measurement' (Tamil) and 'sculpture bust' (Bengali), 'watch' as 'clock', 'band' as 'music band', and the Replay feature as 'replacement' (Bengali). These are phonetic loanwords - the term is defined on the site, and a loanword cannot mean something else. A reviewer may replace any of them with a native term; rerun translate_ui_catalog.py with --redo for the keys that use it.",
+  "terms": {
+    "bust": {
+      "match": "\\b[Bb]usts?\\b",
+      "hi": "बस्ट",
+      "mr": "बस्ट",
+      "bn": "বাস্ট",
+      "ta": "பஸ்ட்",
+      "te": "బస్ట్"
+    },
+    "watch": {
+      "match": "\\bwatch\\b",
+      "hi": "वॉच",
+      "mr": "वॉच",
+      "bn": "ওয়াচ",
+      "ta": "வாட்ச்",
+      "te": "వాచ్"
+    },
+    "band": {
+      "match": "\\b[Bb]ands?\\b",
+      "hi": "बैंड",
+      "mr": "बँड",
+      "bn": "ব্যান্ড",
+      "ta": "பேண்ட்",
+      "te": "బ్యాండ్"
+    },
+    "replay": {
+      "match": "\\bReplay\\b",
+      "hi": "रीप्ले",
+      "mr": "रीप्ले",
+      "bn": "রিপ্লে",
+      "ta": "ரீப்ளே",
+      "te": "రీప్లే"
+    }
+  }
+}

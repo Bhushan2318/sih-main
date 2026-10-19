@@ -1,3 +1,4 @@
+import { translate } from "../../i18n";
 import {
   CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
@@ -11,8 +12,7 @@ export function VariableTrajectoryChart({ series }: { series: VariableSeries }) 
   if (!series.available || !series.points.length) {
     return (
       <p className="muted">
-        No model for {variableLabel(series.variable)} — too few matched forecast–observation
-        pairs in the data.
+        {translate("traj.noModel", { v: variableLabel(series.variable) })}
       </p>
     );
   }
@@ -36,7 +36,7 @@ export function VariableTrajectoryChart({ series }: { series: VariableSeries }) 
           <CartesianGrid strokeDasharray="3 3" />
           <XAxis
             dataKey="lead" tickFormatter={dayLabel}
-            label={{ value: "Lead day", position: "insideBottom", offset: -2, fontSize: 10 }}
+            label={{ value: translate("lead.label"), position: "insideBottom", offset: -2, fontSize: 10 }}
             height={34}
           />
           {/* The unit belongs on the axis, not only in a caption under the chart: the
@@ -51,32 +51,32 @@ export function VariableTrajectoryChart({ series }: { series: VariableSeries }) 
             } : undefined}
           />
           <Tooltip
-            labelFormatter={(l) => `Lead day ${l}`}
+            labelFormatter={(l) => translate("lead.day", { d: l })}
             formatter={(v: number) => (v == null ? "—" : `${formatTick(v)}${series.unit ? ` ${series.unit}` : ""}`)}
           />
           <Legend />
-          <Line type="monotone" dataKey="forecast" name="Forecast (ensemble average)"
+          <Line type="monotone" dataKey="forecast" name={translate("traj.forecast")}
                 stroke={CHART.forecast} strokeWidth={2} dot={{ r: 2 }} />
           {anyObserved ? (
-            <Line type="monotone" dataKey="observed" name="Observed"
+            <Line type="monotone" dataKey="observed" name={translate("traj.observed")}
                   stroke={CHART.observed} strokeWidth={2} strokeDasharray="6 4" dot={{ r: 2 }} connectNulls={false} />
           ) : null}
-          <Line type="monotone" dataKey="error" name="Predicted error size"
+          <Line type="monotone" dataKey="error" name={translate("traj.error")}
                 stroke={CHART.error} strokeWidth={1.5} dot={false} />
         </LineChart>
       </ResponsiveContainer>
-      {series.unit ? <p className="muted small axis-unit">Values in {series.unit}</p> : null}
+      {series.unit ? <p className="muted small axis-unit">{translate("traj.units", { u: series.unit })}</p> : null}
       {provisional.length ? (
         <p className="muted small provisional-note">
-          <span className="badge--provisional">provisional</span>{" "}
-          {provisional.length === 1 ? "Day" : "Days"}{" "}
-          {provisional.map((p) => p.lead_time_days).join(", ")} checked against a fast
-          preliminary record rather than the final ERA5 one — these values may be revised.
+          <span className="badge--provisional">{translate("traj.provisional")}</span>{" "}
+          {translate(provisional.length === 1 ? "traj.provOne" : "traj.provMany", {
+            days: provisional.map((p) => p.lead_time_days).join(", "),
+          })}
         </p>
       ) : null}
       {!anyObserved ? (
         <p className="muted small">
-          This cycle has not verified yet, so no observed values are drawn.
+          {translate("traj.unverified")}
         </p>
       ) : null}
     </>

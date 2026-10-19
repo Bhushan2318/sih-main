@@ -1,3 +1,4 @@
+import { translate } from "../../i18n";
 import type { ModelStatusResponse } from "../../api/types";
 import { LEAD_DAY_RUNG_NAME, rungLabel } from "../../lib/baselineLadder";
 import { formatMetric } from "../../lib/format";
@@ -19,7 +20,7 @@ export function BaselineLadderTable({ baselines, flagLeadDay = false }: {
       <table className="dtable">
         <thead>
           <tr>
-            <th>model</th><th>Brier ↓</th><th>skill vs climatology ↑</th><th>ROC-AUC ↑</th>
+            <th>{translate("bl.model")}</th><th>{translate("bl.brier")}</th><th>{translate("bl.bss")}</th><th>{translate("bl.auc")}</th>
           </tr>
         </thead>
         <tbody>

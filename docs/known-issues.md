@@ -5,6 +5,27 @@ here rather than discovered live.
 
 ## Behaviour a visitor could notice
 
+- **Indian-language screens are machine-translated and not yet reviewed.** The UI text
+  (`frontend/src/i18n/locales/en.json`) is translated offline by AI4Bharat's IndicTrans2
+  En->Indic 1B (`backend/scripts/translate_ui_catalog.py`); every key carries
+  `reviewed: false` until a speaker checks it, and the language picker says so. Found in
+  real output, 2026-10-18: the model renders "bust" literally - Tamil குண்டுவெடிப்பு
+  ("bomb explosion") and மார்பளவு ("chest measurement"), Bengali আবক্ষ (a sculpture
+  bust) - and Hindi turned "Forecast Bust Detection" into "forecast *of* bust
+  detection"; "watch" came back as "clock", "band" as "music band", Replay as
+  "replacement". These terms are now fixed in `frontend/src/i18n/glossary.json` as
+  phonetic loanwords (बस्ट, பஸ்ட், …), masked before the model sees them - a choice
+  made without a native speaker, and the first thing a reviewer should confirm or
+  replace. `backend/scripts/check_ui_translations.py` flags the known failure modes for
+  a reviewer. Other traps, each now guarded in the translator: the model translated the
+  names inside `{{day}}` (77 of 535 Hindi strings refused) until placeholders were
+  numbered; it flipped `≥` to `≤` and dropped arrows; IndicTransToolkit replaced a file
+  name with an `<ID1>` marker and did not restore it. A string that still loses a
+  number, tag or term is refused and shows in English - a handful per language, mostly
+  the longest About and Model paragraphs. Text the backend writes - Replay narration,
+  the hero's notes, risk-band definitions, API `message`s - is still English in every
+  language.
+
 - **A box woken from sleep is slow to answer at all.** Render's free tier stops the
   instance after 15 minutes without traffic, and starting it again takes tens of seconds
   before the app sees a request. Nothing in the app can shorten that; only traffic that

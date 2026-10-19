@@ -1,3 +1,5 @@
+import { rich } from "../../i18n/rich";
+import { locale, translate } from "../../i18n";
 import type { ModelStatusResponse } from "../../api/types";
 import { stamp } from "../../format";
 import { useModelStatus } from "../../hooks/useDashboardData";
@@ -19,7 +21,7 @@ export function ModelPage() {
   const connection = useLiveStore((s) => s.connectionStatus);
   const training = useLiveStore((s) => s.trainingInProgress);
 
-  if (isLoading) return <main className="page page--wide"><LoadingState label="Loading model status…" hint={retryingHint(failureCount)} /></main>;
+  if (isLoading) return <main className="page page--wide"><LoadingState label={translate("mp.loading")} hint={retryingHint(failureCount)} /></main>;
   if (error) return <main className="page page--wide"><ErrorState error={error} /></main>;
   if (!data) return null;
 
@@ -45,127 +47,120 @@ export function ModelPage() {
     <main className="page page--wide">
       <header className="pagehead">
         <div>
-          <h1 className="pagehead__title">Model</h1>
+          <h1 className="pagehead__title">{translate("nav.model")}</h1>
           <p className="pagehead__sub">
             {data.model_trained
-              ? <>Run <b className="mono">{data.current_run_id}</b>{data.last_trained_at ? <> · trained {stamp(data.last_trained_at)}</> : null}</>
+              ? <>{rich("mp.run", { id: data.current_run_id ?? "" }, [<b className="mono" />])}{data.last_trained_at ? translate("mp.trained", { when: stamp(data.last_trained_at) }) : null}</>
               : data.message}
           </p>
         </div>
         <span className={`badge badge--${connection === "open" ? "live" : "offline"}`}>
-          {connection === "open" ? "live" : connection}
+          {connection === "open" ? translate("mp.live") : connection}
         </span>
       </header>
 
-      {training || data.training_in_progress ? <p className="notice">Retraining in progress…</p> : null}
+      {training || data.training_in_progress ? <p className="notice">{translate("mp.retraining")}</p> : null}
       {data.last_training_error ? (
-        <p className="notice notice--error">Last training error: {data.last_training_error}</p>
+        <p className="notice notice--error">{translate("mp.lastErr", { err: data.last_training_error })}</p>
       ) : null}
 
       {!data.model_trained ? (
         UPLOAD_ENABLED ? <UploadPanel /> : (
           <p className="muted">
-            This deployment serves a model trained elsewhere and cannot retrain, so there
-            is nothing to upload here. No model is currently published.
+            {translate("mp.noUpload")}
           </p>
         )
       ) : (
         <>
           <div className="kpis kpis--flush">
             <Stat cap="blue" label="ROC-AUC" value={num(clf.roc_auc, 3)}
-              note={<>ranking skill · 0.5 is a coin flip</>} />
+              note={translate("mp.aucNote")} />
             <Stat cap="blue" label="PR-AUC" value={num(clf.pr_auc, 3)}
-              note={<>busts are <b>{pctOf(clf.bust_rate)}</b> of all forecasts, so that is the score to beat</>} />
-            <Stat cap="watch" label="Brier score" value={num(clf.brier, 3)}
-              note={<>how far off the probabilities are · lower is better</>} />
+              note={rich("mp.prNote", { rate: pctOf(clf.bust_rate) }, [<b />])} />
+            <Stat cap="watch" label={translate("mp.brier")} value={num(clf.brier, 3)}
+              note={translate("mp.brierNote")} />
             <Stat cap="bust" label="F1" value={num(clf.f1, 3)}
-              note={<>precision <b>{num(clf.precision, 2)}</b> · recall <b>{num(clf.recall, 2)}</b></>} />
+              note={rich("mp.f1Note", { p: num(clf.precision, 2), r: num(clf.recall, 2) }, [<b />])} />
           </div>
 
           <p className="pagenote">
-            Bust classifier on the held-out <b>{String(clf.split ?? "unknown")}</b> split
-            {typeof clf.n === "number" ? <> · <b>{clf.n.toLocaleString()}</b> forecasts the model never trained on</> : null}
-            {data.explanation_method ? <> · explanations via <b>{data.explanation_method}</b></> : null}
+            {rich("mp.heldOut", { split: String(clf.split ?? translate("map.unknown")) }, [<b />])}
+            {typeof clf.n === "number" ? rich("mp.neverTrained", { n: clf.n.toLocaleString() }, [<b />]) : null}
+            {data.explanation_method ? rich("mp.explain", { m: data.explanation_method }, [<b />]) : null}
           </p>
 
           <div className="page--split page--even">
             <section className="card">
-              <header className="card__head"><h3>Training data</h3></header>
+              <header className="card__head"><h3>{translate("mp.trainData")}</h3></header>
               {firstYear != null ? (
                 <dl className="metrics">
                   <div className="metrics__wide">
-                    <dt>Data span</dt>
+                    <dt>{translate("mp.span")}</dt>
                     <dd className="mono">
                       {firstYear} → {vol.valid_date_max ?? lastYear ?? "—"}
                     </dd>
                   </div>
                   <div className="metrics__wide">
-                    <dt>Training archive</dt>
+                    <dt>{translate("mp.archive")}</dt>
                     <dd className="mono small">
                       {firstYear}–{lastYear ?? firstYear}
-                      {td.test_year != null ? <> · held out {td.test_year}</> : null}
+                      {td.test_year != null ? translate("mp.heldOutYear", { y: td.test_year }) : null}
                     </dd>
                   </div>
                 </dl>
               ) : null}
               <dl className="metrics metrics--compact">
                 <div>
-                  <dt>Forecast cycles</dt>
+                  <dt>{translate("mp.cycles")}</dt>
                   <dd>{typeof td.cycles === "number" ? td.cycles.toLocaleString() : "—"}</dd>
                 </div>
                 <div>
-                  <dt>Held out</dt>
+                  <dt>{translate("mp.heldOutCol")}</dt>
                   <dd>{typeof td.held_out_cycles === "number" ? td.held_out_cycles.toLocaleString() : "—"}</dd>
                 </div>
                 <div>
-                  <dt>Forecast–observation pairs</dt>
+                  <dt>{translate("mp.pairs")}</dt>
                   <dd>{typeof td.paired_rows === "number" ? td.paired_rows.toLocaleString() : "—"}</dd>
                 </div>
-                <div><dt>Variables</dt><dd>{data.modelled_variables.length}</dd></div>
+                <div><dt>{translate("mp.vars")}</dt><dd>{data.modelled_variables.length}</dd></div>
               </dl>
               {typeof td.cycles === "number" && td.cycles > 0 ? (
                 <p className="muted small">
                   {/* It read "Trained on 6,558 forecast cycles from 2000 to 2016": that count
                     * includes the validation and held-out cycles, and a pooled run fits its
                     * models on a sample of the training ones. */}
-                  <b>{td.cycles.toLocaleString()}</b> forecast cycles
+                  {rich("mp.cyclesTotal", { n: td.cycles.toLocaleString() }, [<b />])}
                   {typeof td.train_cycles === "number" && typeof td.val_cycles === "number" ? (
-                    <>: {td.train_cycles.toLocaleString()} to train and{" "}
-                      {td.val_cycles.toLocaleString()} to validate
-                      {firstYear != null ? <>, from {firstYear}–{lastYear ?? firstYear}</> : null}
+                    <>{translate("mp.cyclesSplit", { train: td.train_cycles.toLocaleString(), val: td.val_cycles.toLocaleString() })}
+                      {firstYear != null ? translate("mp.cyclesFrom", { from: firstYear, to: lastYear ?? firstYear }) : null}
                       {typeof td.held_out_cycles === "number" ? (
-                        <>, and {td.held_out_cycles.toLocaleString()} held out
-                          {td.test_year != null ? <> from {td.test_year}</> : null}</>
+                        <>{translate("mp.cyclesHeld", { n: td.held_out_cycles.toLocaleString() })}
+                          {td.test_year != null ? translate("mp.cyclesHeldFrom", { y: td.test_year }) : null}</>
                       ) : null}</>
                   ) : null}.
                   {typeof td.fit_cycles === "number" && typeof td.train_cycles === "number" ? (
-                    <> The models were fit on a sample of <b>{td.fit_cycles.toLocaleString()}</b>{" "}
-                      of the {td.train_cycles.toLocaleString()} training cycles
+                    <>{rich("mp.fit", { fit: td.fit_cycles.toLocaleString(), train: td.train_cycles.toLocaleString() }, [<b />])}
                       {typeof td.classifier_cycles === "number" && td.classifier_cycles !== td.fit_cycles
-                        ? <> (the bust classifier on {td.classifier_cycles.toLocaleString()})</> : null}.</>
+                        ? translate("mp.fitClf", { n: td.classifier_cycles.toLocaleString() }) : null}.</>
                   ) : null}
-                  {cyclesPerYear != null ? (
-                    <> About <b>{cyclesPerYear}</b> initialisations per year of the GEFSv12
-                      reforecast (one 00 UTC cycle per day at most).</>
-                  ) : null}
+                  {cyclesPerYear != null ? rich("mp.perYear", { n: cyclesPerYear }, [<b />]) : null}
                 </p>
               ) : (
                 <p className="muted small">
-                  Training provenance unavailable — this model predates the field; it is
-                  written on the next retrain.
+                  {translate("mp.noProv")}
                 </p>
               )}
               <div className="panel__section">
-                <header className="card__head"><h4>On this server</h4></header>
+                <header className="card__head"><h4>{translate("mp.server")}</h4></header>
                 <dl className="metrics metrics--compact">
-                  <div><dt>Rows</dt><dd>{(vol.total_rows ?? 0).toLocaleString()}</dd></div>
-                  <div><dt>Region ids</dt><dd>{vol.regions ?? "—"}</dd></div>
-                  <div><dt>Cycles</dt><dd>{vol.forecast_cycles ?? "—"}</dd></div>
-                  <div><dt>Batches</dt><dd>{vol.batches ?? "—"}</dd></div>
+                  <div><dt>{translate("mp.rows")}</dt><dd>{(vol.total_rows ?? 0).toLocaleString()}</dd></div>
+                  <div><dt>{translate("mp.regionIds")}</dt><dd>{vol.regions ?? "—"}</dd></div>
+                  <div><dt>{translate("mp.cyclesShort")}</dt><dd>{vol.forecast_cycles ?? "—"}</dd></div>
+                  <div><dt>{translate("mp.batches")}</dt><dd>{vol.batches ?? "—"}</dd></div>
                 </dl>
                 <dl className="metrics">
                   <div className="metrics__wide">
-                    <dt>Valid-date range on this server</dt>
+                    <dt>{translate("mp.validRange")}</dt>
                     <dd className="mono small">
                       {vol.valid_date_min ?? "—"} → {vol.valid_date_max ?? "—"}
                     </dd>
@@ -175,15 +170,8 @@ export function ModelPage() {
                   <p className="notice">{vol.unavailable_reason}</p>
                 ) : null}
                 <p className="muted small">
-                  The serving copy carries the cycles needed to score today and to replay
-                  recent ones — not the full training archive, which lives where the model
-                  is trained. Region ids count every id it holds: the 666 districts, plus one
-                  point per state or UT from cycles scored before the live feed moved to
-                  districts on 23 Sep.
-                  {firstYear != null ? (
-                    <> The model itself was trained on data going back to{" "}
-                      <b>{firstYear}</b>; this range is only what this 512&nbsp;MB box carries.</>
-                  ) : null}
+                  {translate("mp.serverNote")}
+                  {firstYear != null ? rich("mp.serverSince", { y: firstYear }, [<b />]) : null}
                 </p>
               </div>
               <ul className="taglist">
@@ -193,32 +181,26 @@ export function ModelPage() {
               </ul>
               {Object.keys(data.skipped_variables).length ? (
                 <p className="muted small">
-                  Not modelled (too few matched forecast–observation pairs):{" "}
-                  {Object.entries(data.skipped_variables).map(([v, why]) => `${variableLabel(v)} (${why})`).join("; ")}
+                  {translate("det.notModelled", { list: Object.entries(data.skipped_variables).map(([v, why]) => `${variableLabel(v)} (${why})`).join("; ") })}
                 </p>
               ) : (
-                <p className="muted small">Every ingested variable is modelled.</p>
+                <p className="muted small">{translate("mp.allModelled")}</p>
               )}
             </section>
 
             <section className="card">
-              <header className="card__head"><h3>What counts as a bust</h3></header>
+              <header className="card__head"><h3>{translate("mp.bustTitle")}</h3></header>
               <p className="muted small">
-                A forecast busts when its error exceeds this variable&apos;s own threshold, the{" "}
-                <b>{pct(data.thresholds?.threshold_percentile)}</b> percentile of its error on the
-                training data. <b>Bust above</b> is taken over the ensemble average&apos;s error per
-                district and day, which is what a bust is judged on. <b>p90 error</b> is the same
-                percentile for a single member&apos;s forecast, used only to scale the confidence
-                figures. One member misses by more than the ensemble average does, so it is the larger.
+                {rich("mp.bustBody", { pct: pct(data.thresholds?.threshold_percentile) }, [<b />])}
               </p>
               <div className="tablewrap">
                 <table className="dtable dtable--tight">
                   <thead>
                     <tr>
-                      <th>Variable</th>
-                      <th className="dtable__num">Bust above</th>
-                      <th className="dtable__num">p90 error</th>
-                      <th>Unit</th>
+                      <th>{translate("mp.colVar")}</th>
+                      <th className="dtable__num">{translate("mp.colBustAbove")}</th>
+                      <th className="dtable__num">{translate("mp.colP90")}</th>
+                      <th>{translate("mp.colUnit")}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -238,18 +220,18 @@ export function ModelPage() {
               {bustVars > 0 && q != null && typeof clf.bust_rate === "number" ? (
                 <p className="muted small">
                   {/* Why "the worst 10%" makes about half of all forecasts busts. */}
-                  A district-day is a bust if any one of its {bustVars} variables busts, and each
-                  does on {Math.round((1 - q) * 100)}% of training forecasts by construction. Were the{" "}
-                  {bustVars} independent, {Math.round((1 - q ** bustVars) * 100)}% of district-days
-                  would bust; they move together, and on the held-out year{" "}
-                  <b>{Math.round(clf.bust_rate * 100)}%</b> did.
+                  {rich("mp.anyVar", {
+                    k: bustVars,
+                    each: Math.round((1 - q) * 100),
+                    indep: Math.round((1 - q ** bustVars) * 100),
+                    actual: Math.round(clf.bust_rate * 100),
+                  }, [<b />])}
                 </p>
               ) : null}
               {cuts ? (
                 <p className="muted small">
-                  A region is flagged <b>watch</b> above{" "}
-                  <b className="mono">{(cuts.medium * 100).toFixed(0)}%</b> and <b>bust</b> above{" "}
-                  <b className="mono">{(cuts.high * 100).toFixed(0)}%</b>.
+                  {rich("mp.flagged", { w: (cuts.medium * 100).toFixed(0), b: (cuts.high * 100).toFixed(0) },
+                    [<b />, <b className="mono" />])}
                 </p>
               ) : null}
             </section>
@@ -258,22 +240,22 @@ export function ModelPage() {
           {Object.keys(regressors).length ? (
             <section className="card card--table">
               <header className="card__head">
-                <h3>Error per variable, against a baseline that always predicts the average error</h3>
+                <h3>{translate("mp.errTitle")}</h3>
               </header>
               <div className="tablewrap">
                 <table className="dtable">
                   <thead>
                     <tr>
-                      <th>Variable</th>
+                      <th>{translate("mp.colVar")}</th>
                       <th className="dtable__num">MAE</th>
-                      <th className="dtable__num">Baseline MAE</th>
-                      <th className="dtable__num">Skill</th>
+                      <th className="dtable__num">{translate("mp.colBaseMae")}</th>
+                      <th className="dtable__num">{translate("mp.colSkill")}</th>
                       {/* Dropped on a phone. Skill is the column this table exists to
                         * show, and at 390px it was the one pushed off the right edge
                         * behind a scroll with no affordance. See .dtable__opt. */}
                       <th className="dtable__num dtable__opt">RMSE</th>
                       <th className="dtable__num dtable__opt">R²</th>
-                      <th className="dtable__num dtable__opt">forecasts</th>
+                      <th className="dtable__num dtable__opt">{translate("mp.colForecasts")}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -297,12 +279,7 @@ export function ModelPage() {
                 </table>
               </div>
               <p className="muted small">
-                The baseline predicts the same error for every forecast - the average over the
-                rows being scored - so it cannot tell one forecast from another. Skill = 1 − MAE ÷
-                baseline MAE: the share of its error the model removes. Positive is better than
-                the baseline. MAE is the average miss,
-                RMSE the same thing but weighted towards the big misses, and R² the share of
-                the variation the model accounts for.
+                {translate("mp.errNote")}
               </p>
             </section>
           ) : null}
@@ -311,14 +288,12 @@ export function ModelPage() {
             * / classifier read on Operations. That card links here for exactly this. */}
           {data.baselines?.models?.length ? (
             <section className="card card--table">
-              <header className="card__head"><h3>Every baseline, compared to climatology</h3></header>
+              <header className="card__head"><h3>{translate("mp.ladderTitle")}</h3></header>
               <p className="muted small">
-                Each baseline is fitted on the training split alone and scored on the same
-                held-out rows as the classifier. Skill vs climatology is 0.000 for simply
-                guessing the long-run bust rate every time; higher is better.
+                {translate("mp.ladderNote")}
               </p>
               <BaselineLadderTable baselines={data.baselines} flagLeadDay />
-              <p className="muted small">↓ lower is better · ↑ higher is better</p>
+              <p className="muted small">{translate("mp.arrows")}</p>
             </section>
           ) : null}
 
@@ -374,5 +349,8 @@ function num(v: unknown, digits: number): string {
 }
 
 function pct(v: ModelStatusResponse["thresholds"]["threshold_percentile"]): string {
-  return typeof v === "number" ? `${(v <= 1 ? v * 100 : v).toFixed(0)}th` : "configured";
+  if (typeof v !== "number") return translate("mp.configured");
+  const n = (v <= 1 ? v * 100 : v).toFixed(0);
+  // "90th" is an English ordinal; the Indian-language sentences read "90 percentile".
+  return locale() === "en-GB" ? `${n}th` : n;
 }

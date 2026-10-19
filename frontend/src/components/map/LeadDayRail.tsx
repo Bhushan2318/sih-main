@@ -1,3 +1,4 @@
+import { translate } from "../../i18n";
 import { useMemo } from "react";
 import type { AllRegionsResponse, RegionsResponse } from "../../api/types";
 import { variableLabel } from "../../lib/displayNames";
@@ -20,10 +21,10 @@ export function LeadDayRail({ all, value, onChange, riskCuts }: {
   const peak = Math.max(...rows.map((r) => r.mean));
 
   return (
-    <aside className="rail" aria-label="Forecast horizon">
-      <h3 className="rail__title">Bust risk by day</h3>
+    <aside className="rail" aria-label={translate("rail.aria")}>
+      <h3 className="rail__title">{translate("rail.title")}</h3>
 
-      <div className="rail__rows" role="group" aria-label="Lead day">
+      <div className="rail__rows" role="group" aria-label={translate("lead.label")}>
         {rows.map((r) => (
           <button
             key={r.lead}
@@ -31,7 +32,7 @@ export function LeadDayRail({ all, value, onChange, riskCuts }: {
             aria-pressed={r.lead === value}
             className={r.lead === value ? "railrow railrow--active" : "railrow"}
             onClick={() => onChange(r.lead)}
-            title={`${dayLabel(r.lead)}: ${r.bust} bust, ${r.watch} watch, ${r.low} low`}
+            title={translate("rail.rowTitle", { day: dayLabel(r.lead), bust: r.bust, watch: r.watch, low: r.low })}
           >
             <span className="railrow__day">{dayLabel(r.lead)}</span>
 
@@ -46,20 +47,20 @@ export function LeadDayRail({ all, value, onChange, riskCuts }: {
             </span>
 
             <span className="railrow__meta">
-              {r.bust} bust · {r.watch} watch{r.driver ? ` · ${variableLabel(r.driver)}` : ""}
+              {translate("rail.meta", { bust: r.bust, watch: r.watch })}{r.driver ? ` · ${variableLabel(r.driver)}` : ""}
             </span>
           </button>
         ))}
       </div>
 
       <p className="rail__key">
-        <b><i className="railrow__seg--low" />low</b>
-        <b><i className="railrow__seg--watch" />watch</b>
-        <b><i className="railrow__seg--bust" />bust</b>
+        <b><i className="railrow__seg--low" />{translate("band.low")}</b>
+        <b><i className="railrow__seg--watch" />{translate("band.medium")}</b>
+        <b><i className="railrow__seg--bust" />{translate("band.high")}</b>
       </p>
 
       <p className="rail__note">
-        How many regions fall in each band at each lead day, and their average bust risk.
+        {translate("rail.note")}
       </p>
 
       {drivers ? <p className="rail__driver">{drivers}</p> : null}
@@ -120,12 +121,12 @@ function driverRuns(rows: Row[]): string | null {
     else runs.push({ driver: r.driver as string, from: r.lead, to: r.lead });
   }
 
-  if (runs.length === 1) return `${pretty(runs[0].driver)} is the main cause at every lead day.`;
+  if (runs.length === 1) return translate("rail.oneCause", { v: variableLabel(runs[0].driver) });
 
-  if (runs.length > 3) return `The main cause changes ${runs.length - 1} times across the ten days.`;
-  return `Mostly driven by: ${runs.map((r) => `${pretty(r.driver)} ${span(r)}`).join(", then ")}.`;
+  if (runs.length > 3) return translate("rail.manyCauses", { n: runs.length - 1 });
+  return translate("rail.mostly", { list: runs.map((r) => translate("rail.item", { v: pretty(r.driver), span: span(r) })).join(translate("rail.then")) });
 }
 
-const span = (r: { from: number; to: number }) => (r.from === r.to ? `on ${dayLabel(r.from)}` : dayRange(r.from, r.to));
+const span = (r: { from: number; to: number }) => (r.from === r.to ? translate("rail.on", { day: dayLabel(r.from) }) : dayRange(r.from, r.to));
 
 const pretty = (v: string) => variableLabel(v).toLowerCase();

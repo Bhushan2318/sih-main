@@ -1,4 +1,7 @@
+import { translate } from "../../i18n";
 import { useState } from "react";
+import { rich } from "../../i18n/rich";
+
 import type { MissCase, ModelStatusResponse } from "../../api/types";
 import { variableLabel, variableUnit } from "../../lib/displayNames";
 import { dayLabel } from "../../lib/format";
@@ -28,12 +31,9 @@ export function MissesCard({ data }: { data?: ModelStatusResponse }) {
 
   if (!missed.length && !alarms.length) {
     return (
-      <section className="card" aria-label="Where it was wrong">
-        <header className="card__head"><h3>Where it was wrong</h3></header>
-        <p className="muted small">
-          This run was scored before these were recorded. They appear after the next
-          retrain.
-        </p>
+      <section className="card" aria-label={translate("miss.title")}>
+        <header className="card__head"><h3>{translate("miss.title")}</h3></header>
+        <p className="muted small">{translate("miss.notYet")}</p>
       </section>
     );
   }
@@ -41,36 +41,30 @@ export function MissesCard({ data }: { data?: ModelStatusResponse }) {
   const cases = mode === "missed" ? missed : alarms;
 
   return (
-    <section className="card misses" aria-label="Where it was wrong">
+    <section className="card misses" aria-label={translate("miss.title")}>
       <header className="card__head">
-        <h3>Where it was wrong</h3>
+        <h3>{translate("miss.title")}</h3>
       </header>
 
-      <div className="misses__switch" role="tablist" aria-label="Kind of mistake">
+      <div className="misses__switch" role="tablist" aria-label={translate("miss.kind")}>
         <button
           type="button" role="tab" aria-selected={mode === "missed"}
           className={mode === "missed" ? "misses__tab is-on" : "misses__tab"}
           onClick={() => setMode("missed")}
         >
-          Busts it missed
+          {translate("miss.missed")}
         </button>
         <button
           type="button" role="tab" aria-selected={mode === "alarms"}
           className={mode === "alarms" ? "misses__tab is-on" : "misses__tab"}
           onClick={() => setMode("alarms")}
         >
-          False alarms
+          {translate("miss.alarms")}
         </button>
       </div>
 
       <p className="muted small">
-        {mode === "missed" ? (
-          <>It busted, and this model said it probably would not. The costly kind — a
-            forecaster reading this got no warning.</>
-        ) : (
-          <>It did not bust, and this model said it would. These cost trust rather than
-            money, and a model with none of them is one that never warns about anything.</>
-        )}
+        {mode === "missed" ? translate("miss.missedBody") : translate("miss.alarmsBody")}
       </p>
 
       <ul className="misses__list">
@@ -78,9 +72,7 @@ export function MissesCard({ data }: { data?: ModelStatusResponse }) {
       </ul>
 
       <p className="muted small">
-        The {cases.length} most confidently wrong calls on the{" "}
-        <b>{misses?.split ?? "held-out"}</b> split — forecast cycles this model never
-        trained on. Ranked by the model&apos;s own confidence, not chosen.
+        {rich("miss.footer", { n: cases.length, split: misses?.split ?? translate("miss.heldOut") }, [<b />])}
       </p>
     </section>
   );
@@ -99,18 +91,17 @@ function MissRow({ c, mode }: { c: MissCase; mode: Mode }) {
         </span>
       </div>
       <p className="missrow__body">
-        Said <b className={mode === "missed" ? "missrow__low" : "missrow__high"}>{pct}%</b>
-        {mode === "missed" ? " — and it busted" : " — and it held"}
+        {rich(mode === "missed" ? "miss.saidBusted" : "miss.saidHeld", { pct },
+          [<b className={mode === "missed" ? "missrow__low" : "missrow__high"} />])}
         {c.variable ? (
           <>
-            {" "}on <b>{variableLabel(c.variable).toLowerCase()}</b>
-            {c.actual_error != null && c.threshold != null ? (
-              <>
-                , off by <b className="mono">{c.actual_error.toFixed(2)}{unit ? ` ${unit}` : ""}</b>
-                {" "}against a threshold of{" "}
-                <span className="mono">{c.threshold.toFixed(2)}{unit ? ` ${unit}` : ""}</span>
-              </>
-            ) : null}
+            {rich("miss.on", { v: variableLabel(c.variable).toLowerCase() }, [<b />])}
+            {c.actual_error != null && c.threshold != null
+              ? rich("miss.off", {
+                  err: `${c.actual_error.toFixed(2)}${unit ? ` ${unit}` : ""}`,
+                  thr: `${c.threshold.toFixed(2)}${unit ? ` ${unit}` : ""}`,
+                }, [<b className="mono" />, <span className="mono" />])
+              : null}
           </>
         ) : null}.
       </p>

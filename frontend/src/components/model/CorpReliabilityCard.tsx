@@ -1,3 +1,4 @@
+import { translate } from "../../i18n";
 import {
   CartesianGrid, Line, LineChart, ReferenceLine, ResponsiveContainer,
   Tooltip, XAxis, YAxis,
@@ -29,12 +30,9 @@ export function CorpReliabilityCard({ data }: { data?: ModelStatusResponse }) {
 
   if (!blocks.length) {
     return (
-      <section className="card" aria-label="CORP reliability">
-        <header className="card__head"><h3>Is a 70% really a 70%?</h3></header>
-        <p className="muted small">
-          This run was scored before the CORP diagram existed. It appears after the next
-          retrain.
-        </p>
+      <section className="card" aria-label={translate("corp.aria")}>
+        <header className="card__head"><h3>{translate("corp.title")}</h3></header>
+        <p className="muted small">{translate("corp.notYet")}</p>
       </section>
     );
   }
@@ -48,15 +46,13 @@ export function CorpReliabilityCard({ data }: { data?: ModelStatusResponse }) {
   const total = blocks.reduce((s, b) => s + b.n, 0);
 
   return (
-    <section className="card corpcard" aria-label="CORP reliability">
+    <section className="card corpcard" aria-label={translate("corp.aria")}>
       <header className="card__head">
-        <h3>Is a 70% really a 70%?</h3>
+        <h3>{translate("corp.title")}</h3>
       </header>
 
       <p className="muted small">
-        Forecast probability against how often it actually busted. On the dashed line,
-        the numbers mean what they say. Below it the model is over-confident, above it
-        under-confident.
+        {translate("corp.intro")}
       </p>
 
       <div className="corpcard__chart">
@@ -85,9 +81,7 @@ export function CorpReliabilityCard({ data }: { data?: ModelStatusResponse }) {
       </div>
 
       <p className="muted small">
-        {blocks.length.toLocaleString()} blocks over {total.toLocaleString()} held-out
-        forecasts, pooled by isotonic regression rather than into bins of a chosen width
-        — so the shape is the data&apos;s, not a binning choice.
+        {translate("corp.foot", { blocks: blocks.length.toLocaleString(), n: total.toLocaleString() })}
       </p>
     </section>
   );
@@ -101,9 +95,9 @@ function CorpTip({ active, payload }: {
   const p = payload[0].payload;
   return (
     <div className="charttip">
-      <strong>Said {p.predicted.toFixed(0)}%</strong>
-      <span>busted {p.observed.toFixed(0)}% of the time</span>
-      <span className="charttip__meta">{p.n.toLocaleString()} forecasts in this block</span>
+      <strong>{translate("corp.said", { p: p.predicted.toFixed(0) })}</strong>
+      <span>{translate("corp.busted", { p: p.observed.toFixed(0) })}</span>
+      <span className="charttip__meta">{translate("corp.block", { n: p.n.toLocaleString() })}</span>
     </div>
   );
 }

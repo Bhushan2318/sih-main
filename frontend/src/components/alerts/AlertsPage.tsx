@@ -1,3 +1,5 @@
+import { rich } from "../../i18n/rich";
+import { translate } from "../../i18n";
 import { useEffect, useMemo, useState } from "react";
 import type { Alert, RiskBand } from "../../api/types";
 import { stamp } from "../../format";
@@ -116,16 +118,16 @@ export function AlertsPage({ onSelect, filter, onFilter, stateNames }: {
     <main className="page page--wide">
       <header className="pagehead">
         <div>
-          <h1 className="pagehead__title">Alerts</h1>
+          <h1 className="pagehead__title">{translate("nav.alerts")}</h1>
           <p className="pagehead__sub">
-            Every region above the watch level in the current forecast run, worst first.
-            {stats && stats.total >= LIMIT ? ` Capped at the ${LIMIT} most severe.` : ""}
+            {translate("al.sub")}
+            {stats && stats.total >= LIMIT ? translate("al.capped", { n: LIMIT }) : ""}
           </p>
         </div>
         <div className="filters">
           {alerts?.length ? (
             <button type="button" className="chip" onClick={downloadCsv}>
-              Download CSV
+              {translate("al.csv")}
             </button>
           ) : null}
           {(["high", "medium"] as RiskBand[]).map((b) => (
@@ -141,13 +143,13 @@ export function AlertsPage({ onSelect, filter, onFilter, stateNames }: {
         </div>
       </header>
 
-      {isLoading ? <LoadingState label="Loading alerts…" hint={retryingHint(failureCount)} /> : null}
+      {isLoading ? <LoadingState label={translate("al.loading")} hint={retryingHint(failureCount)} /> : null}
       {error ? <ErrorState error={error} /> : null}
-      {data && !data.model_trained ? <EmptyState title="No alerts yet" message={data.message} /> : null}
+      {data && !data.model_trained ? <EmptyState title={translate("al.noAlerts")} message={data.message} /> : null}
       {data?.model_trained && !alerts?.length ? (
         <EmptyState
-          title="No watch or bust regions"
-          message="Every region in the current cycle scored low."
+          title={translate("al.noneTitle")}
+          message={translate("al.noneMsg")}
         />
       ) : null}
 
@@ -155,31 +157,31 @@ export function AlertsPage({ onSelect, filter, onFilter, stateNames }: {
         <div className="kpis kpis--flush">
           {totals ? (
             <>
-              <Stat cap="bust" label="In the bust band" value={totals.bust.toLocaleString("en-IN")}
-                note={<>district-days across all <b>{totals.days}</b> lead days</>} />
-              <Stat cap="watch" label="In the watch band" value={totals.watch.toLocaleString("en-IN")}
-                note={<><b>{totals.districts}</b> districts on alert at least once</>} />
+              <Stat cap="bust" label={translate("al.inBust")} value={totals.bust.toLocaleString("en-IN")}
+                note={rich("al.distDays", { n: totals.days }, [<b />])} />
+              <Stat cap="watch" label={translate("al.inWatch")} value={totals.watch.toLocaleString("en-IN")}
+                note={rich("al.onAlert", { n: totals.districts }, [<b />])} />
             </>
           ) : (
             <>
-              <Stat cap="bust" label="In the bust band" value={String(stats.bust)}
-                note={<>of <b>{stats.total}</b> alerts shown</>} />
-              <Stat cap="watch" label="In the watch band" value={String(stats.watch)}
-                note={<>across <b>{stats.regions}</b> distinct regions</>} />
+              <Stat cap="bust" label={translate("al.inBust")} value={String(stats.bust)}
+                note={rich("al.ofShown", { n: stats.total }, [<b />])} />
+              <Stat cap="watch" label={translate("al.inWatch")} value={String(stats.watch)}
+                note={rich("al.distinct", { n: stats.regions }, [<b />])} />
             </>
           )}
-          <Stat cap="blue" label="Peak bust risk" value={`${(stats.peak.bust_probability * 100).toFixed(0)}%`}
-            note={<><b>{stats.peak.region_name ?? stats.peak.region_id}</b> · {dayLabel(stats.peak.lead_time_days)}</>} />
+          <Stat cap="blue" label={translate("al.peak")} value={`${(stats.peak.bust_probability * 100).toFixed(0)}%`}
+            note={rich("al.peakNote", { name: stats.peak.region_name ?? stats.peak.region_id, day: dayLabel(stats.peak.lead_time_days) }, [<b />])} />
           {totals ? (
-            <Stat cap="blue" label="Most common cause" value={variableLabel(totals.topDriver?.[0]) || "—"}
+            <Stat cap="blue" label={translate("al.topCause")} value={variableLabel(totals.topDriver?.[0]) || "—"}
               note={totals.topDriver
-                ? <>the main cause in <b>{totals.topDriver[1].toLocaleString("en-IN")}</b> of {(totals.bust + totals.watch).toLocaleString("en-IN")} alert district-days</>
-                : <>no dominant variable recorded</>} />
+                ? rich("al.topNoteTotals", { n: totals.topDriver[1].toLocaleString("en-IN"), total: (totals.bust + totals.watch).toLocaleString("en-IN") }, [<b />])
+                : translate("al.noDriver")} />
           ) : (
-            <Stat cap="blue" label="Most common cause" value={variableLabel(stats.topDriver?.[0]) || "—"}
+            <Stat cap="blue" label={translate("al.topCause")} value={variableLabel(stats.topDriver?.[0]) || "—"}
               note={stats.topDriver
-                ? <>the main cause in <b>{stats.topDriver[1]}</b> of {stats.total}</>
-                : <>no dominant variable recorded</>} />
+                ? rich("al.topNote", { n: stats.topDriver[1], total: stats.total }, [<b />])
+                : translate("al.noDriver")} />
           )}
         </div>
       ) : null}
@@ -192,17 +194,17 @@ export function AlertsPage({ onSelect, filter, onFilter, stateNames }: {
                 type="search"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Find a district or state…"
-                aria-label="Find a district or state"
+                placeholder={translate("al.find")}
+                aria-label={translate("al.findAria")}
               />
             </div>
             <select
               className="alerts-statefilter"
               value={stateFilter}
               onChange={(e) => setStateFilter(e.target.value)}
-              aria-label="Filter by state"
+              aria-label={translate("al.stateAria")}
             >
-              <option value="">All states</option>
+              <option value="">{translate("al.allStates")}</option>
               {stateOptions.map((s) => (
                 <option key={s.id} value={s.id}>{s.name}</option>
               ))}
@@ -213,17 +215,17 @@ export function AlertsPage({ onSelect, filter, onFilter, stateNames }: {
               aria-pressed={groupByDistrict}
               onClick={() => setGroupByDistrict((g) => !g)}
             >
-              One row per district
+              {translate("al.group")}
             </button>
           </div>
 
           {rows && rows.length === 0 ? (
             <EmptyState
-              title="No matches"
-              message="No alerts match this search or state filter."
+              title={translate("al.noMatch")}
+              message={translate("al.noMatchMsg")}
               action={
                 <button type="button" className="chip" onClick={clearFilters}>
-                  Clear filters
+                  {translate("al.clear")}
                 </button>
               }
             />
@@ -233,14 +235,14 @@ export function AlertsPage({ onSelect, filter, onFilter, stateNames }: {
                 <table className="dtable dtable--spread">
                   <thead>
                     <tr>
-                      <th>Region</th>
-                      <th className="dtable__num">Lead</th>
+                      <th>{translate("al.colRegion")}</th>
+                      <th className="dtable__num">{translate("al.colLead")}</th>
                       {/* Dropped on a phone: the date is lead + cycle, and the band is a
                         * restatement of the risk column beside it. See .dtable__opt. */}
-                      <th className="dtable__opt">Valid date</th>
-                      <th className="dtable__num">Bust risk</th>
-                      <th className="dtable__opt">Band</th>
-                      <th>Main cause</th>
+                      <th className="dtable__opt">{translate("al.colValid")}</th>
+                      <th className="dtable__num">{translate("al.colRisk")}</th>
+                      <th className="dtable__opt">{translate("al.colBand")}</th>
+                      <th>{translate("al.colCause")}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -262,7 +264,7 @@ export function AlertsPage({ onSelect, filter, onFilter, stateNames }: {
                           {a.region_name ?? a.region_id}
                           {"days_on_alert" in a ? (
                             <span className="muted small">
-                              {" "}· on alert {a.days_on_alert} day{a.days_on_alert === 1 ? "" : "s"}
+                              {translate(a.days_on_alert === 1 ? "al.daysOne" : "al.daysMany", { n: a.days_on_alert })}
                             </span>
                           ) : null}
                         </td>
@@ -281,20 +283,20 @@ export function AlertsPage({ onSelect, filter, onFilter, stateNames }: {
               {remaining > 0 ? (
                 <div className="tablemore">
                   <button type="button" className="chip" onClick={() => setShown((n) => n + PAGE)}>
-                    Show {Math.min(PAGE, remaining)} more
+                    {translate("al.more", { n: Math.min(PAGE, remaining) })}
                   </button>
                   <button type="button" className="chip" onClick={() => setShown(rows!.length)}>
-                    Show all {rows!.length}
+                    {translate("pipe.all", { n: rows!.length })}
                   </button>
                   <span className="muted small">
-                    Showing <b>{visible.length}</b> of <b>{rows!.length}</b>, worst first
-                    {isFiltered ? <> · filtered from {alerts.length}</> : null}
+                    {rich("al.showing", { a: visible.length, b: rows!.length }, [<b />])}
+                    {isFiltered ? translate("al.filteredFrom", { n: alerts.length }) : null}
                   </span>
                 </div>
               ) : isFiltered && rows?.length ? (
                 <div className="tablemore">
                   <span className="muted small">
-                    Showing <b>{visible.length}</b> of <b>{rows.length}</b>, filtered from {alerts.length}
+                    {rich("al.showingFiltered", { a: visible.length, b: rows.length, n: alerts.length }, [<b />])}
                   </span>
                 </div>
               ) : null}
@@ -304,7 +306,7 @@ export function AlertsPage({ onSelect, filter, onFilter, stateNames }: {
       ) : null}
 
       {data?.generated_at ? (
-        <p className="pagefoot">Generated {stamp(data.generated_at)}</p>
+        <p className="pagefoot">{translate("al.generated", { when: stamp(data.generated_at) })}</p>
       ) : null}
     </main>
   );

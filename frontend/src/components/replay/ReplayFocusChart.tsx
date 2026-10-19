@@ -1,3 +1,4 @@
+import { translate } from "../../i18n";
 import {
   Area, CartesianGrid, ComposedChart, Legend, Line, ReferenceLine, ResponsiveContainer,
   Tooltip, XAxis, YAxis,
@@ -11,7 +12,7 @@ import { CHART } from "../../theme";
 export function ReplayFocusChart({
   focus,
   currentLead,
-  why = "biggest driver across this whole run",
+  why,
 }: {
   focus: ReplayFocusSeries;
   currentLead: number;
@@ -37,7 +38,7 @@ export function ReplayFocusChart({
         <span className="muted small">
           {variableLabel(focus.variable)}
           {focus.unit ? ` · ${focus.unit}` : ""}
-          <span className="muted"> · {why}</span>
+          <span className="muted"> · {why ?? translate("focus.why")}</span>
         </span>
       </div>
       <ResponsiveContainer width="100%" height={220}>
@@ -46,7 +47,7 @@ export function ReplayFocusChart({
           <XAxis dataKey="lead" tickFormatter={dayLabel} />
           <YAxis width={58} domain={yDomainForVariable(focus.variable)} tickFormatter={axisTick} />
           <Tooltip
-            labelFormatter={(l) => `Lead day ${l}`}
+            labelFormatter={(l) => translate("lead.day", { d: l })}
             formatter={(v: unknown) => {
 
               const one = (x: unknown) =>
@@ -57,23 +58,23 @@ export function ReplayFocusChart({
           />
           <Legend />
           <ReferenceLine x={currentLead} stroke={CHART.marker} strokeWidth={2}
-            label={{ value: `Day ${currentLead}`, position: "top", fontSize: 10, fill: CHART.marker }} />
+            label={{ value: translate("day.one", { n: currentLead }), position: "top", fontSize: 10, fill: CHART.marker }} />
           {thr != null ? (
-            <Area type="monotone" dataKey="band" name={`Close enough — not a bust (±${formatByMagnitude(thr)})`}
+            <Area type="monotone" dataKey="band" name={translate("focus.close", { thr: formatByMagnitude(thr) })}
               stroke="none" fill={CHART.observed} fillOpacity={0.07} connectNulls={false}
               activeDot={false} isAnimationActive={false} legendType="rect"
               tooltipType="none" />
           ) : null}
-          <Line type="monotone" dataKey="forecast" name="Forecast (ensemble average)"
+          <Line type="monotone" dataKey="forecast" name={translate("traj.forecast")}
             stroke={CHART.forecast} strokeWidth={2} dot={{ r: 2 }} />
           {anyObserved ? (
-            <Line type="monotone" dataKey="observed" name="Observed"
+            <Line type="monotone" dataKey="observed" name={translate("traj.observed")}
               stroke={CHART.observed} strokeWidth={2} strokeDasharray="6 4" dot={{ r: 2 }} connectNulls={false} />
           ) : null}
         </ComposedChart>
       </ResponsiveContainer>
       {!anyObserved ? (
-        <p className="muted small">This cycle has not verified, so no observed values are drawn.</p>
+        <p className="muted small">{translate("focus.unverified")}</p>
       ) : null}
     </div>
   );

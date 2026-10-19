@@ -1,3 +1,4 @@
+import { translateKey } from "../i18n";
 import type { ModelStatusResponse } from "../api/types";
 
 type Baselines = NonNullable<ModelStatusResponse["baselines"]>;
@@ -54,16 +55,7 @@ export function bestBaseline(models: BaselineModel[] | undefined): BaselineModel
 
 /** The ladder's rungs by name, in words. The raw name stays available as a tooltip for
  * anyone checking against baselines.json. */
-const RUNG_LABELS: Record<string, string> = {
-  climatology: "Climatology",
-  lead_day: "Lead day only",
-  spread: "Ensemble spread",
-  "lead+spread+season": "Lead + spread + season",
-  analog: "Analogues",
-  EMOS: "EMOS",
-  IDR: "IDR",
-};
-
 export function rungLabel(name: string): string {
-  return RUNG_LABELS[name] ?? name;
+  // EMOS and IDR are method names, kept as they are in every language.
+  return translateKey(`rung.${name}`) ?? name;
 }

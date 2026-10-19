@@ -1,3 +1,5 @@
+import { rich } from "../../i18n/rich";
+import { translate } from "../../i18n";
 import { useQueryClient } from "@tanstack/react-query";
 import { useRef, useState } from "react";
 import { confirmMapping, uploadFile } from "../../api/upload";
@@ -61,7 +63,7 @@ export function UploadPanel() {
 
   return (
     <section className="card">
-      <header className="card__head"><h3>Upload data</h3></header>
+      <header className="card__head"><h3>{translate("up.title")}</h3></header>
 
       <div
         className={dragging ? "dropzone dropzone--over" : "dropzone"}
@@ -89,7 +91,7 @@ export function UploadPanel() {
             e.target.value = "";
           }}
         />
-        {phase === "uploading" ? "Working…" : "Drop a CSV / TSV / XLSX / JSON file, or click to choose"}
+        {phase === "uploading" ? translate("up.working") : translate("up.drop")}
       </div>
 
       {phase === "error" && error ? <p className="notice notice--error">{error}</p> : null}
@@ -97,21 +99,20 @@ export function UploadPanel() {
       {phase === "done" && result ? (
         <div className="upload-result">
           <p>
-            Ingested <b>{result.row_count_ingested.toLocaleString()}</b> canonical rows from{" "}
-            {result.row_count_raw.toLocaleString()} raw rows
-            {result.skipped_rows ? ` (${result.skipped_rows} skipped)` : ""}.
+            {rich("up.ingested", { n: result.row_count_ingested.toLocaleString(), raw: result.row_count_raw.toLocaleString() }, [<b />])}
+            {result.skipped_rows ? translate("up.skipped", { n: result.skipped_rows }) : ""}.
           </p>
           {result.canonical_variables_found.length ? (
-            <p className="muted small">Variables: {result.canonical_variables_found.join(", ")}</p>
+            <p className="muted small">{translate("up.vars", { list: result.canonical_variables_found.join(", ") })}</p>
           ) : null}
           <p className="muted small">
-            Region resolution {(result.region_resolution_rate * 100).toFixed(0)}%
-            {result.source_profile_match !== "none" ? ` · mapping reused (${result.source_profile_match} profile match)` : ""}
+            {translate("up.resolution", { pct: (result.region_resolution_rate * 100).toFixed(0) })}
+            {result.source_profile_match !== "none" ? translate("up.reused", { match: result.source_profile_match }) : ""}
           </p>
-          {result.status === "training_started" ? <p className="notice">Retraining started…</p> : null}
+          {result.status === "training_started" ? <p className="notice">{translate("up.training")}</p> : null}
           {result.notes.length ? (
             <details>
-              <summary className="muted small">Ingestion notes ({result.notes.length})</summary>
+              <summary className="muted small">{translate("up.notes", { n: result.notes.length })}</summary>
               <ul className="notes">{result.notes.map((n, i) => <li key={i}>{n}</li>)}</ul>
             </details>
           ) : null}

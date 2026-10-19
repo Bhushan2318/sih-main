@@ -1,3 +1,4 @@
+import { translate } from "../../i18n";
 import type { ReplayCycleSummary } from "../../api/types";
 import { formatByMagnitude } from "../../lib/format";
 
@@ -17,16 +18,16 @@ export function ReplayCyclePicker({
   const forecasts = cycles.filter((c) => c.kind !== "event");
   return (
     <div className="replay__pick">
-      <label htmlFor="replay-cycle" className="muted small">Forecast cycle</label>
+      <label htmlFor="replay-cycle" className="muted small">{translate("pick.label")}</label>
       <select id="replay-cycle" value={value} onChange={(e) => onChange(e.target.value || undefined)}>
         {events.length ? (
           <>
-            <optgroup label="Past events · outcome known">
+            <optgroup label={translate("pick.events")}>
               {events.map((c) => (
                 <option key={c.init_date} value={c.init_date}>{c.title ?? c.init_date}</option>
               ))}
             </optgroup>
-            <optgroup label="Recent forecasts">{forecasts.map(forecastOption)}</optgroup>
+            <optgroup label={translate("pick.recent")}>{forecasts.map(forecastOption)}</optgroup>
           </>
         ) : (
           forecasts.map(forecastOption)
@@ -41,13 +42,13 @@ function forecastOption(c: ReplayCycleSummary) {
     <option key={c.init_date} value={c.init_date}>
       {c.init_date}
       {c.verified
-        ? ` · outcome known for ${c.verified_lead_days} day${c.verified_lead_days === 1 ? "" : "s"}`
-        : " · outcome not yet known"}
+        ? translate(c.verified_lead_days === 1 ? "pick.knownOne" : "pick.knownMany", { n: c.verified_lead_days ?? 0 })
+        : translate("pick.unknown")}
       {c.peak_bust_probability != null
-        ? ` · peak risk ${(c.peak_bust_probability * 100).toFixed(0)}%`
+        ? translate("pick.peak", { pct: (c.peak_bust_probability * 100).toFixed(0) })
         : ""}
       {c.peak_region_abs_error != null
-        ? ` · actual error there: ${formatByMagnitude(c.peak_region_abs_error)}${c.peak_region_unit ? ` ${c.peak_region_unit}` : ""}`
+        ? translate("pick.err", { err: `${formatByMagnitude(c.peak_region_abs_error)}${c.peak_region_unit ? ` ${c.peak_region_unit}` : ""}` })
         : ""}
     </option>
   );

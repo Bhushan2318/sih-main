@@ -1,3 +1,4 @@
+import { translate } from "../i18n";
 import type { RegionSummary, RiskBand } from "../api/types";
 import { bandLabel } from "../theme";
 import { variableLabel } from "./displayNames";
@@ -22,8 +23,8 @@ export function tooltipPlacement(x: number, y: number, wrapWidth: number):
 /** A scored district's tooltip body. */
 export function districtTooltipLines(region: RegionSummary, band: RiskBand | null): string[] {
   return [
-    `Bust probability: ${((region.bust_probability ?? 0) * 100).toFixed(1)}% (${bandLabel(band)})`,
-    region.dominant_variable ? `Driver: ${variableLabel(region.dominant_variable)}` : "",
-    region.confidence != null ? `Mean confidence: ${(region.confidence * 100).toFixed(0)}%` : "",
+    translate("tip.prob", { pct: ((region.bust_probability ?? 0) * 100).toFixed(1), band: bandLabel(band) }),
+    region.dominant_variable ? translate("tip.driver", { v: variableLabel(region.dominant_variable) }) : "",
+    region.confidence != null ? translate("tip.conf", { pct: (region.confidence * 100).toFixed(0) }) : "",
   ].filter(Boolean);
 }

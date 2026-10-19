@@ -21,9 +21,11 @@
   --bust: #f5254a;
   --bust-wash: #ffe2e8;
 
-  --f-d: "Archivo", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --f-b: "Public Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --f-m: "DM Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  /* Set by i18n when an Indian-language UI is picked; empty otherwise. */
+  --f-script: system-ui;
+  --f-d: "Archivo", var(--f-script), system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --f-b: "Public Sans", var(--f-script), system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --f-m: "DM Mono", var(--f-script), ui-monospace, SFMono-Regular, Menlo, monospace;
 
   --topbar-h: 59px;
 
@@ -1402,3 +1404,19 @@ a:focus-visible, button:focus-visible, select:focus-visible, [tabindex]:focus-vi
 
 /* The compact ladder card's link to the Model tab's full comparison. */
 .ladder__more { margin: 0.6rem 0 0; }
+
+/* Language picker: sits after the cycle pills, sized like them. */
+.langpick {
+  font: inherit;
+  font-size: 13px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--line, currentColor);
+  background: transparent;
+  color: inherit;
+}
+
+/* Indian scripts join letters into conjuncts; letter-spacing pulls them apart and an
+   uppercase transform does nothing for them. The Latin-only caption styles above use
+   both, so they are reset for every non-English UI. */
+html[lang]:not([lang="en"]) body * { letter-spacing: normal !important; }

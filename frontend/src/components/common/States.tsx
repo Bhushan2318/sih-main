@@ -1,3 +1,4 @@
+import { translate } from "../../i18n";
 import type { ReactNode } from "react";
 import { API_BASE } from "../../api/client";
 import { bandLabel } from "../../theme";
@@ -21,10 +22,10 @@ export function EmptyState({ title, message, action }: {
  * historical cycle on demand, so a cold request can run for seconds with nothing else on
  * screen - on a phone that is an empty viewport under one line of grey text.
  */
-export function LoadingState({ label = "Loading…", hint }: { label?: string; hint?: string }) {
+export function LoadingState({ label, hint }: { label?: string; hint?: string }) {
   return (
     <div className="state state--loading">
-      {label}
+      {label ?? translate("state.loading")}
       {hint ? <p className="state__hint">{hint}</p> : null}
     </div>
   );
@@ -48,14 +49,14 @@ export function ErrorState({ error }: { error: unknown }) {
   const message = error instanceof Error ? error.message : String(error);
   return (
     <div className="state state--error">
-      <strong>Could not reach the API</strong>
+      <strong>{translate("state.apiDown")}</strong>
       <p>{message}</p>
-      <p className="muted">{API_BASE ? `Is the backend running on ${API_BASE}?` : "The API is served from this same origin, so this is a server-side problem rather than a misconfigured address."}</p>
+      <p className="muted">{API_BASE ? translate("state.apiDownLocal", { base: API_BASE }) : translate("state.apiDownSame")}</p>
     </div>
   );
 }
 
 export function RiskBadge({ band }: { band: string | null }) {
-  if (!band) return <span className="badge badge--unknown">unknown</span>;
+  if (!band) return <span className="badge badge--unknown">{translate("state.unknown")}</span>;
   return <span className={`badge badge--${band}`}>{bandLabel(band)}</span>;
 }
