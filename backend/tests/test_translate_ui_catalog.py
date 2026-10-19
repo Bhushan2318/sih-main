@@ -45,7 +45,8 @@ def test_mask_protects_comparison_signs_and_unmask_repairs_a_dropped_brace():
     masked, toks = tuc.mask("bust ≥ {{b}}% →")
     assert masked == "bust {{1}} {{2}}% {{3}}"
     assert tuc.unmask("बस्ट {{1}} {2}% {{3}}", toks) == "बस्ट ≥ {{b}}% →"
-    assert tuc.unmask("आरओसी-एयूसी {1}}", tuc.mask("ROC-AUC ↑")[1]) == "आरओसी-एयूसी ↑"
+    # ROC-AUC is a protected acronym too, so it takes {{1}} and the arrow {{2}}.
+    assert tuc.unmask("{{1}} {2}}", tuc.mask("ROC-AUC ↑")[1]) == "ROC-AUC ↑"
     assert tuc.unmask("{{{1}} बस्ट", tuc.mask("{{n}} bust")[1]) == "{{n}} बस्ट"
 
 
@@ -78,8 +79,9 @@ def test_glossary_terms_are_masked_and_come_back_as_the_fixed_rendering():
     import re
     gloss = [(re.compile(r"\b[Bb]usts?\b"), "பஸ்ட்"), (re.compile(r"\bwatch\b"), "வாட்ச்")]
     masked, toks = tuc.mask("{{n}} bust · {{w}} watch · Busts caught · Watch it", gloss)
-    assert masked == "{{1}} {{3}} · {{2}} {{4}} · {{3}} caught · Watch it"
-    assert tuc.unmask("{{1}} {{3}} · {{2}} {{4}}", toks) == "{{n}} பஸ்ட் · {{w}} வாட்ச்"
+    # The middle dot is protected too, so it takes a number before the glossary terms do.
+    assert masked == "{{1}} {{4}} {{2}} {{3}} {{5}} {{2}} {{4}} caught {{2}} Watch it"
+    assert tuc.unmask("{{1}} {{4}} {{2}} {{3}} {{5}}", toks) == "{{n}} பஸ்ட் · {{w}} வாட்ச்"
 
 
 def test_shipped_glossary_covers_every_translated_language():
@@ -207,3 +209,25 @@ def test_tidy_keeps_the_englishs_edge_spaces():
     assert tuc.tidy(" · ingested {{when}}", "· {{when}} अंतर्ग्रहण") == " · {{when}} अंतर्ग्रहण"
     assert tuc.tidy("valid {{date}} · ", "वैध {{date}} ·") == "वैध {{date}} · "
     assert tuc.tidy("Alerts", " चेतावनी ") == "चेतावनी"
+
+
+def test_indic_digits_normalise_to_ascii_for_sentinel_matching():
+    assert "৭৩০১ বার".translate(tuc.INDIC_DIGITS) == "7301 বার"
+    assert "७३०२".translate(tuc.INDIC_DIGITS) == "7302"
+
+
+def test_lead_day_is_reworded_for_the_model_and_leading_is_not():
+    assert tuc.reword("x", "Bust risk at lead day {{d}}") == "Bust risk at forecast day {{d}}"
+    assert tuc.reword("x", "Lead day only") == "Forecast day only"
+    assert tuc.reword("x", "Lead + spread + season") == "Forecast day + spread + season"
+    assert tuc.reword("x", "Two leading global weather records") == "Two leading global weather records"
+    assert tuc.reword("x", "Leading driver: {{v}}") == "Main cause: {{v}}"
+    assert tuc.reword("al.colLead", "Lead") == "Forecast day"
+
+
+def test_run_is_reworded_by_sense():
+    assert tuc.reword("x", "How much the forecast changed since the last run") == "How much the forecast changed since the previous forecast"
+    assert tuc.reword("x", "This run was scored before these were recorded.") == "This model version was scored before these were recorded."
+    assert tuc.reword("x", "Latest run's raw log") == "Raw log of the latest attempt"
+    assert tuc.reword("x", "It runs on a free server") == "It is hosted on a free server"
+    assert tuc.reword("x", "skill compared with the long-run average") == "skill compared with the long-term average"

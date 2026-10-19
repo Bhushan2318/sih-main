@@ -55,7 +55,7 @@ def placeholders(text: str) -> list[str]:
     return sorted(PLACEHOLDER.findall(text) + SIGNS.findall(text))
 
 
-SIGNS = re.compile(r"R²|[≥≤±÷−↑↓→←]")
+SIGNS = re.compile(r"R²|[≥≤±÷−↑↓→←·‹›▶]|❚❚")
 
 
 def clean(text: str) -> bool:
@@ -65,7 +65,7 @@ def clean(text: str) -> bool:
 
 
 # Sentence-final marks the model adds to short UI labels ("Alerts" -> "...."), per script.
-FINAL_MARKS = (".", "।", "॥", "۔", "|")
+FINAL_MARKS = (".", "।", "॥", "۔", "|", "?", "؟")
 
 
 NAMED = re.compile(r"\{\{(\w+)\}\}")
@@ -74,7 +74,12 @@ NAMED = re.compile(r"\{\{(\w+)\}\}")
 # File names, URLs and paths too: IndicTransToolkit swaps them for an <ID1> marker of its
 # own and, in Bengali, failed to put "third-party-licenses.txt" back ("<আই. ডি. 1>").
 PROTECTED = re.compile(
-    r"\{\{\w+\}\}|https?://\S+|(?:(?<=\s)|(?<=>)|^)/[a-z][\w./-]*\w|[\w-]+\.(?:txt|json|md|csv|com|org)\b|R²|[≥≤±÷−↑↓→←]"
+    r"\{\{\w+\}\}|https?://\S+|"
+    # Acronyms stay in Latin script (standard in Indian-language technical text); the
+    # model otherwise spelled them out letter by letter ("एम. ए. ई.", "सी. एस. वी.").
+    r"\b(?:ROC-AUC|PR-AUC|MAE|RMSE|CSV|TSV|XLSX|JSON|UTC|IST|HTTP|API|ERA5|GEFSv12|GEFS|NOAA|SHAP|CORP|MJO|"
+    r"IMD|NCMRWF|EMOS|IDR|Z500|C3S|AWS|S3|SMS|GADM|SRTM|CIAT|CGIAR-CSI|OMI|PSL|OLR|MIT|CC-BY 4\.0|"
+    r"OpenAPI|Swagger|FastAPI|XGBoost|React|TypeScript|Parquet|Pydantic|F1)\b|(?:(?<=\s)|(?<=>)|^)/[a-z][\w./-]*\w|[\w-]+\.(?:txt|json|md|csv|com|org)\b|R²|[≥≤±÷−↑↓→←·‹›▶]|❚❚"
 )
 NUMBERED = re.compile(r"\{\{(\d+)\}\}")
 # A lone-brace "{1}": the model sometimes drops one brace of a numbered placeholder.
@@ -91,7 +96,118 @@ def load_sources(en: dict[str, str]) -> dict[str, str]:
     """What the model is given per key: the displayed English, or its plain-English
     rewording from source-hints.json where the English is idiomatic."""
     hints = json.loads(HINTS.read_text()) if HINTS.exists() else {}
-    return {k: hints.get(k, v) for k, v in en.items()}
+    out = {k: hints.get(k, v) for k, v in en.items()}
+    return {k: reword(k, v) for k, v in out.items()}
+
+
+# Terms the model reads in the wrong sense everywhere they appear. "Lead day" (how many
+# days ahead a forecast is) came back as "leading / prominent / main day" (अग्रणी,
+# प्रमुख, ಪ್ರಮುಖ, প্রধান) in most languages; "forecast day" says the same thing plainly.
+REWRITES = [
+    (re.compile(r"\bForecast lead day\b"), "Forecast day"),
+    (re.compile(r"\bLead days\b"), "Forecast days"),
+    (re.compile(r"\bLead day\b"), "Forecast day"),
+    (re.compile(r"\blead days\b"), "forecast days"),
+    (re.compile(r"\blead day\b"), "forecast day"),
+    (re.compile(r"^Lead \+ "), "Forecast day + "),
+    # "Run" came back as "race / running" (दौड़, ஓட்டம், పరుగు, …) in nine languages. It
+    # means four things here; each is said plainly. "Long-run average" translated fine.
+    # - a forecast:
+    (re.compile(r"\bsince the last run\b"), "since the previous forecast"),
+    (re.compile(r"\b([Rr])ecent runs\b"), r"\1ecent forecasts"),
+    (re.compile(r"\bthis run's\b"), "this forecast's"),
+    (re.compile(r"\bForecast runs are\b"), "Forecasts are"),
+    (re.compile(r"\b(this|the current|this whole) forecast run\b"), r"\1 forecast"),
+    (re.compile(r"\bpoints vs run\b"), "points compared with the forecast of"),
+    (re.compile(r"\b(forecast-vs-observed chart|archived GEFS forecast) for this run\b"), r"\1 for this forecast"),
+    (re.compile(r"\bwhole forecast runs are\b"), "all the days of one forecast are"),
+    (re.compile(r"\bon a run it partly\b"), "on a forecast it partly"),
+    # - a model version:
+    (re.compile(r"\bThis run (was scored|recorded)\b"), r"This model version \1"),
+    (re.compile(r"\bfor this run\b"), "for this model version"),
+    (re.compile(r"\bof the current run\b"), "of the current model version"),
+    (re.compile(r"^Run <0>"), "Model version <0>"),
+    (re.compile(r"\bown training run\b"), "own training"),
+    (re.compile(r"\bby the training run\b"), "during training"),
+    # - a pipeline attempt:
+    (re.compile(r"\bskipped runs\b"), "skipped attempts"),
+    (re.compile(r"^Latest run's raw log"), "Raw log of the latest attempt"),
+    # - operating / producing:
+    (re.compile(r"\b([Ii]t|[Tt]his) runs on a free\b"), r"\1 is hosted on a free"),
+    (re.compile(r"^How it runs$"), "How it works"),
+    (re.compile(r"\bTraining runs on CI\b"), "Training is done on CI"),
+    (re.compile(r"\bGEFS runs 31\b"), "GEFS produces 31"),
+    (re.compile(r"\bhistorical re-runs for training\b"), "historical forecasts recomputed for training"),
+    (re.compile(r"\bA re-run archive\b"), "An archive of recomputed forecasts"),
+    (re.compile(r"\bthe forecast model re-run once a day\b"), "the forecast model recomputed once a day"),
+    # "Store" (the data store) came back as "shop" (दुकान); "Parquet store" as "wood shop".
+    (re.compile(r"\b(in the|this) store\b"), r"\1 database"),
+    (re.compile(r"\bhive-partitioned Parquet store\b"), "database of Parquet files"),
+    # Read in the wrong sense in a full Hindi read-through, 20 Oct:
+    # "ensemble" as the verb "assemble" (असहमति इकट्ठा करें), "busted" as "exposed"
+    # (भंडाफोड़), "held" as "organised" (आयोजित), "against" as "opposed to" (खिलाफ),
+    # "drawn" as "made", "pull" as physically pulling, "scored" as "made".
+    (re.compile(r"\bEnsemble disagreement\b"), "Disagreement between the forecast members"),
+    (re.compile(r"\bensemble disagreement\b"), "disagreement between the forecast members"),
+    (re.compile(r"\bensemble average\b"), "average of the forecast members"),
+    (re.compile(r"\bEnsemble members available\b"), "Number of forecast members available"),
+    (re.compile(r"^Ensemble spread$"), "Spread between the forecast members"),
+    (re.compile(r"\bensemble members\b"), "forecast members"),
+    (re.compile(r"\b(compare|chart) its forecast against\b"), r"\1 its forecast with"),
+    (re.compile(r"\bwe compare against\b"), "we compare with"),
+    (re.compile(r"\bagainst\b"), "compared with"),
+    (re.compile(r"— and it busted\b"), "— and the forecast did go badly wrong"),
+    (re.compile(r"— and it held\b"), "— and the forecast stayed reliable"),
+    (re.compile(r"\bhow often it actually busted\b"), "how often a bust actually happened"),
+    (re.compile(r"^busted (\{\{p\}\})% of the time$"), r"a bust happened \1% of the time"),
+    (re.compile(r"\bit actually busted (\{\{p\}\})% of the time\b"), r"a bust actually happened \1% of the time"),
+    (re.compile(r"\b[Hh]eld-out\b"), lambda m: ("Set" if m.group(0)[0] == "H" else "set") + "-aside test"),
+    (re.compile(r"\b[Hh]eld out\b"), lambda m: ("Kept" if m.group(0)[0] == "H" else "kept") + " aside for testing"),
+    (re.compile(r"\bvalues are drawn\b"), "values are shown"),
+    (re.compile(r"\bscored regions\b"), "regions with a risk score"),
+    (re.compile(r"\bnothing scored yet\b"), "no risk scores yet"),
+    (re.compile(r"\bNo scored risk bands yet\b"), "No risk bands calculated yet"),
+    (re.compile(r"\bno region scored for\b"), "no region has a risk score for"),
+    (re.compile(r"\bscored forecast days\b"), "forecast days with risk scores"),
+    (re.compile(r"\b(district|districts) scored$"), r"\1 with a risk score"),
+    (re.compile(r"\bis scored yet\b"), "has a risk score yet"),
+    (re.compile(r"^Not scored - "), "No risk score - "),
+    (re.compile(r"\bmid-pull\b"), "during a download"),
+    (re.compile(r"\bLeading driver\b"), "Main cause"),
+    (re.compile(r"^Driver: "), "Main cause: "),
+    (re.compile(r"^driver$"), "main cause"),
+    (re.compile(r"\b([Mm])ostly driven by\b"), r"\1ainly caused by"),
+    (re.compile(r"\bbiggest driver\b"), "biggest cause"),
+    (re.compile(r"^Variables?$"), lambda m: "Weather " + m.group(0).lower()),
+    (re.compile(r"^Variables: "), "Weather variables: "),
+    (re.compile(r"\bingestion\b"), "data loading"),
+    (re.compile(r"\bIngestion notes\b"), "Data loading notes"),
+    (re.compile(r"\b([Ii])ngested\b"), r"\1oaded"),
+    (re.compile(r"\b([Ii])ngest\b"), r"\1oad"),
+    (re.compile(r"^Mean\b"), "Average"),
+    (re.compile(r"\bclimatology\b"), "the long-run average"),
+    (re.compile(r"^Climatology$"), "Long-run average"),
+    (re.compile(r"\blong-run\b"), "long-term"),
+    (re.compile(r"\bLong-run\b"), "Long-term"),
+    (re.compile(r"\b([Cc])onfidently wrong\b"), lambda m: ("W" if m.group(1) == "C" else "w") + "rong with the most certainty"),
+    (re.compile(r"\bconfidence\b"), "certainty"),
+    (re.compile(r"\bConfidence\b"), "Certainty"),
+    (re.compile(r"\bOther inputs\b"), "Other input data"),
+    (re.compile(r"\bhardest variable\b"), "hardest weather variable"),
+    (re.compile(r"\ban em dash\b"), "a dash (—)"),
+    # "Box" means the server.
+    (re.compile(r"\b512 MB box\b"), "512 MB server"),
+    (re.compile(r"\bfree-tier box\b"), "free server"),
+]
+WHOLE = {"al.colLead": "Forecast day"}
+
+
+def reword(key: str, text: str) -> str:
+    if key in WHOLE:
+        return WHOLE[key]
+    for pattern, repl in REWRITES:
+        text = pattern.sub(repl, text)
+    return text
 
 
 def load_glossary(code: str) -> list[tuple[re.Pattern, str]]:
@@ -205,7 +321,7 @@ def translate(texts: list[str], tgt: str, model, tokenizer, ip, device: str) -> 
     return ip.postprocess_batch(dec, lang=tgt)
 
 
-EDGE = re.compile(r"^([←→↑↓]\s*)?(.*?)(\s*[←→↑↓])?$", re.S)
+EDGE = re.compile(r"^((?:[←→↑↓‹▶]|❚❚)\s*)?(.*?)(\s*[←→↑↓›])?$", re.S)
 
 
 def peel(src: str) -> tuple[str, str, str]:
@@ -241,6 +357,35 @@ def translate_safely(texts: list[str], tgt: str, model, tokenizer, ip, device: s
 
 
 # Not after "et al." / "e.g." / "i.e.", which end in a full stop mid-sentence.
+SENTINEL = 7301
+INDIC_DIGITS = str.maketrans("०१२३४५६७८९০১২৩৪৫৬৭৮৯੦੧੨੩੪੫੬੭੮੯૦૧૨૩૪૫૬૭૮૯୦୧୨୩୪୫୬୭୮୯௦௧௨௩௪௫௬௭௮௯౦౧౨౩౪౫౬౭౮౯೦೧೨೩೪೫೬೭೮೯൦൧൨൩൪൫൬൭൮൯",
+                             "0123456789" * 9)
+
+
+def by_number(src: str, tgt: str, glossary, model, tokenizer, ip, device: str, code: str) -> str:
+    """Last-but-one resort: the model drops a placeholder that stands for a count ("changes
+    {{1}} times" came back "changes repeatedly") but copies digits faithfully. So each
+    {{param}} goes in as a distinctive number (7301, 7302, ...) and comes back as itself.
+    Markup is dropped; glossary terms and signs stay masked as usual."""
+    body = TAG.sub("", src)
+    params = list(dict.fromkeys(NAMED.findall(body)))
+    numbered = NAMED.sub(lambda m: str(SENTINEL + params.index(m.group(1))), body)
+    masked, toks = mask(numbered, glossary)
+    raw = translate_safely([masked], tgt, model, tokenizer, ip, device)[0]
+    if not complete(raw, toks):
+        return ""
+    out = unmask(raw, toks).translate(INDIC_DIGITS)
+    for i, name in enumerate(params):
+        n = str(SENTINEL + i)
+        if out.count(n) != numbered.count(n):
+            return ""
+        out = out.replace(n, "{{%s}}" % name)
+    out = tidy(body, out, code)
+    if not out or not clean(out) or placeholders(out) != placeholders(body):
+        return ""
+    return out
+
+
 SENTENCE = re.compile(r"(?<!\bal\.)(?<!e\.g\.)(?<!i\.e\.)(?<=[.;?!])\s+(?=[A-Z“\"(])")
 
 
@@ -330,6 +475,12 @@ def main() -> int:
                         meta[k] = {"src": digest(en[k]), "machine": True, "reviewed": False, "markup": "dropped"}
                         continue
                 if placeholders(v) != placeholders(en[k]) or not v.strip():
+                    v4 = by_number(en[k], FLORES[code], glossary, model, tokenizer, ip, device, code)
+                    if v4:
+                        existing[k] = v4
+                        meta[k] = {"src": digest(en[k]), "machine": True, "reviewed": False,
+                                   "markup": "dropped", "params": "as-numbers"}
+                        continue
                     v3 = by_sentence(en[k], FLORES[code], glossary, model, tokenizer, ip, device, code)
                     if v3:
                         existing[k] = v3
