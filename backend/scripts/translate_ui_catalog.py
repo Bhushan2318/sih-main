@@ -165,6 +165,10 @@ def tidy(src: str, out: str, code: str = "") -> str:
     if not src.rstrip().endswith(FINAL_MARKS):
         while out.endswith(FINAL_MARKS):
             out = out[:-1].rstrip()
+    # Keep the English's edge spaces: " · ingested {{when}}" is appended to the text
+    # before it, and stripped it glued on ("…working.5 of these") - 348 strings.
+    if out:
+        out = src[: len(src) - len(src.lstrip())] + out + src[len(src.rstrip()):]
     return out
 
 

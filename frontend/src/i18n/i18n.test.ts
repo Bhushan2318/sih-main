@@ -66,6 +66,9 @@ describe("shipped catalogues", () => {
         expect(en, `unknown key ${k}`).toHaveProperty(k);
         const src = (en as Record<string, string>)[k];
         expect(params(v), k).toBe(params(src));
+        // Edge spaces join a fragment to the text beside it; lose one and words glue.
+        expect(v.startsWith(" "), `${k} leading space`).toBe(src.startsWith(" "));
+        expect(v.endsWith(" "), `${k} trailing space`).toBe(src.endsWith(" "));
         // Markup is all or nothing: the translator drops it whole when the model loses a tag.
         if (tags(v)) expect(tags(v), k).toBe(tags(src));
       }

@@ -201,3 +201,9 @@ def test_glossary_mask_swallows_a_leading_article():
     masked, toks = tuc.mask("A bust is a forecast. The bust band.", gloss)
     assert "A " not in masked and "The " not in masked
     assert any(k == "article" for _, k, _ in cut.check("or", {"x": "A bust is"}, {"x": "A ବଷ୍ଟ ହେଉଛି"}))
+
+
+def test_tidy_keeps_the_englishs_edge_spaces():
+    assert tuc.tidy(" · ingested {{when}}", "· {{when}} अंतर्ग्रहण") == " · {{when}} अंतर्ग्रहण"
+    assert tuc.tidy("valid {{date}} · ", "वैध {{date}} ·") == "वैध {{date}} · "
+    assert tuc.tidy("Alerts", " चेतावनी ") == "चेतावनी"
