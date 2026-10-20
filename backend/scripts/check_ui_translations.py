@@ -98,7 +98,7 @@ GLOSSARY = LOCALES.parent / "glossary.json"
 def glossary_for(code: str) -> list[tuple[re.Pattern, str]]:
     if not GLOSSARY.exists():
         return []
-    terms = json.loads(GLOSSARY.read_text())["terms"]
+    terms = json.loads(GLOSSARY.read_text(encoding="utf-8"))["terms"]
     return [(re.compile(t["match"]), t[code]) for t in terms.values() if code in t]
 
 
@@ -153,11 +153,11 @@ def main() -> int:
     ap.add_argument("--json", type=Path, help="also write every issue to this file")
     args = ap.parse_args()
 
-    en = json.loads((LOCALES / "en.json").read_text())
+    en = json.loads((LOCALES / "en.json").read_text(encoding="utf-8"))
     # Judge each translation against what the model was actually given.
     hints_path = LOCALES.parent / "source-hints.json"
     if hints_path.exists():
-        hints = json.loads(hints_path.read_text())
+        hints = json.loads(hints_path.read_text(encoding="utf-8"))
         en = {k: hints.get(k, v) for k, v in en.items()}
     files = sorted(p for p in LOCALES.glob("*.json") if p.stem != "en")
     report: dict[str, list[dict]] = {}
@@ -165,7 +165,7 @@ def main() -> int:
         code = path.stem
         if args.langs and code not in args.langs:
             continue
-        cat = {k: v for k, v in json.loads(path.read_text()).items() if k != "_meta"}
+        cat = {k: v for k, v in json.loads(path.read_text(encoding="utf-8")).items() if k != "_meta"}
         issues = check(code, en, cat)
         report[code] = [{"key": k, "kind": kind, "text": t} for k, kind, t in issues]
         kinds: dict[str, int] = {}
@@ -174,7 +174,7 @@ def main() -> int:
         flagged = len({k for k, _, _ in issues})
         print(f"{code}: {len(cat)}/{len(en)} keys, {flagged} flagged {kinds}")
     if args.json:
-        args.json.write_text(json.dumps(report, ensure_ascii=False, indent=2))
+        args.json.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     return 0
 
 

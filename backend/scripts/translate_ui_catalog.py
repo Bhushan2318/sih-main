@@ -102,7 +102,7 @@ HINTS = LOCALES.parent / "source-hints.json"
 def load_sources(en: dict[str, str]) -> dict[str, str]:
     """What the model is given per key: the displayed English, or its plain-English
     rewording from source-hints.json where the English is idiomatic."""
-    hints = json.loads(HINTS.read_text()) if HINTS.exists() else {}
+    hints = json.loads(HINTS.read_text(encoding="utf-8")) if HINTS.exists() else {}
     out = {k: hints.get(k, v) for k, v in en.items()}
     return {k: reword(k, v) for k, v in out.items()}
 
@@ -227,7 +227,7 @@ def load_glossary(code: str) -> list[tuple[re.Pattern, str]]:
     """(pattern, rendering) for each term the glossary fixes in this language."""
     if not GLOSSARY.exists():
         return []
-    terms = json.loads(GLOSSARY.read_text())["terms"]
+    terms = json.loads(GLOSSARY.read_text(encoding="utf-8"))["terms"]
     # A leading "a"/"an"/"the" goes into the mask with the term: these languages have no
     # articles, and left outside it the model kept it verbatim ("A ବଷ୍ଟ ହେଉଛି").
     article = r"(?:\b(?:[Aa]n?|[Tt]he)\s+)?"
@@ -433,7 +433,7 @@ def save(path: Path, en: dict[str, str], existing: dict) -> dict:
     meta = existing.get("_meta", {})
     ordered = {k: existing[k] for k in en if k in existing}
     ordered["_meta"] = {k: meta[k] for k in en if k in meta}
-    path.write_text(json.dumps(ordered, ensure_ascii=False, indent=2) + "\n")
+    path.write_text(json.dumps(ordered, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return ordered
 
 
@@ -445,7 +445,7 @@ def main() -> int:
     ap.add_argument("--only", action="store_true", help="translate the --redo keys and nothing else")
     args = ap.parse_args()
 
-    en: dict[str, str] = json.loads((LOCALES / "en.json").read_text())
+    en: dict[str, str] = json.loads((LOCALES / "en.json").read_text(encoding="utf-8"))
     # From here on `en` is what gets translated; a hint changes the digest, so editing
     # one retranslates that key on the next run.
     en = load_sources(en)
@@ -464,7 +464,7 @@ def main() -> int:
 
     for code in args.langs:
         path = LOCALES / f"{code}.json"
-        existing = json.loads(path.read_text()) if path.exists() else {}
+        existing = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
         glossary = load_glossary(code)
         todo = plan(en, existing) + [k for k in args.redo if k in en and k not in plan(en, existing)]
         if args.only:

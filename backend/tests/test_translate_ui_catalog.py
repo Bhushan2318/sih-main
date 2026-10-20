@@ -86,7 +86,7 @@ def test_glossary_terms_are_masked_and_come_back_as_the_fixed_rendering():
 
 def test_shipped_glossary_covers_every_translated_language():
     import json
-    terms = json.loads(tuc.GLOSSARY.read_text())["terms"]
+    terms = json.loads(tuc.GLOSSARY.read_text(encoding="utf-8"))["terms"]
     shipped = {p.stem for p in tuc.LOCALES.glob("*.json")} - {"en"}
     for name, t in terms.items():
         assert shipped <= set(t), f"{name} has no rendering for {shipped - set(t)}"
@@ -158,8 +158,8 @@ def test_sentence_split_keeps_placeholders_and_abbreviations_together():
 
 def test_every_source_hint_keeps_the_englishs_placeholders_tags_and_signs():
     import json
-    en = json.loads((tuc.LOCALES / "en.json").read_text())
-    hints = json.loads(tuc.HINTS.read_text())
+    en = json.loads((tuc.LOCALES / "en.json").read_text(encoding="utf-8"))
+    hints = json.loads(tuc.HINTS.read_text(encoding="utf-8"))
     for k, v in hints.items():
         if k.startswith("_"):
             continue
