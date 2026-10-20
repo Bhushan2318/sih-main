@@ -73,14 +73,21 @@ NAMED = re.compile(r"\{\{(\w+)\}\}")
 # went missing, and "↓ … ↑" came back "Â … ^". Masked like a parameter, restored verbatim.
 # File names, URLs and paths too: IndicTransToolkit swaps them for an <ID1> marker of its
 # own and, in Bengali, failed to put "third-party-licenses.txt" back ("<আই. ডি. 1>").
-PROTECTED = re.compile(
-    r"\{\{\w+\}\}|https?://\S+|"
-    # Acronyms stay in Latin script (standard in Indian-language technical text); the
-    # model otherwise spelled them out letter by letter ("एम. ए. ई.", "सी. एस. वी.").
+# Acronyms stay in Latin script (standard in Indian-language technical text); the model
+# otherwise spelled them out letter by letter ("एम. ए. ई.", "सी. एस. वी."). A paragraph
+# dense with them ("Other inputs" has ten) overwhelms the model, so the last fallback
+# translates with acronyms left to it - transliterated beats English.
+ACRONYMS = (
     r"\b(?:ROC-AUC|PR-AUC|MAE|RMSE|CSV|TSV|XLSX|JSON|UTC|IST|HTTP|API|ERA5|GEFSv12|GEFS|NOAA|SHAP|CORP|MJO|"
     r"IMD|NCMRWF|EMOS|IDR|Z500|C3S|AWS|S3|SMS|GADM|SRTM|CIAT|CGIAR-CSI|OMI|PSL|OLR|MIT|CC-BY 4\.0|"
-    r"OpenAPI|Swagger|FastAPI|XGBoost|React|TypeScript|Parquet|Pydantic|F1)\b|(?:(?<=\s)|(?<=>)|^)/[a-z][\w./-]*\w|[\w-]+\.(?:txt|json|md|csv|com|org)\b|R²|[≥≤±÷−↑↓→←·‹›▶]|❚❚"
+    r"OpenAPI|Swagger|FastAPI|XGBoost|React|TypeScript|Parquet|Pydantic|F1)\b|"
 )
+BASIC = (
+    r"\{\{\w+\}\}|https?://\S+|(?:(?<=\s)|(?<=>)|^)/[a-z][\w./-]*\w|"
+    r"[\w-]+\.(?:txt|json|md|csv|com|org)\b|R²|[≥≤±÷−↑↓→←·‹›▶]|❚❚"
+)
+PROTECTED = re.compile(ACRONYMS + BASIC)
+PROTECTED_NO_ACRONYMS = re.compile(BASIC)
 NUMBERED = re.compile(r"\{\{(\d+)\}\}")
 # A lone-brace "{1}": the model sometimes drops one brace of a numbered placeholder.
 BRACES = re.compile(r"\{+(\d+)\}+")
@@ -151,7 +158,7 @@ REWRITES = [
     (re.compile(r"\bensemble disagreement\b"), "disagreement between the forecast members"),
     (re.compile(r"\bensemble average\b"), "average of the forecast members"),
     (re.compile(r"\bEnsemble members available\b"), "Number of forecast members available"),
-    (re.compile(r"^Ensemble spread$"), "Spread between the forecast members"),
+    (re.compile(r"^Ensemble spread$"), "Size of the disagreement between the forecast members"),
     (re.compile(r"\bensemble members\b"), "forecast members"),
     (re.compile(r"\b(compare|chart) its forecast against\b"), r"\1 its forecast with"),
     (re.compile(r"\bwe compare against\b"), "we compare with"),
@@ -178,12 +185,18 @@ REWRITES = [
     (re.compile(r"^driver$"), "main cause"),
     (re.compile(r"\b([Mm])ostly driven by\b"), r"\1ainly caused by"),
     (re.compile(r"\bbiggest driver\b"), "biggest cause"),
-    (re.compile(r"^Variables?$"), lambda m: "Weather " + m.group(0).lower()),
-    (re.compile(r"^Variables: "), "Weather variables: "),
+    # "Variable" came back as the adjective "changeable" (परिवर्तनशील); these are rainfall,
+    # temperature and the like, so "weather measurement" says it.
+    (re.compile(r"^Variable$"), "Weather measurement"),
+    (re.compile(r"^Variables$"), "Weather measurements"),
+    (re.compile(r"^Variables: "), "Weather measurements: "),
+    (re.compile(r"\breforecast archive\b"), "archive of recomputed past forecasts"),
+    (re.compile(r"\bNOAA’s reforecast\b"), "NOAA’s recomputed past forecasts"),
+    (re.compile(r"\breforecast\b"), "recomputed past forecast"),
     (re.compile(r"\bingestion\b"), "data loading"),
     (re.compile(r"\bIngestion notes\b"), "Data loading notes"),
-    (re.compile(r"\b([Ii])ngested\b"), r"\1oaded"),
-    (re.compile(r"\b([Ii])ngest\b"), r"\1oad"),
+    (re.compile(r"\b[Ii]ngested\b"), lambda m: "Loaded" if m.group(0)[0] == "I" else "loaded"),
+    (re.compile(r"\b[Ii]ngest\b"), lambda m: "Load" if m.group(0)[0] == "I" else "load"),
     (re.compile(r"^Mean\b"), "Average"),
     (re.compile(r"\bclimatology\b"), "the long-run average"),
     (re.compile(r"^Climatology$"), "Long-run average"),
@@ -221,7 +234,7 @@ def load_glossary(code: str) -> list[tuple[re.Pattern, str]]:
     return [(re.compile(article + t["match"]), t[code]) for t in terms.values() if code in t]
 
 
-def mask(src: str, glossary: list[tuple[re.Pattern, str]] = ()) -> tuple[str, list[str]]:
+def mask(src: str, glossary: list[tuple[re.Pattern, str]] = (), acronyms: bool = True) -> tuple[str, list[str]]:
     """`Day {{n}} of {{max}} ≥` -> `Day {{1}} of {{2}} {{3}}`. The model translates the
     names inside braces ({{day}} came back as {{दिन}}, 77 of 535 Hindi strings refused) but
     leaves numbered ones alone (6 of 6 in a probe; #1# and the like broke every time)."""
@@ -232,7 +245,7 @@ def mask(src: str, glossary: list[tuple[re.Pattern, str]] = ()) -> tuple[str, li
             tokens.append(token)
         return "{{%d}}" % (tokens.index(token) + 1)
 
-    out = PROTECTED.sub(lambda m: number(m.group(0)), src)
+    out = (PROTECTED if acronyms else PROTECTED_NO_ACRONYMS).sub(lambda m: number(m.group(0)), src)
     # Glossary terms become placeholders too, so the model places them in the sentence
     # but cannot translate them; unmask() writes the fixed rendering.
     for pattern, rendering in glossary:
@@ -321,14 +334,16 @@ def translate(texts: list[str], tgt: str, model, tokenizer, ip, device: str) -> 
     return ip.postprocess_batch(dec, lang=tgt)
 
 
-EDGE = re.compile(r"^((?:[←→↑↓‹▶]|❚❚)\s*)?(.*?)(\s*[←→↑↓›])?$", re.S)
+EDGE = re.compile(r"^((?:[←→↑↓‹▶·]|❚❚)\s*)?(.*?)(\s*[←→↑↓›·])?$", re.S)
 
 
 def peel(src: str) -> tuple[str, str, str]:
     """Split off a leading or trailing arrow ("Open Replay →", "← All India", "Brier ↓"):
     left in, the model moved it mid-sentence ("बस्ट → की भविष्यवाणी")."""
-    m = EDGE.match(src)
-    return m.group(1) or "", m.group(2), m.group(3) or ""
+    lead, core = src[: len(src) - len(src.lstrip())], src.strip()
+    trail = src[len(src.rstrip()):]
+    m = EDGE.match(core)
+    return lead + (m.group(1) or ""), m.group(2), (m.group(3) or "") + trail
 
 
 def translate_safely(texts: list[str], tgt: str, model, tokenizer, ip, device: str) -> list[str]:
@@ -400,11 +415,15 @@ def by_sentence(src: str, tgt: str, glossary, model, tokenizer, ip, device: str,
     masked = [mask(p, glossary) for p in parts]
     results = translate_safely([m for m, _ in masked], tgt, model, tokenizer, ip, device)
     for part, raw, (_, toks) in zip(parts, results, masked):
-        if not complete(raw, toks):
-            return ""
-        v = tidy(part, unmask(raw, toks), code)
+        v = tidy(part, unmask(raw, toks), code) if complete(raw, toks) else ""
         if not v or not clean(v) or placeholders(v) != placeholders(part):
-            return ""
+            # One acronym-heavy sentence ("IMD–NCMRWF merged satellite-gauge rainfall")
+            # sank whole paragraphs in ta/bn/ml: retry just that sentence unprotected.
+            plain, ptoks = mask(part, glossary, acronyms=False)
+            raw2 = translate_safely([plain], tgt, model, tokenizer, ip, device)[0]
+            v = tidy(part, unmask(raw2, ptoks), code) if complete(raw2, ptoks) else ""
+            if not v or not clean(v) or placeholders(v) != placeholders(part):
+                return ""
         out.append(v)
     return " ".join(out)
 
@@ -486,6 +505,14 @@ def main() -> int:
                         existing[k] = v3
                         meta[k] = {"src": digest(en[k]), "machine": True, "reviewed": False,
                                    "markup": "dropped", "split": "sentences"}
+                        continue
+                    plain, plain_toks = mask(TAG.sub("", en[k]), glossary, acronyms=False)
+                    raw5 = translate_safely([plain], FLORES[code], model, tokenizer, ip, device)[0]
+                    v5 = tidy(TAG.sub("", en[k]), unmask(raw5, plain_toks), code) if complete(raw5, plain_toks) else ""
+                    if v5 and clean(v5) and placeholders(v5) == placeholders(TAG.sub("", en[k])):
+                        existing[k] = v5
+                        meta[k] = {"src": digest(en[k]), "machine": True, "reviewed": False,
+                                   "markup": "dropped", "acronyms": "transliterated"}
                         continue
                     refused.append(k)
                     existing.pop(k, None)

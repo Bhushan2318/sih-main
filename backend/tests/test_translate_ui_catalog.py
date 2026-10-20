@@ -231,3 +231,9 @@ def test_run_is_reworded_by_sense():
     assert tuc.reword("x", "Latest run's raw log") == "Raw log of the latest attempt"
     assert tuc.reword("x", "It runs on a free server") == "It is hosted on a free server"
     assert tuc.reword("x", "skill compared with the long-run average") == "skill compared with the long-term average"
+
+
+def test_ingest_becomes_load_with_its_case():
+    assert tuc.reword("x", " · ingested {{when}}") == " · loaded {{when}}"
+    assert tuc.reword("x", "Ingested <0>{{n}}</0> rows") == "Loaded <0>{{n}}</0> rows"
+    assert tuc.reword("x", "Confirm & ingest") == "Confirm & load"
