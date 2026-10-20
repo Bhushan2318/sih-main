@@ -2,6 +2,9 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ApiError } from "./api/client";
 import { DashboardPage } from "./pages/DashboardPage";
 import "./styles.css";
+import { restoreLanguage, useI18n } from "./i18n";
+
+restoreLanguage();
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -19,6 +22,9 @@ const queryClient = new QueryClient({
 });
 
 export default function App() {
+  // Strings are read with plain translate() calls, so the tree must re-render when the
+  // language changes. Nothing below is memoised, so subscribing here is enough.
+  useI18n((s) => s.lang);
   return (
     <QueryClientProvider client={queryClient}>
       <DashboardPage />

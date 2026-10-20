@@ -1,3 +1,5 @@
+import { translate } from "./i18n";
+
 export const CHART = {
 
   forecast: "#2b4eff",
@@ -25,4 +27,4 @@ export const BAND_LABEL: Record<string, string> = {
 };
 
 export const bandLabel = (band: string | null | undefined): string =>
-  band ? BAND_LABEL[band] ?? band : "no data";
+  band ? (band in BAND_LABEL ? translate(`band.${band}` as "band.low") : band) : translate("band.none");

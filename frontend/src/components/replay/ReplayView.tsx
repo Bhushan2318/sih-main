@@ -1,3 +1,5 @@
+import { translate } from "../../i18n";
+import { rich } from "../../i18n/rich";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Topology } from "topojson-specification";
 import type { RegionSummary, ReplayRegionStep } from "../../api/types";
@@ -84,17 +86,17 @@ export function ReplayView({ topology }: { topology: Topology | null }) {
   if (replayQuery.isLoading || cyclesQuery.isLoading) {
     return (
       <LoadingState
-        label="Loading the scored cycle…"
-        hint="Every cycle here was scored ahead of time over all 666 districts and ten lead days; the first one after an idle period takes a few seconds to read."
+        label={translate("rv.loading")}
+        hint={translate("rv.loadingHint")}
       />
     );
   }
   if (replayQuery.error) return <ErrorState error={replayQuery.error} />;
   if (replay && !replay.model_trained) {
-    return <EmptyState title="No trained model yet" message={replay.message} />;
+    return <EmptyState title={translate("rv.noModel")} message={replay.message} />;
   }
   if (!replay || !steps.length) {
-    return <EmptyState title="Nothing to replay" message={replay?.message ?? "No scoreable cycle in the store."} />;
+    return <EmptyState title={translate("rv.nothing")} message={replay?.message ?? translate("rv.noCycle")} />;
   }
 
   const scrub = (i: number) => {
@@ -127,17 +129,17 @@ export function ReplayView({ topology }: { topology: Topology | null }) {
             setPlaying((p) => !p);
           }}
         >
-          {playing ? "❚❚ Pause" : "▶ Play"}
+          {playing ? translate("rv.pause") : translate("rv.play")}
         </button>
         <button type="button" onClick={() => scrub(Math.max(0, stepIdx - 1))} disabled={stepIdx === 0}>
-          ‹ Prev
+          {translate("rv.prev")}
         </button>
         <button
           type="button"
           onClick={() => scrub(Math.min(steps.length - 1, stepIdx + 1))}
           disabled={stepIdx >= steps.length - 1}
         >
-          Next ›
+          {translate("rv.next")}
         </button>
         <div className="replay__ticks">
           {steps.map((s, i) => (
@@ -145,7 +147,7 @@ export function ReplayView({ topology }: { topology: Topology | null }) {
               key={s.lead_time_days}
               type="button"
               className={`replay__tick ${i === stepIdx ? "is-active" : ""} replay__tick--${bandOfStep(s)}`}
-              aria-label={`Lead day ${s.lead_time_days}`}
+              aria-label={translate("lead.day", { d: s.lead_time_days })}
               onClick={() => scrub(i)}
             >
               {s.lead_time_days}
@@ -166,27 +168,27 @@ export function ReplayView({ topology }: { topology: Topology | null }) {
             topology={topology}
             riskCuts={riskCuts}
           />
-          <p className="muted small">Click a district to chart its forecast against what actually happened.</p>
+          <p className="muted small">{translate("rv.clickHint")}</p>
         </div>
 
         <div className="replay__sidecol">
           <div className="replay__step">
             <div className="replay__stephead">
-              <span className="replay__day">Day {step.lead_time_days}</span>
-              {step.valid_date ? <span className="muted small">valid {step.valid_date}</span> : null}
+              <span className="replay__day">{translate("day.one", { n: step.lead_time_days })}</span>
+              {step.valid_date ? <span className="muted small">{translate("rv.valid", { date: step.valid_date })}</span> : null}
             </div>
             <p className="replay__narration">{step.narration}</p>
             <div className="replay__stats">
-              <span><b>{pct(step.mean_bust_probability)}</b> average bust risk</span>
-              <span className="chip chip--high">{step.n_high} bust</span>
-              <span className="chip chip--medium">{step.n_medium} watch</span>
+              <span>{rich("rv.avg", { pct: pct(step.mean_bust_probability) }, [<b />])}</span>
+              <span className="chip chip--high">{translate("rv.nBust", { n: step.n_high })}</span>
+              <span className="chip chip--medium">{translate("rv.nWatch", { n: step.n_medium })}</span>
             </div>
             <TopDistrictsList
               items={step.regions.slice(0, 5).map((r) => ({ ...r, band: r.risk_band }))}
               onSelect={setFocusRegionId}
               activeId={shownFocus?.region_id}
               isSelectable={(id) => chartableRegionIds.has(id)}
-              selectTitle="Show this region's forecast vs observed"
+              selectTitle={translate("rv.selectTitle")}
             />
           </div>
 
@@ -199,7 +201,7 @@ export function ReplayView({ topology }: { topology: Topology | null }) {
                   event &&
                   shownFocus.region_id === event.focus_region_id &&
                   shownFocus.variable === event.focus_variable
-                    ? "what this event is remembered for"
+                    ? translate("rv.remembered")
                     : undefined
                 }
               />
@@ -229,17 +231,13 @@ export function ReplayView({ topology }: { topology: Topology | null }) {
 
             <div className="replay-focus">
               <div className="replay-focus__head">
-                <strong>No forecast-vs-observed chart for this run</strong>
+                <strong>{translate("rv.noChart")}</strong>
               </div>
               <p className="muted small">
-                This cycle is recent enough that the days it forecasts have not all
-                happened yet, so there is nothing to compare its forecast against. The map,
-                the risk numbers and the narration above are all scored and real — only the
-                verification chart needs observations that do not exist yet.
+                {translate("rv.noChartBody")}
               </p>
               <p className="muted small">
-                Pick one of the <b>past events</b> in the dropdown to see the model
-                checked against what actually happened.
+                {rich("rv.pickPast", undefined, [<b />])}
               </p>
             </div>
           )}
@@ -247,9 +245,7 @@ export function ReplayView({ topology }: { topology: Topology | null }) {
       </div>
 
       <p className="muted small replay__foot">
-        Every value is scored from the real archived GEFS forecast for this run and the
-        ERA5 record of what happened; every sentence is generated from those numbers. No
-        scripted or synthetic content.
+        {translate("rv.foot")}
       </p>
     </div>
   );

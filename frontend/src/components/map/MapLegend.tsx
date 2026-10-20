@@ -1,3 +1,4 @@
+import { translate } from "../../i18n";
 import { bandLabel } from "../../theme";
 import type { RiskBand } from "../../api/types";
 
@@ -11,7 +12,7 @@ export function MapLegend({ definitions = {} }: { definitions?: Record<string, s
 
   return (
     <div className="legend">
-      <span className="legend__title">Bust risk</span>
+      <span className="legend__title">{translate("legend.title")}</span>
       {describedBands.map((band) => (
         <span key={band} className="legend__item" title={definitions[band]}>
           <i className={`swatch swatch--${band}`} aria-hidden="true" />
@@ -21,13 +22,13 @@ export function MapLegend({ definitions = {} }: { definitions?: Record<string, s
       {describedBands.length === 0 ? (
         <span className="legend__item legend__item--muted">
           <i className="swatch swatch--nodata" aria-hidden="true" />
-          No scored risk bands yet
+          {translate("legend.noBands")}
         </span>
       ) : null}
       {describedBands.length > 0 ? (
-        <span className="legend__item legend__item--muted" title="No forecast data for this region">
+        <span className="legend__item legend__item--muted" title={translate("legend.noDataTitle")}>
           <i className="swatch swatch--nodata" aria-hidden="true" />
-          No data
+          {translate("legend.noData")}
         </span>
       ) : null}
       {definitions.basis ? <p className="legend__basis">{definitions.basis}</p> : null}

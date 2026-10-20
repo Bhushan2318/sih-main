@@ -24,6 +24,8 @@ import {
 import { useLiveSocket } from "../hooks/useLiveSocket";
 import { stateNamesFrom } from "../lib/stateNames";
 import { parseAppState, toSearch, type View } from "../lib/urlState";
+import { type Key, translate, useT } from "../i18n";
+import { LanguagePicker } from "../i18n/LanguagePicker";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { useElapsedSeconds } from "../hooks/useElapsedSeconds";
 import { cycleChipLabel, dayLabel } from "../lib/format";
@@ -32,17 +34,18 @@ import { inferRiskCuts, isScoredProbability, resolveRiskCuts, riskBandForRegion 
 // View lives in lib/urlState: it is the set of values the ?view= parameter accepts, so
 // the tab list and the URL parser must not be able to disagree about it.
 
-const TABS: { id: View; label: string; tail?: string }[] = [
-  { id: "live", label: "Operations" },
-  { id: "alerts", label: "Alerts" },
-  { id: "model", label: "Model" },
-  { id: "replay", label: "Replay", tail: " a real bust" },
+const TABS: { id: View; label: Key; tail?: Key }[] = [
+  { id: "live", label: "nav.live" },
+  { id: "alerts", label: "nav.alerts" },
+  { id: "model", label: "nav.model" },
+  { id: "replay", label: "nav.replay", tail: "nav.replayTail" },
 
-  { id: "about", label: "About" },
+  { id: "about", label: "nav.about" },
 ];
 
 export function DashboardPage() {
   useLiveSocket();
+  const tr = useT();
 
   // Read once, on mount: after this the URL follows the state rather than driving it,
   // except when the back button fires popstate below.
@@ -140,15 +143,15 @@ export function DashboardPage() {
   const cyclePills = view === "live" ? (
     <>
       {regions?.model_trained && regions.init_date ? (
-        <span className="pill pill--quiet" title="The forecast cycle currently in the store">
+        <span className="pill pill--quiet" title={tr("dash.cycleTitle")}>
           <i aria-hidden="true" />
           {cycleChipLabel(regions.init_date, regions.valid_date, regions.lead_time_days)}
         </span>
       ) : null}
       {highCount > 0 ? (
-        <span className="pill pill--alarm" title={`Regions in the bust band at lead day ${leadDay}`}>
+        <span className="pill pill--alarm" title={tr("dash.bustTitle", { d: leadDay })}>
           <i aria-hidden="true" />
-          {highCount} bust · {dayLabel(leadDay)}
+          {tr("dash.bustPill", { n: highCount, day: dayLabel(leadDay) })}
         </span>
       ) : null}
     </>
@@ -166,7 +169,7 @@ export function DashboardPage() {
           <button
             type="button"
             className="brand"
-            aria-label="Sanket - back to the opening screen"
+            aria-label={tr("brand.home")}
             onClick={() => {
               setView("live");
               window.scrollTo({ top: 0, behavior: prefersReducedMotion() ? "auto" : "smooth" });
@@ -175,10 +178,10 @@ export function DashboardPage() {
             <img className="brand__glyph" src="/logo.png" alt="" width={40} height={32} />
             <img className="brand__wordmark" src="/wordmark.png" alt="Sanket" />
             <span className="brand__div" aria-hidden="true" />
-            <span className="brand__sub">Forecast Bust Detection</span>
+            <span className="brand__sub">{tr("brand.sub")}</span>
           </button>
 
-          <nav className="viewtabs" role="tablist" aria-label="View">
+          <nav className="viewtabs" role="tablist" aria-label={tr("nav.label")}>
             {TABS.map((t) => (
               <button
                 key={t.id}
@@ -193,13 +196,13 @@ export function DashboardPage() {
                   window.scrollTo({ top: 0 });
                 }}
               >
-                {t.label}
-                {t.tail ? <span className="viewtab__tail">{t.tail}</span> : null}
+                {tr(t.label)}
+                {t.tail ? <span className="viewtab__tail">{" "}{tr(t.tail)}</span> : null}
               </button>
             ))}
           </nav>
 
-          <div className="topbar__right">{cyclePills}</div>
+          <div className="topbar__right">{cyclePills}<LanguagePicker /></div>
         </div>
       </header>
 
@@ -212,7 +215,7 @@ export function DashboardPage() {
             * ReplayView because that returns early while a cycle is scoring, which is
             * exactly when a screen reader most needs to know what the page is. Hidden
             * rather than drawn: the missing thing is structure, not a visible heading. */}
-          <h1 className="visually-hidden">Replay a real forecast bust</h1>
+          <h1 className="visually-hidden">{tr("replay.title")}</h1>
           <ReplayView topology={topology} />
         </main>
       ) : view === "alerts" ? (
@@ -274,7 +277,7 @@ export function DashboardPage() {
               {regionsQuery.isLoading ? (
                 <>
                   <LoadingState
-                    label="Scoring the current cycle…"
+                    label={tr("dash.scoring")}
                     hint={retryingHint(regionsQuery.failureCount) ?? slowHint(regionsWait)}
                   />
                   <Skeleton kind="map" />
@@ -285,9 +288,9 @@ export function DashboardPage() {
 
               {regions && !regions.model_trained ? (
                 <EmptyState
-                  title="No trained model yet"
+                  title={tr("rv.noModel")}
                   message={regions.message}
-                  action={<p className="muted small">Upload a dataset with forecasts and matching observations to begin.</p>}
+                  action={<p className="muted small">{tr("dash.uploadHint")}</p>}
                 />
               ) : null}
 
@@ -301,7 +304,7 @@ export function DashboardPage() {
                     riskCuts={riskCuts}
                   />
                 ) : (
-                  <EmptyState title="Nothing to show for this lead day" message={regions.message} />
+                  <EmptyState title={tr("dash.nothing")} message={regions.message} />
                 )
               ) : null}
             </section>
@@ -352,7 +355,7 @@ function OpeningCues({ onReplay }: { onReplay: () => void }) {
   return (
     <div className="cuerow">
       <button type="button" className="cuerow__primary" onClick={onReplay}>
-        Watch it call a real bust →
+        {translate("dash.watch")}
       </button>
       <ScrollCue />
     </div>
@@ -362,7 +365,7 @@ function OpeningCues({ onReplay }: { onReplay: () => void }) {
 function ScrollCue() {
   return (
     <button type="button" className="scrollcue" onClick={scrollToOperations}>
-      <span>The national map</span>
+      <span>{translate("dash.map")}</span>
       <svg viewBox="0 0 16 10" aria-hidden="true" width="16" height="10">
         <path d="M1 1l7 7 7-7" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
       </svg>

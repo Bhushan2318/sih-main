@@ -1,5 +1,7 @@
+import { translateKey } from "../i18n";
+
 /**
- * Column names, in English.
+ * Column names, in the reader's language (English text lives in i18n/locales/en.json).
  *
  * Feature and variable names arrive from the model's own feature list, so every screen
  * that explains a prediction was printing them raw: `conf_atmospheric_moisture_kgm2`,
@@ -14,71 +16,37 @@
  * a UI. Anything added later still reads as English via `prettify`, just less precisely.
  */
 
-const VARIABLES: Record<string, { label: string; unit: string | null }> = {
-  atmospheric_moisture_kgm2: { label: "Atmospheric moisture", unit: "kg/m²" },
-  humidity_pct: { label: "Humidity", unit: "%" },
-  pressure_hpa: { label: "Pressure", unit: "hPa" },
-  rainfall_mm: { label: "Rainfall", unit: "mm" },
-  soil_moisture_pct: { label: "Soil moisture", unit: "%" },
-  temperature_c: { label: "Temperature", unit: "°C" },
-  wind_direction_deg: { label: "Wind direction", unit: "°" },
-  wind_speed_ms: { label: "Wind speed", unit: "m/s" },
+const VARIABLES: Record<string, { unit: string | null }> = {
+  atmospheric_moisture_kgm2: { unit: "kg/m²" },
+  humidity_pct: { unit: "%" },
+  pressure_hpa: { unit: "hPa" },
+  rainfall_mm: { unit: "mm" },
+  soil_moisture_pct: { unit: "%" },
+  temperature_c: { unit: "°C" },
+  wind_direction_deg: { unit: "°" },
+  wind_speed_ms: { unit: "m/s" },
 };
 
 /** Engineered prefixes, longest first so `pred_err_` is tested before any `pred_`. */
-const PREFIXES: { prefix: string; phrase: (v: string) => string }[] = [
+const PREFIXES: string[] = [
   // C1 jumpiness and C2 time-lagged ensemble, per variable.
-  { prefix: "jump_abs_change_", phrase: (v) => `How much the ${v} forecast changed since the last run` },
-  { prefix: "jump_sign_flips_", phrase: (v) => `How often the ${v} forecast flipped direction` },
-  { prefix: "jump_std_", phrase: (v) => `How much the ${v} forecast has been changing` },
-  { prefix: "laf_spread_ratio_", phrase: (v) => `Recent runs' disagreement on ${v}, against this run's` },
-  { prefix: "laf_pool_mean_", phrase: (v) => `Recent runs' average ${v} forecast` },
-  { prefix: "laf_pool_size_", phrase: (v) => `Recent runs pooled for ${v}` },
-  { prefix: "laf_pool_std_", phrase: (v) => `Disagreement across recent runs on ${v}` },
-  { prefix: "pred_err_", phrase: (v) => `Predicted ${v} error` },
-  { prefix: "spread_", phrase: (v) => `Ensemble disagreement on ${v}` },
-  { prefix: "conf_", phrase: (v) => `Confidence in ${v}` },
-  { prefix: "fc_", phrase: (v) => `Forecast ${v}` },
+  "jump_abs_change_",
+  "jump_sign_flips_",
+  "jump_std_",
+  "laf_spread_ratio_",
+  "laf_pool_mean_",
+  "laf_pool_size_",
+  "laf_pool_std_",
+  "pred_err_",
+  "spread_",
+  "conf_",
+  "fc_",
 ];
 
-/** Features that are not per-variable. Phrased as what they mean, not what they are. */
-const FEATURES: Record<string, string> = {
-  // The rate of errors above the 75th percentile in training, not of p90 busts.
-  historical_bust_frequency_region_season: "How often this district's forecasts go badly wrong in this season",
-  lead_time_days: "How far ahead the forecast is",
-  region_id: "Which district",
-  state_id: "Which state",
-  season: "Season",
-  month: "Month",
-  spread_mean: "Average ensemble disagreement",
-  spread_max: "Largest ensemble disagreement",
-  ensemble_spread: "Ensemble disagreement",
-  ensemble_member_count: "Ensemble members available",
-  forecast_value: "Forecast value",
-  forecast_error_lag: "Error on the previous forecast",
-  moisture_rate_of_change: "How fast moisture is changing",
-  pressure_rate_of_change: "How fast pressure is changing",
-  // C1, forecast jumpiness: how much the forecast for one day moved between cycles.
-  jump_abs_change: "How much the forecast changed since the last run",
-  jump_std: "How much the forecast has been changing",
-  jump_sign_flips: "How often the forecast has flipped direction",
-  jump_rel_climatology: "Forecast churn against this district's normal",
-  // C2, time-lagged ensemble: this run pooled with recent runs for the same day.
-  laf_pool_mean: "Recent runs' average forecast",
-  laf_pool_std: "Disagreement across recent runs",
-  laf_pool_size: "Recent runs pooled",
-  laf_spread_ratio: "Recent runs' disagreement, against this run's",
-  // C3, the Madden-Julian Oscillation: the tropical pulse that modulates Indian rain.
-  mjo_amplitude: "MJO strength",
-  mjo_rmm1: "MJO index, first component",
-  mjo_rmm2: "MJO index, second component",
-  // C4, fixed facts about the district.
-  area_km2: "District area",
-  border_distance_km: "Distance to the coast or a national border",
-  centroid_lat: "District latitude",
-  centroid_lon: "District longitude",
-  elevation_mean: "District average elevation",
-};
+
+function varName(name: string): string | undefined {
+  return name in VARIABLES ? translateKey(`var.${name}`) : undefined;
+}
 
 /** `some_new_variable_xyz` -> `Some new variable xyz`. */
 function prettify(name: string): string {
@@ -89,7 +57,7 @@ function prettify(name: string): string {
 /** A modelled variable's name, without its unit. */
 export function variableLabel(name: string | null | undefined): string {
   if (!name) return "";
-  return VARIABLES[name]?.label ?? prettify(name);
+  return varName(name) ?? prettify(name);
 }
 
 /** A modelled variable's unit, or null where one would be meaningless. */
@@ -106,16 +74,17 @@ export function variableUnit(name: string | null | undefined): string | null {
  */
 export function featureLabel(name: string | null | undefined): string {
   if (!name) return "";
-  const known = FEATURES[name];
-  if (known) return known;
+  const known = translateKey(`feat.${name}`);
+  if (known !== undefined) return known;
 
-  for (const { prefix, phrase } of PREFIXES) {
+  for (const prefix of PREFIXES) {
     if (name.startsWith(prefix)) {
       const rest = name.slice(prefix.length);
       // Lower-cased: it sits mid-sentence ("Predicted humidity error"), not at the front.
-      const varName = (VARIABLES[rest]?.label ?? prettify(rest)).toLowerCase();
-      return phrase(varName);
+      // A no-op for scripts without case.
+      const v = (varName(rest) ?? prettify(rest)).toLowerCase();
+      return translateKey(`feat.${prefix}`, { v }) ?? prettify(name);
     }
   }
-  return VARIABLES[name]?.label ?? prettify(name);
+  return varName(name) ?? prettify(name);
 }

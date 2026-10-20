@@ -1,3 +1,4 @@
+import { translate } from "../i18n";
 import type { ReplayCycleSummary, ReplayFocusSeries, ReplayLeadStep } from "../api/types";
 import { bandLabel } from "../theme";
 import { variableUnit } from "./displayNames";
@@ -46,10 +47,14 @@ export function eventHeadline(
   const row = step?.regions.find((r) => r.region_id === cycle.focus_region_id) ?? null;
 
   return (
-    `Peak day ${formatDateUtc(cycle.peak_valid_date)} (${dayLabel(lead)}). ` +
-    `The forecast gave ${districtName} ${valueWithUnit(point?.predicted_value, unit)}; ` +
-    `ERA5 recorded ${valueWithUnit(point?.observed_value, unit)}. ` +
-    `Sanket's bust risk that day: ${pctOrDash(row?.bust_probability)} ` +
-    `(${bandLabel(row?.risk_band ?? null)}).`
+    translate("head.text", {
+      date: formatDateUtc(cycle.peak_valid_date),
+      day: dayLabel(lead),
+      district: districtName,
+      fc: valueWithUnit(point?.predicted_value, unit),
+      obs: valueWithUnit(point?.observed_value, unit),
+      pct: pctOrDash(row?.bust_probability),
+      band: bandLabel(row?.risk_band ?? null),
+    })
   );
 }

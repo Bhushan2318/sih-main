@@ -1,3 +1,4 @@
+import { translate } from "../../i18n";
 import { useMemo, useState } from "react";
 import type { ConfirmMappingItem, MappingProposal, UploadResponse } from "../../api/types";
 
@@ -74,25 +75,28 @@ export function ColumnMappingConfirmModal({ upload, onCancel, onSubmit }: {
   };
 
   return (
-    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Confirm column mapping">
+    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label={translate("map.title")}>
       <div className="modal">
         <header className="modal__head">
-          <h3>Confirm column mapping</h3>
-          <button type="button" className="btn btn--ghost" onClick={onCancel} aria-label="Cancel">×</button>
+          <h3>{translate("map.title")}</h3>
+          <button type="button" className="btn btn--ghost" onClick={onCancel} aria-label={translate("map.cancel")}>×</button>
         </header>
 
         <p className="muted small">
-          {upload.detected_format?.toUpperCase()} · {upload.row_count_raw.toLocaleString()} rows ·
-          layout {upload.layout ?? "unknown"}
-          {upload.source_profile_match !== "none" ? ` · matched a previous file (${upload.source_profile_match})` : ""}
+          {translate("map.meta", {
+            fmt: upload.detected_format?.toUpperCase() ?? "",
+            n: upload.row_count_raw.toLocaleString(),
+            layout: upload.layout ?? translate("map.unknown"),
+          })}
+          {upload.source_profile_match !== "none" ? translate("map.matched", { match: upload.source_profile_match }) : ""}
         </p>
 
         {needing.length === 0 ? (
-          <p>Nothing needs confirmation.</p>
+          <p>{translate("map.nothing")}</p>
         ) : (
           <div className="mapping-table" role="table">
             <div className="mapping-row mapping-row--head" role="row">
-              <span>Column</span><span>Samples</span><span>Variable</span><span>Type</span><span>Confidence</span>
+              <span>{translate("map.colColumn")}</span><span>{translate("map.colSamples")}</span><span>{translate("map.colVariable")}</span><span>{translate("map.colType")}</span><span>{translate("map.colConf")}</span>
             </div>
             {needing.map((p) => {
               const c = choices[p.source_column];
@@ -104,10 +108,10 @@ export function ColumnMappingConfirmModal({ upload, onCancel, onSubmit }: {
                   <span className="muted small">{p.sample_values.slice(0, 3).join(", ")}</span>
                   <span>
                     <select value={c?.variable ?? ""} onChange={(e) => set(p.source_column, { variable: e.target.value })}>
-                      <option value="">— exclude —</option>
+                      <option value="">{translate("map.exclude")}</option>
                       {CANONICAL_VARIABLES.map((v) => <option key={v} value={v}>{v}</option>)}
                     </select>
-                    {isDup ? <em className="warn small"> duplicate</em> : null}
+                    {isDup ? <em className="warn small">{translate("map.dup")}</em> : null}
                     {p.unit_conversion ? <em className="muted small"> ({p.unit_conversion})</em> : null}
                   </span>
                   <span>
@@ -116,7 +120,7 @@ export function ColumnMappingConfirmModal({ upload, onCancel, onSubmit }: {
                       disabled={!c?.variable}
                       onChange={(e) => set(p.source_column, { valueType: e.target.value })}
                     >
-                      <option value="">— from data —</option>
+                      <option value="">{translate("map.fromData")}</option>
                       {VALUE_TYPES.map((v) => <option key={v} value={v}>{v}</option>)}
                     </select>
                   </span>
@@ -129,7 +133,7 @@ export function ColumnMappingConfirmModal({ upload, onCancel, onSubmit }: {
 
         {auto.length ? (
           <details>
-            <summary className="muted small">Auto-accepted ({auto.length})</summary>
+            <summary className="muted small">{translate("map.auto", { n: auto.length })}</summary>
             <ul className="notes">
               {auto.map((p: MappingProposal) => (
                 <li key={p.source_column}>{p.source_column} → {p.suggested_variable}</li>
@@ -140,7 +144,7 @@ export function ColumnMappingConfirmModal({ upload, onCancel, onSubmit }: {
 
         {excluded.length ? (
           <details>
-            <summary className="muted small">Excluded ({excluded.length}) — shown, never silently dropped</summary>
+            <summary className="muted small">{translate("map.excluded", { n: excluded.length })}</summary>
             <ul className="notes">{excluded.map((p) => <li key={p.source_column}>{p.source_column}</li>)}</ul>
           </details>
         ) : null}
@@ -148,18 +152,17 @@ export function ColumnMappingConfirmModal({ upload, onCancel, onSubmit }: {
         <footer className="modal__foot">
           {duplicates.size ? (
             <span className="warn small">
-              Two columns map to the same variable. Set the extras to “exclude” — only one
-              canonical series per variable can be ingested.
+              {translate("map.dupWarn")}
             </span>
           ) : null}
-          <button type="button" className="btn btn--ghost" onClick={onCancel}>Cancel</button>
+          <button type="button" className="btn btn--ghost" onClick={onCancel}>{translate("map.cancel")}</button>
           <button
             type="button"
             className="btn btn--primary"
             onClick={submit}
             disabled={duplicates.size > 0}
           >
-            Confirm &amp; ingest
+            {translate("map.confirm")}
           </button>
         </footer>
       </div>

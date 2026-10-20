@@ -1,4 +1,7 @@
+import { translate } from "../../i18n";
 import { useState } from "react";
+import { rich } from "../../i18n/rich";
+
 import type { IngestRunRow } from "../../api/types";
 import { stampShort } from "../../format";
 import { useIngestRuns } from "../../hooks/useDashboardData";
@@ -8,10 +11,10 @@ import { useIngestRuns } from "../../hooks/useDashboardData";
  * without the tail of near-identical successes pushing the rest of the Model tab down. */
 const VISIBLE = 5;
 
-const LABEL: Record<string, string> = {
-  forecast: "GEFS cycle",
-  observations_provisional: "observations (provisional)",
-  observations_final: "observations (final)",
+const LABEL: Record<string, () => string> = {
+  forecast: () => translate("pipe.forecast"),
+  observations_provisional: () => translate("pipe.obsProv"),
+  observations_final: () => translate("pipe.obsFinal"),
 };
 
 const BAND: Record<string, string> = {
@@ -38,28 +41,25 @@ export function PipelineLog() {
 
   return (
     <section className="card">
-      <header className="card__head"><h3>Pipeline activity</h3></header>
+      <header className="card__head"><h3>{translate("pipe.title")}</h3></header>
       <p className="muted small">
-        The last {runs.length} attempts by the ingestion pipeline, newest first — each one a
-        record written when it ran. <b>Refused and skipped runs are shown too.</b> A cycle
-        delivered too incompletely to trust is rejected rather than published, because a
-        short rainfall total would understate the quantity that drives most busts. A
-        refusal here is the guard working.
-        {refused > 0 ? <> {refused} of these {runs.length} did not ingest.</> : null}
+        {rich("pipe.intro", { n: runs.length }, [<b />])}
+        {refused > 0 ? translate("pipe.refused", { refused, n: runs.length }) : null}
       </p>
       <div className="tablewrap">
         <table className="dtable">
           <thead>
             <tr>
-              <th>started (IST)</th><th>what</th><th>target</th><th>status</th>
-              <th>rows</th><th>took</th>
+              <th>{translate("pipe.colStarted")}</th><th>{translate("pipe.colWhat")}</th>
+              <th>{translate("pipe.colTarget")}</th><th>{translate("pipe.colStatus")}</th>
+              <th>{translate("pipe.colRows")}</th><th>{translate("pipe.colTook")}</th>
             </tr>
           </thead>
           <tbody>
             {visible.map((r) => (
               <tr key={r.id}>
                 <td className="mono small">{when(r.started_at)}</td>
-                <td>{LABEL[r.kind] ?? r.kind}</td>
+                <td>{LABEL[r.kind]?.() ?? r.kind}</td>
                 <td className="mono small">{r.target ?? "—"}</td>
                 <td>
                   <span className={`dot dot--${BAND[r.status] ?? "medium"}`} />{" "}
@@ -78,7 +78,7 @@ export function PipelineLog() {
       {runs.length > VISIBLE ? (
         <div className="tablemore">
           <button type="button" className="chip" onClick={() => setShowAll((s) => !s)}>
-            {showAll ? "Show fewer" : `Show all ${runs.length}`}
+            {showAll ? translate("pipe.fewer") : translate("pipe.all", { n: runs.length })}
           </button>
         </div>
       ) : null}
@@ -88,14 +88,14 @@ export function PipelineLog() {
       {runs[0]?.detail ? (
         <details className="pipelog__detail">
           <summary className="muted small">
-            Latest run&apos;s raw log{/fail/i.test(runs[0].detail) ? " (it includes failed requests)" : ""}
+            {translate("pipe.rawLog")}{/fail/i.test(runs[0].detail) ? translate("pipe.rawFail") : ""}
           </summary>
           <p className="muted small mono" style={{ wordBreak: "break-word" }}>{runs[0].detail}</p>
         </details>
       ) : null}
       {runs.find((r) => r.error) ? (
         <p className="muted small">
-          Most recent error: {runs.find((r) => r.error)?.error?.slice(0, 240)}
+          {translate("pipe.lastError", { err: runs.find((r) => r.error)?.error?.slice(0, 240) ?? "" })}
         </p>
       ) : null}
     </section>

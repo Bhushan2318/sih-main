@@ -1,3 +1,4 @@
+import { translate } from "../../i18n";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { triggerCycleRun } from "../../api/ingest";
 import { useIngestStatus } from "../../hooks/useDashboardData";
@@ -28,14 +29,14 @@ export function FeedFreshness() {
         <span className="feed-strip__text">
           {data.last_cycle_ingested ? (
             <>
-              Forecast cycle{" "}
-              <b title="Forecast runs are issued at fixed hours in UTC (00, 06, 12, 18Z) and are named by them worldwide, so this label is not converted to local time.">
+              {translate("feed.cycle")}{" "}
+              <b title={translate("feed.utcTitle")}>
                 {data.last_cycle_ingested}Z
               </b>
-              {last?.finished_at ? <> · ingested {relative(last.finished_at)}</> : null}
+              {last?.finished_at ? translate("feed.ingested", { when: relative(last.finished_at) }) : null}
             </>
           ) : (
-            <>No live cycle ingested yet — showing whatever is in the store</>
+            <>{translate("feed.none")}</>
           )}
         </span>
       </div>
@@ -43,11 +44,11 @@ export function FeedFreshness() {
       <div className="feed-strip__meta">
         {data.scheduler.running ? (
           <span className="muted small">
-            auto-pull every {Math.round(data.scheduler.tick_seconds / 60)} min
-            {data.scheduler.next_tick ? ` · next ${clock(data.scheduler.next_tick)} IST` : ""}
+            {translate("feed.auto", { min: Math.round(data.scheduler.tick_seconds / 60) })}
+            {data.scheduler.next_tick ? translate("feed.next", { time: clock(data.scheduler.next_tick) }) : ""}
           </span>
         ) : (
-          <span className="muted small">auto-pull off</span>
+          <span className="muted small">{translate("feed.off")}</span>
         )}
         {data.enabled ? (
           <button
@@ -56,23 +57,22 @@ export function FeedFreshness() {
             onClick={() => refresh.mutate()}
             disabled={refresh.isPending || last?.status === "running"}
           >
-            {refresh.isPending || last?.status === "running" ? "Pulling…" : "Refresh now"}
+            {refresh.isPending || last?.status === "running" ? translate("feed.pulling") : translate("feed.refresh")}
           </button>
         ) : null}
       </div>
 
       {stale ? (
         <p className="warn small feed-strip__error" role="status">
-          This forecast cycle is {Math.round(ageH as number)} hours old - newer cycles have not
-          arrived, so the risk shown here may be out of date.
+          {translate("feed.stale", { h: Math.round(ageH as number) })}
         </p>
       ) : null}
       {failed && last?.error ? (
-        <p className="warn small feed-strip__error">Last pull failed: {last.error}</p>
+        <p className="warn small feed-strip__error">{translate("feed.failed", { err: last.error })}</p>
       ) : null}
       {refresh.isSuccess ? (
         <p className="muted small feed-strip__error">
-          Pull started — a cycle takes a couple of minutes to download and ingest.
+          {translate("feed.started")}
         </p>
       ) : null}
     </div>
@@ -102,12 +102,12 @@ function feedState(running: boolean, failed: boolean): string {
 function relative(iso: string): string {
   const then = new Date(iso.endsWith("Z") ? iso : `${iso}Z`).getTime();
   const mins = Math.round((Date.now() - then) / 60000);
-  if (!Number.isFinite(mins)) return "recently";
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins} min ago`;
+  if (!Number.isFinite(mins)) return translate("time.recently");
+  if (mins < 1) return translate("time.now");
+  if (mins < 60) return translate("time.min", { n: mins });
   const hrs = Math.round(mins / 60);
-  if (hrs < 24) return `${hrs} h ago`;
-  return `${Math.round(hrs / 24)} d ago`;
+  if (hrs < 24) return translate("time.h", { n: hrs });
+  return translate("time.d", { n: Math.round(hrs / 24) });
 }
 
 function clock(iso: string): string {

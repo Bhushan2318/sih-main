@@ -1,3 +1,4 @@
+import { translate } from "../../i18n";
 import { geoMercator, geoPath } from "d3-geo";
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent } from "react";
@@ -335,12 +336,8 @@ export function IndiaChoroplethMap({
   function tooltipFor(t: HoverTarget): { title: string; body: string[] } | null {
     if (t.kind === "claimed") {
       return {
-        title: "Claimed territory",
-        body: [
-          "Not scored - no forecast or observation data",
-          "Shown so India's outline is complete",
-          "Shaded like Jammu and Kashmir, not measured",
-        ],
+        title: translate("map.claimed"),
+        body: [translate("map.claimed1"), translate("map.claimed2"), translate("map.claimed3")],
       };
     }
     if (t.kind === "state") {
@@ -351,12 +348,15 @@ export function IndiaChoroplethMap({
         title: f.properties.state_name,
         body: roll
           ? [
-              `${aggregation === "worst" ? "Worst district" : "Mean of districts"}: ${(roll.value * 100).toFixed(1)}%`,
-              roll.worst ? `Worst: ${roll.worst.region_name}` : "",
-              `${roll.n} district${roll.n === 1 ? "" : "s"} scored`,
-              "Click to open districts",
+              translate("map.rollValue", {
+                how: translate(aggregation === "worst" ? "map.worstDistrict" : "map.meanDistricts"),
+                pct: (roll.value * 100).toFixed(1),
+              }),
+              roll.worst ? translate("map.worstName", { name: roll.worst.region_name ?? "" }) : "",
+              translate(roll.n === 1 ? "map.scoredOne" : "map.scoredMany", { n: roll.n }),
+              translate("map.clickOpen"),
             ].filter(Boolean)
-          : ["No district in this state is scored yet"],
+          : [translate("map.noneScored")],
       };
     }
     const f = shown.find((x) => x.properties.region_id === t.id);
@@ -366,7 +366,7 @@ export function IndiaChoroplethMap({
     const band = scored && region ? riskBandForRegion(region, cuts) : null;
     return {
       title: districtLabel(f.properties),
-      body: scored && region ? districtTooltipLines(region, band) : ["No forecast data for this district"],
+      body: scored && region ? districtTooltipLines(region, band) : [translate("map.noDistrictData")],
     };
   }
 
@@ -377,8 +377,8 @@ export function IndiaChoroplethMap({
           <input
             type="search"
             value={query}
-            placeholder={activeState ? `Find a district…` : "Find any district in India…"}
-            aria-label="Find a district"
+            placeholder={activeState ? translate("map.findIn") : translate("map.findAll")}
+            aria-label={translate("map.findAria")}
             onChange={(e) => setQuery(e.target.value)}
           />
           {suggestions.length > 0 ? (
@@ -406,13 +406,13 @@ export function IndiaChoroplethMap({
         <div className="map-controls__row">
           {activeState ? (
             <button type="button" className="map-back" onClick={() => setActiveState(null)}>
-              ← All India
+              {translate("map.back")}
             </button>
           ) : (
-            <span className="map-level">All India · {states.length} states and UTs</span>
+            <span className="map-level">{translate("map.allIndia", { n: states.length })}</span>
           )}
           {!activeState ? (
-            <div className="map-agg" role="group" aria-label="How a state is coloured">
+            <div className="map-agg" role="group" aria-label={translate("map.aggAria")}>
               {(["worst", "mean"] as Aggregation[]).map((a) => (
                 <button
                   key={a}
@@ -420,14 +420,14 @@ export function IndiaChoroplethMap({
                   className={aggregation === a ? "is-on" : ""}
                   onClick={() => setAggregation(a)}
                 >
-                  {a === "worst" ? "Worst district" : "Mean of districts"}
+                  {translate(a === "worst" ? "map.worstDistrict" : "map.meanDistricts")}
                 </button>
               ))}
             </div>
           ) : (
             <span className="map-level">
               {/* Lakshadweep is one district, and this read "1 districts" until now. */}
-              {activeStateName} · {shown.length} district{shown.length === 1 ? "" : "s"}
+              {translate(shown.length === 1 ? "map.districtsOne" : "map.districtsMany", { state: activeStateName ?? "", n: shown.length })}
             </span>
           )}
         </div>
@@ -435,8 +435,7 @@ export function IndiaChoroplethMap({
 
       {staleGrain ? (
         <p className="map-notice">
-          This forecast cycle is stored by state, not by district, so the map has nothing
-          to colour. It fills in once the archive is re-fetched at district resolution.
+          {translate("map.stale")}
         </p>
       ) : null}
 
@@ -448,7 +447,7 @@ export function IndiaChoroplethMap({
         // axe reporting nested interactive controls. A group keeps the label and leaves
         // the regions reachable.
         role="group"
-        aria-label={activeState ? `${activeStateName} by district` : "India forecast bust risk by state"}
+        aria-label={activeState ? translate("map.byDistrict", { state: activeStateName ?? "" }) : translate("map.byState")}
       >
         <g>
           {!activeState && claimedTerritory ? (
@@ -459,7 +458,7 @@ export function IndiaChoroplethMap({
               // A bare <path> has no implicit role, and aria-label is prohibited on one -
               // so this label was being dropped. It is not interactive, hence img.
               role="img"
-              aria-label="Claimed territory, not scored: no district-level forecast data"
+              aria-label={translate("map.claimedAria")}
               // Hoverable but not clickable: there is nothing to drill into, and the
               // colour is inherited from Jammu and Kashmir rather than measured here.
               // Saying so on hover is the whole point - otherwise this reads as a
@@ -479,7 +478,7 @@ export function IndiaChoroplethMap({
                     className={["region", band ? `region--${band}` : "region--nodata"].join(" ")}
                     tabIndex={0}
                     role="button"
-                    aria-label={`${f.properties.state_name}${band ? `, ${bandLabel(band)} risk` : ", no data"}. Open districts.`}
+                    aria-label={band ? translate("map.stateAriaBand", { name: f.properties.state_name, band: bandLabel(band) }) : translate("map.stateAriaNone", { name: f.properties.state_name })}
                     onClick={() => setActiveState(f.properties.state_id)}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" || e.key === " ") {
@@ -508,7 +507,7 @@ export function IndiaChoroplethMap({
                     ].join(" ")}
                     tabIndex={scored ? 0 : -1}
                     role={scored ? "button" : undefined}
-                    aria-label={`${districtLabel(p)}${band ? `, ${bandLabel(band)} risk` : ", no data"}`}
+                    aria-label={band ? translate("map.distAriaBand", { name: districtLabel(p), band: bandLabel(band) }) : translate("map.distAriaNone", { name: districtLabel(p) })}
                     onClick={() => { if (scored) onSelect(p.region_id); }}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" || e.key === " ") {

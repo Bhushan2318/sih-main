@@ -1,3 +1,5 @@
+import { rich } from "../../i18n/rich";
+import { translate } from "../../i18n";
 import { useEffect, useMemo, useState } from "react";
 import {
   CartesianGrid, Line, LineChart, ReferenceDot, ReferenceLine,
@@ -41,12 +43,9 @@ export function EconomicValueCard({ data }: { data?: ModelStatusResponse }) {
   if (!data?.model_trained || !served) return null;
   if (!curve.length) {
     return (
-      <section className="card" aria-label="What acting on this is worth">
-        <header className="card__head"><h3>Is it worth acting on?</h3></header>
-        <p className="muted small">
-          This run was scored before this measurement existed. It appears after the next
-          retrain.
-        </p>
+      <section className="card" aria-label={translate("ev.aria")}>
+        <header className="card__head"><h3>{translate("ev.title")}</h3></header>
+        <p className="muted small">{translate("ev.notYet")}</p>
       </section>
     );
   }
@@ -61,20 +60,18 @@ export function EconomicValueCard({ data }: { data?: ModelStatusResponse }) {
   const atPeak = peak != null && Math.abs(current - peak.cost_loss_ratio) < 0.005;
 
   return (
-    <section className="card evcard" aria-label="What acting on this is worth">
+    <section className="card evcard" aria-label={translate("ev.aria")}>
       <header className="card__head">
-        <h3>Is it worth acting on?</h3>
+        <h3>{translate("ev.title")}</h3>
       </header>
 
       <p className="muted small">
-        A warning is only useful if acting on it costs less than the damage it prevents.
-        That trade is different for everyone, so pick yours:
+        {translate("ev.intro")}
       </p>
 
       <div className="evcard__slider">
         <label htmlFor="ev-alpha">
-          Acting early costs me <b className="mono">₹{rupees}</b> for every{" "}
-          <b className="mono">₹100</b> of damage a bust would cause
+          {rich("ev.slider", { r: rupees }, [<b className="mono" />])}
         </label>
         <input
           id="ev-alpha"
@@ -84,25 +81,22 @@ export function EconomicValueCard({ data }: { data?: ModelStatusResponse }) {
           step={1}
           value={rupees}
           onChange={(e) => setAlpha(Number(e.target.value) / 100)}
-          aria-valuetext={`acting costs ${rupees} rupees per 100 of damage`}
+          aria-valuetext={translate("ev.valuetext", { r: rupees })}
         />
       </div>
 
       <p className="evcard__answer">
-        Then following these forecasts saves you{" "}
-        <b>{captured == null ? "—" : `${captured}%`}</b> of what a{" "}
-        <i>perfect</i> forecast would have saved.
+        {rich("ev.answer", { pct: captured == null ? "—" : `${captured}%` }, [<b />, <i />])}
       </p>
 
       <p className="muted small">
-        A perfect forecast is <b>100%</b>. Never looking at the forecast at all — always
-        act, or never act — is <b>0%</b>.
+        {rich("ev.scale", undefined, [<b />])}
         {peak ? (
           atPeak ? (
-            <> This is the trade where the model helps most.</>
+            translate("ev.atPeak")
           ) : (
-            <> It helps most at <b className="mono">₹{Math.round(peak.cost_loss_ratio * 100)}</b>,
-              where it reaches <b>{Math.round(peak.value * 100)}%</b>.</>
+            rich("ev.peak", { r: Math.round(peak.cost_loss_ratio * 100), pct: Math.round(peak.value * 100) },
+              [<b className="mono" />, <b />])
           )
         ) : null}
       </p>
@@ -136,10 +130,7 @@ export function EconomicValueCard({ data }: { data?: ModelStatusResponse }) {
       </div>
 
       <p className="muted small">
-        Left to right: what acting costs you, in rupees per ₹100 of damage. Up the side:
-        how much of a perfect forecast&apos;s value you keep. The curve peaks in the
-        middle because that is where a warning actually changes what you would have done
-        anyway.
+        {translate("ev.axes")}
       </p>
     </section>
   );
@@ -153,8 +144,8 @@ function ValueTip({ active, payload }: {
   const p = payload[0].payload;
   return (
     <div className="charttip">
-      <strong>₹{p.cost} to act, per ₹100 of damage</strong>
-      <span>keeps {p.captured}% of a perfect forecast&apos;s value</span>
+      <strong>{translate("ev.tipCost", { c: p.cost })}</strong>
+      <span>{translate("ev.tipKeeps", { p: p.captured })}</span>
     </div>
   );
 }

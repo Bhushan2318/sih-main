@@ -1,3 +1,4 @@
+import { translate } from "../../i18n";
 import {
   Area, CartesianGrid, ComposedChart, Line, ReferenceArea, ReferenceLine,
   ResponsiveContainer, Tooltip, XAxis, YAxis,
@@ -18,7 +19,7 @@ export function BustProbabilityCurve({ points, cuts }: {
   points: BustProbabilityPoint[];
   cuts?: RiskCuts;
 }) {
-  if (!points.length) return <p className="muted">No bust-probability curve for this region.</p>;
+  if (!points.length) return <p className="muted">{translate("curve.none")}</p>;
   const data = points.map((p) => ({
     lead: p.lead_time_days,
     probability: Number((p.bust_probability * 100).toFixed(2)),
@@ -58,9 +59,9 @@ export function BustProbabilityCurve({ points, cuts }: {
           />
           <Tooltip
             formatter={(v: number, _n, item) =>
-              [`${v}%  (${bandLabel(item.payload.band)})`, item.payload.driver ? `mostly driven by: ${variableLabel(item.payload.driver).toLowerCase()}` : "Bust risk"]
+              [`${v}%  (${bandLabel(item.payload.band)})`, item.payload.driver ? translate("curve.driven", { v: variableLabel(item.payload.driver).toLowerCase() }) : translate("curve.risk")]
             }
-            labelFormatter={(l) => `Lead day ${l}`}
+            labelFormatter={(l) => translate("lead.day", { d: l })}
           />
           <Area
             type="monotone" dataKey="probability" stroke="none" fill="url(#bustFill)"
@@ -76,10 +77,10 @@ export function BustProbabilityCurve({ points, cuts }: {
 
       {watch != null && bust != null ? (
         <p className="bandkey">
-          <span><i style={{ background: CHART.low }} />low &lt; {watch.toFixed(0)}%</span>
-          <span><i style={{ background: CHART.medium }} />watch {watch.toFixed(0)}–{bust.toFixed(0)}%</span>
-          <span><i style={{ background: CHART.high }} />bust ≥ {bust.toFixed(0)}%</span>
-          <em>band edges set from this model&rsquo;s own training run, not chosen by hand</em>
+          <span><i style={{ background: CHART.low }} />{translate("curve.low", { w: watch.toFixed(0) })}</span>
+          <span><i style={{ background: CHART.medium }} />{translate("curve.watch", { w: watch.toFixed(0), b: bust.toFixed(0) })}</span>
+          <span><i style={{ background: CHART.high }} />{translate("curve.bust", { b: bust.toFixed(0) })}</span>
+          <em>{translate("curve.edges")}</em>
         </p>
       ) : null}
     </>

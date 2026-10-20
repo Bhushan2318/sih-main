@@ -1,4 +1,8 @@
+import { translate } from "../../i18n";
 import { useMemo } from "react";
+import { variableLabel } from "../../lib/displayNames";
+import { rich } from "../../i18n/rich";
+
 import type { AllRegionsResponse, RegionsResponse } from "../../api/types";
 import {
   isScoredRegion,
@@ -18,20 +22,20 @@ export function KpiStrip({ all, day, riskCuts, onSelectRegion }: {
   if (!stats) return null;
 
   return (
-    <section className="kpis" aria-label="Cycle summary">
+    <section className="kpis" aria-label={translate("kpi.aria")}>
       <Kpi
         cap={stats.meanCap}
-        label={`Mean bust risk · ${dayLabel(stats.lead)}`}
+        label={translate("kpi.mean", { day: dayLabel(stats.lead) })}
         value={stats.mean != null ? `${(stats.mean * 100).toFixed(0)}%` : "—"}
         note={
           stats.scored
-            ? <>across <b>{stats.scored}</b> scored regions · {dayLabel(stats.lead)}</>
-            : "no scored regions for this lead day"
+            ? rich("kpi.meanNote", { n: stats.scored, day: dayLabel(stats.lead) }, [<b />])
+            : translate("kpi.noScored")
         }
       />
       <Kpi
         cap="bust"
-        label={`Bust-risk regions · ${dayLabel(stats.lead)}`}
+        label={translate("kpi.bustRegions", { day: dayLabel(stats.lead) })}
         value={
           stats.scored ? (
             <>
@@ -42,11 +46,11 @@ export function KpiStrip({ all, day, riskCuts, onSelectRegion }: {
             "—"
           )
         }
-        note={stats.scored ? <>in the bust band on {dayLabel(stats.lead)}</> : "nothing scored yet"}
+        note={stats.scored ? translate("kpi.bustNote", { day: dayLabel(stats.lead) }) : translate("kpi.nothing")}
       />
       <Kpi
         cap="blue"
-        label="Confidence change"
+        label={translate("kpi.conf")}
         value={
           stats.decayPct != null ? (
             <>
@@ -60,17 +64,15 @@ export function KpiStrip({ all, day, riskCuts, onSelectRegion }: {
         }
         note={
           stats.decayPct != null && stats.decayFrom != null && stats.decayTo != null ? (
-            <>
-              from {dayLabel(stats.decayFrom)} to {dayLabel(stats.decayTo)}
-            </>
+            translate("kpi.confNote", { from: dayLabel(stats.decayFrom), to: dayLabel(stats.decayTo) })
           ) : (
-            "needs two or more scored lead days"
+            translate("kpi.confNeeds")
           )
         }
       />
       <Kpi
         cap="watch"
-        label={`Peak risk · ${dayLabel(stats.lead)}`}
+        label={translate("kpi.peak", { day: dayLabel(stats.lead) })}
         value={stats.peak ? `${(stats.peak.value * 100).toFixed(0)}%` : "—"}
         onOpen={stats.peak && onSelectRegion ? () => onSelectRegion(stats.peak!.id) : undefined}
         note={
@@ -80,7 +82,7 @@ export function KpiStrip({ all, day, riskCuts, onSelectRegion }: {
               {stats.peak.driver ? <> · {label(stats.peak.driver)}</> : null}
             </>
           ) : (
-            "no region scored for this lead day"
+            translate("kpi.noPeak")
           )
         }
       />
@@ -169,5 +171,5 @@ function meanConfidence(day: RegionsResponse): number | null {
 }
 
 function label(variable: string): string {
-  return variable.replace(/_(c|pct|hpa|mm|ms|deg|kgm2)$/, "").replace(/_/g, " ");
+  return variableLabel(variable).toLowerCase();
 }

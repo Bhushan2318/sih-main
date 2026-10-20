@@ -1,0 +1,11 @@
+# Offline UI translation only (translate_ui_catalog.py). Never install on the serving box.
+# IndicTrans2's remote modelling code predates transformers 5; the model card warns v5
+# dropped the pipeline it relies on; and 4.45+ changed the decoder cache so its generate()
+# crashes on past_key_values. 4.44.2 is the last release it runs on.
+# PyTorch stopped publishing Intel-Mac wheels after 2.2.2; that release runs the 1B model
+# fine on CPU and still installs on Apple Silicon and Linux. 2.2 was built against NumPy 1.
+torch==2.2.2
+numpy<2
+transformers==4.44.2
+sentencepiece>=0.2
+IndicTransToolkit==1.1.1

@@ -1,3 +1,5 @@
+import { translate } from "../../i18n";
+
 const DAYS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 
 export function LeadDaySelector({ value, onChange, disabled, available }: {
@@ -8,8 +10,8 @@ export function LeadDaySelector({ value, onChange, disabled, available }: {
 }) {
   const covered = (d: number) => !available?.length || available.includes(d);
   return (
-    <div className="lead-selector" role="group" aria-label="Forecast lead day">
-      <span className="lead-selector__label">Lead day</span>
+    <div className="lead-selector" role="group" aria-label={translate("lead.group")}>
+      <span className="lead-selector__label">{translate("lead.label")}</span>
       {DAYS.map((d) => {
         const missing = !covered(d);
         return (
@@ -18,7 +20,7 @@ export function LeadDaySelector({ value, onChange, disabled, available }: {
             type="button"
             disabled={disabled || missing}
             aria-pressed={d === value}
-            title={missing ? `This cycle has no day-${d} forecast` : `Lead day ${d}`}
+            title={missing ? translate("lead.missing", { d }) : translate("lead.day", { d })}
             className={
               d === value ? "lead-btn lead-btn--active"
                 : missing ? "lead-btn lead-btn--missing" : "lead-btn"

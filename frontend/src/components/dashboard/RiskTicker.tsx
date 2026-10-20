@@ -1,3 +1,4 @@
+import { translate } from "../../i18n";
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { RegionSummary } from "../../api/types";
 import { isScoredRegion, riskBandForRegion, type RiskCuts } from "../../lib/riskBands";
@@ -74,14 +75,14 @@ export function RiskTicker({ regions, leadDay, onSelect, stateNames, riskCuts }:
           className="ticker__item"
           onClick={() => onSelect(district.region_id)}
           tabIndex={hidden ? -1 : 0}
-          title={`Worst district: ${district.region_name ?? district.region_id}`}
+          title={translate("tick.title", { name: district.region_name ?? district.region_id })}
         >
           <i className={`ticker__dot ticker__dot--${riskBandForRegion(district, riskCuts) ?? "none"}`} aria-hidden="true" />
           <span className="ticker__name">{stateNames.get(stateId) ?? stateId}</span>
           <span className="ticker__value">
             {((district.bust_probability as number) * 100).toFixed(0)}%
           </span>
-          <span className="ticker__unit">worst district · {dayLabel(leadDay)}</span>
+          <span className="ticker__unit">{translate("tick.unit", { day: dayLabel(leadDay) })}</span>
         </button>
       ))}
     </div>
@@ -91,7 +92,7 @@ export function RiskTicker({ regions, leadDay, onSelect, stateNames, riskCuts }:
     <div
       className="ticker"
       role="region"
-      aria-label={`Worst district per state, lead day ${leadDay}`}
+      aria-label={translate("tick.aria", { d: leadDay })}
       onMouseEnter={() => setPaused(true)}
       onMouseLeave={() => setPaused(false)}
 

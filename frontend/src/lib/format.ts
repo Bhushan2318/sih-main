@@ -1,3 +1,5 @@
+import { locale, translate } from "../i18n";
+
 /** Fixed-precision metric display. `dp` is required — the same-looking metric (e.g. bss,
  * roc_auc) is shown at different precision in different contexts, so there is no single
  * sane default; callers must say which they mean. */
@@ -8,12 +10,12 @@ export function formatMetric(v: unknown, dp: number): string {
 /** A lead day in words: "Day 3". Every lead-day label goes through here, so none reads
  * as the cryptic "D3". */
 export function dayLabel(lead: number): string {
-  return `Day ${lead}`;
+  return translate("day.one", { n: lead });
 }
 
 /** A run of lead days: "Days 1–3", or "Day 4" when it is one day. */
 export function dayRange(from: number, to: number): string {
-  return from === to ? dayLabel(from) : `Days ${from}–${to}`;
+  return from === to ? dayLabel(from) : translate("day.range", { from, to });
 }
 
 /** Precision that scales with magnitude, so a genuinely small value (0.03) still reads as
@@ -36,8 +38,8 @@ export function axisTick(v: number): string {
 /** The top-bar cycle chip. It used to read "2026-09-26 → 2026-09-26" on Day 1, where the
  * issue and valid dates coincide, which looked like a typo rather than two dates. */
 export function cycleChipLabel(init: string, valid: string | null | undefined, lead: number): string {
-  const issued = `Issued ${formatDayMonthUtc(init)}`;
-  return valid ? `${issued} · valid ${formatDayMonthUtc(valid)} (${dayLabel(lead)})` : issued;
+  const issued = translate("chip.issued", { date: formatDayMonthUtc(init) });
+  return valid ? translate("chip.valid", { issued, date: formatDayMonthUtc(valid), day: dayLabel(lead) }) : issued;
 }
 
 // Fixed names: the en-GB locale spells September "Sept" or "Sep" depending on the browser's ICU.
@@ -46,6 +48,12 @@ const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "
 function formatDayMonthUtc(iso: string): string {
   const [y, m, d] = iso.split("-").map(Number);
   if (!y || !m || !d || m > 12) return iso;
+  if (locale() !== "en-GB") {
+    const local = new Date(Date.UTC(y, m - 1, d)).toLocaleDateString(locale(), { day: "numeric", month: "short", timeZone: "UTC" });
+    // A browser without month names for this language (Chrome has none for Odia) answers
+    // in English; plain numbers read the same in every language.
+    return /[A-Za-z]/.test(local) ? `${d}/${m}` : local;
+  }
   return `${d} ${MONTHS[m - 1]}`;
 }
 
@@ -54,7 +62,7 @@ function formatDayMonthUtc(iso: string): string {
 export function formatDateUtc(iso: string): string {
   const [y, m, d] = iso.split("-").map(Number);
   if (!y || !m || !d) return iso;
-  return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString("en-GB", {
+  return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString(locale(), {
     day: "numeric", month: "short", year: "numeric", timeZone: "UTC",
   });
 }

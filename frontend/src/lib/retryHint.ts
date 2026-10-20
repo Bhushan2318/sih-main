@@ -1,3 +1,5 @@
+import { translate } from "../i18n";
+
 /**
  * What to say while a request is being retried, or nothing on the first attempt.
  *
@@ -18,16 +20,10 @@
  */
 export function slowHint(elapsedSeconds: number): string | undefined {
   if (elapsedSeconds < 5) return undefined;
-  return (
-    "Still working: this scores every district for all ten days. It runs on a free server " +
-    "that sleeps when idle, so the first visit after a quiet spell can take up to a minute."
-  );
+  return translate("hint.slow");
 }
 
 export function retryingHint(failureCount: number): string | undefined {
   if (failureCount < 1) return undefined;
-  return (
-    `The server has not answered yet — retrying (attempt ${failureCount + 1}). ` +
-    "This runs on a free tier that sleeps when idle, so waking it can take up to a minute."
-  );
+  return translate("hint.retry", { n: failureCount + 1 });
 }

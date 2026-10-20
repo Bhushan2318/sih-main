@@ -1,3 +1,4 @@
+import { translate } from "../../i18n";
 import { useEffect, useRef, useState } from "react";
 
 /**
@@ -13,7 +14,7 @@ import { useEffect, useRef, useState } from "react";
  * so it is never assumed - the button reports what actually happened rather than
  * claiming success.
  */
-export function CopyLinkButton({ label = "Copy link" }: { label?: string }) {
+export function CopyLinkButton({ label = translate("copy.label") }: { label?: string }) {
   const [said, setSaid] = useState<string | null>(null);
   const timer = useRef<number | null>(null);
 
@@ -32,10 +33,10 @@ export function CopyLinkButton({ label = "Copy link" }: { label?: string }) {
     try {
       if (!navigator.clipboard) throw new Error("no clipboard");
       await navigator.clipboard.writeText(url);
-      announce("Link copied");
+      announce(translate("copy.done"));
     } catch {
       // Not a failure worth a dialog: show the address so it can be copied by hand.
-      window.prompt("Copy this link", url);
+      window.prompt(translate("copy.prompt"), url);
       setSaid(null);
     }
   };
@@ -50,7 +51,7 @@ export function CopyLinkButton({ label = "Copy link" }: { label?: string }) {
         className="chip"
         onClick={copy}
         aria-label={label}
-        title="Copy a link to exactly this view"
+        title={translate("copy.title")}
       >
         {said ?? label}
       </button>
