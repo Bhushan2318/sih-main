@@ -271,7 +271,7 @@ export function DashboardPage() {
                     available={regions?.available_lead_days}
                   />
                 )}
-                {regions ? <MapLegend definitions={regions.risk_band_definitions} /> : null}
+                {regions ? <MapLegend definitions={regions.risk_band_definitions} parts={regions.risk_band_definitions_i18n} /> : null}
               </div>
 
               {regionsQuery.isLoading ? (

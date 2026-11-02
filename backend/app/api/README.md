@@ -51,6 +51,10 @@ Every response distinguishes "no model / no data" from "a real number":
   observed line.
 - `risk_band_definitions.basis` states that the bands are percentiles of the current run's
   validation-split probabilities, not fixed cutoffs.
+- Backend-written sentences also come as translatable parts: `steps[].narration_parts`,
+  `summary_parts`, `national_note_parts` and `risk_band_definitions_i18n`, each a
+  `{key, params}` whose English template is in `app/services/server_text.py` and, word for
+  word, in the frontend catalogue. The plain English fields are unchanged.
 - `/api/model/status.validation_metrics` reports which `split` each number came from,
   preferring the held-out `test` split.
 

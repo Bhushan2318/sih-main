@@ -11,6 +11,12 @@ class Schema(BaseModel):
     model_config = ConfigDict(protected_namespaces=())
 
 
+class TextPart(Schema):
+    """One translatable piece of a backend-written sentence (app/services/server_text.py)."""
+    key: str
+    params: dict = Field(default_factory=dict)
+
+
 class MappingProposal(Schema):
     source_column: str
     normalized: str
@@ -71,6 +77,7 @@ class RegionsResponse(Schema):
     init_date: Optional[date] = None
     valid_date: Optional[date] = None
     risk_band_definitions: dict = Field(default_factory=dict)
+    risk_band_definitions_i18n: dict = Field(default_factory=dict)
     regions: list = Field(default_factory=list)
     message: Optional[str] = None
     available_lead_days: list = Field(default_factory=list)
@@ -83,6 +90,7 @@ class AllRegionsResponse(Schema):
     current_run_id: Optional[str] = None
     init_date: Optional[date] = None
     risk_band_definitions: dict = Field(default_factory=dict)
+    risk_band_definitions_i18n: dict = Field(default_factory=dict)
     available_lead_days: list = Field(default_factory=list)
     days: list = Field(default_factory=list)
     message: Optional[str] = None
@@ -160,6 +168,7 @@ class AlertsResponse(Schema):
     generated_at: datetime
     model_trained: bool
     risk_band_definitions: dict = Field(default_factory=dict)
+    risk_band_definitions_i18n: dict = Field(default_factory=dict)
     alerts: list = Field(default_factory=list)
     message: Optional[str] = None
 
@@ -230,6 +239,7 @@ class ReplayLeadStep(Schema):
     n_medium: int = 0
     mean_bust_probability: Optional[float] = None
     narration: str = ""
+    narration_parts: list[TextPart] = Field(default_factory=list)
 
 
 class ReplayFocusPoint(Schema):
@@ -259,7 +269,9 @@ class ReplayResponse(Schema):
     focus: Optional[ReplayFocusSeries] = None
     focus_options: list = Field(default_factory=list)
     risk_band_definitions: dict = Field(default_factory=dict)
+    risk_band_definitions_i18n: dict = Field(default_factory=dict)
     summary_narration: Optional[str] = None
+    summary_parts: list[TextPart] = Field(default_factory=list)
     message: Optional[str] = None
 
 
@@ -342,6 +354,7 @@ class EnsembleDivergenceResponse(Schema):
     national: list = Field(default_factory=list)
     skill: Optional[ModelSkill] = None
     national_note: Optional[str] = None
+    national_note_parts: list[TextPart] = Field(default_factory=list)
 
     eyebrow: Optional[str] = None
     headline_note: Optional[str] = None

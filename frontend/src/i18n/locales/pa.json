@@ -533,6 +533,30 @@
   "dash.nothing": "ਇਸ ਭਵਿੱਖਬਾਣੀ ਵਾਲੇ ਦਿਨ ਲਈ ਕੁਝ ਵੀ ਨਹੀਂ ਦਿਖਾਉਣਾ ਹੈ",
   "dash.watch": "ਦੇਖੋ ਇਹ ਇੱਕ ਅਸਲੀ ਬਸਟ ਦੀ ਭਵਿੱਖਬਾਣੀ ਕਰਦਾ ਹੈ →",
   "dash.map": "ਰਾਸ਼ਟਰੀ ਨਕਸ਼ਾ",
+  "srv.rp.step": "ਦਿਨ {{lead}}-{{body}}।",
+  "srv.rp.sep": "; ",
+  "srv.rp.climbs": "ਬਸਟ ਉੱਤੇ ਜੋਖਮ {{region}} ਚਡ਼੍ਹਦਾ ਹੈ {{from}} → {{to}}",
+  "srv.rp.opens": "{{region}} ਸਭ ਤੋਂ ਵੱਧ ਬਸਟ ਜੋਖਮ ਦੇ ਨਾਲ {{p}}'ਤੇ ਖੁੱਲ੍ਹਦਾ ਹੈ",
+  "srv.rp.still": "{{region}} ਅਜੇ ਵੀ {{p}} ਉੱਤੇ ਸਭ ਤੋਂ ਵੱਧ ਬਸਟ ਜੋਖਮ ਰੱਖਦਾ ਹੈ",
+  "srv.rp.driven": "{{var}} ਗਲਤੀ ਦੁਆਰਾ ਚਲਾਇਆ ਗਿਆ",
+  "srv.rp.nowDriven": "ਹੁਣ {{var}} ਗਲਤੀ ਦੁਆਰਾ ਚਲਾਇਆ ਜਾਂਦਾ ਹੈ",
+  "srv.rp.high1": "{{n}} ਖੇਤਰ ਉੱਚ-ਜੋਖਮ ਵਾਲਾ",
+  "srv.rp.highN": "{{n}} ਖੇਤਰ ਉੱਚ-ਜੋਖਮ ਵਾਲੇ ਹਨ",
+  "srv.rp.nowHigh1": "{{n}} ਖੇਤਰ ਹੁਣ ਉੱਚ-ਜੋਖਮ ਵਾਲਾ ਹੈ",
+  "srv.rp.nowHighN": "{{n}} ਖੇਤਰ ਹੁਣ ਉੱਚ ਜੋਖਮ ਵਾਲੇ ਹਨ",
+  "srv.rs.climbs": "ਸ਼ੁਰੂਆਤੀ {{date}}: ਮਤਲਬ ਬਸਟ ਜੋਖਮ ਦਿਨ {{d0}} ਨੂੰ {{first}} ਤੋਂ ਦਿਨ {{d1}} ਨੂੰ {{last}} ਤੱਕ ਚਡ਼੍ਹ ਜਾਂਦਾ ਹੈ।",
+  "srv.rs.eases": "ਸ਼ੁਰੂਆਤੀ {{date}}: ਮਤਲਬ ਬਸਟ ਜੋਖਮ ਦਿਨ {{d0}} ਨੂੰ {{first}} ਤੋਂ ਦਿਨ {{d1}} ਨੂੰ {{last}} ਤੱਕ ਘੱਟ ਜਾਂਦਾ ਹੈ।",
+  "srv.rs.holds": "ਸ਼ੁਰੂਆਤੀ {{date}}: ਮਤਲਬ ਬਸਟ ਜੋਖਮ ਦਿਨ {{d0}} ਨੂੰ {{first}} ਤੋਂ ਦਿਨ {{d1}} ਨੂੰ {{last}} ਤੱਕ ਹੁੰਦਾ ਹੈ।",
+  "srv.rs.peakLed": " ਇਹ ਦਿਨ {{lead}} ਨੂੰ {{p}} ਉੱਤੇ {{region}} ਉੱਤੇ ਸਿਖਰ ਉੱਤੇ ਪਹੁੰਚ ਗਿਆ, ਜਿਸ ਦੀ ਅਗਵਾਈ {{var}} ਗਲਤੀ ਨੇ ਕੀਤੀ।",
+  "srv.rs.peak": " ਇਹ ਦਿਨ {{lead}} ਨੂੰ {{region}} ਉੱਤੇ {{p}} ਉੱਤੇ ਸਿਖਰ ਉੱਤੇ ਹੈ।",
+  "srv.rs.verified": " ਇਸ ਦਾ ਭਵਿੱਖਬਾਣੀ-ਬਨਾਮ-ਨਿਰੀਖਤ ਟਰੈਕ ਹੇਠਾਂ ਦਿੱਤਾ ਗਿਆ ਹੈ।",
+  "srv.rs.unverified": " ਇਹ ਚੱਕਰ ਅਜੇ ਤੱਕ ਤਸਦੀਕ ਨਹੀਂ ਕੀਤਾ ਗਿਆ ਹੈ, ਇਸ ਲਈ ਕੋਈ ਨਿਰੀਖਤ ਟਰੈਕ ਨਹੀਂ ਖਿੱਚਿਆ ਗਿਆ ਹੈ।",
+  "srv.nat.climbs": "ਜੋਖਮ ਅੰਕ ਵਾਲੇ ਸਾਰੇ {{n}} ਖੇਤਰਾਂ ਵਿੱਚ, ਔਸਤ ਬਸਟ ਸੰਭਾਵਨਾ ਦਿਨ {{d0}} ਉੱਤੇ {{first}} ਤੋਂ ਦਿਨ {{d1}} ਉੱਤੇ {{last}} ਤੱਕ ਚਡ਼੍ਹਦੀ ਹੈ।",
+  "srv.nat.falls": "ਜੋਖਮ ਅੰਕ ਵਾਲੇ ਸਾਰੇ {{n}} ਖੇਤਰਾਂ ਵਿੱਚ, ਔਸਤ ਬਸਟ ਸੰਭਾਵਨਾ ਦਿਨ {{d0}} ਉੱਤੇ {{first}} ਤੋਂ ਦਿਨ {{d1}} ਉੱਤੇ {{last}} ਤੱਕ ਡਿੱਗਦੀ ਹੈ।",
+  "srv.band.low": "ਬਸਟ ਜੋਖਮ {{p}}% ਤੋਂ ਘੱਟ ਹੈ",
+  "srv.band.medium": "ਬਸਟ ਜੋਖਮ {{lo}}% ਤੋਂ {{hi}}% ਤੱਕ",
+  "srv.band.high": "ਬਸਟ ਜੋਖਮ {{p}}% ਜਾਂ ਇਸ ਤੋਂ ਉੱਪਰ",
+  "srv.band.basis": "ਬੈਂਡ ਕਿਨਾਰਿਆਂ ਨੂੰ ਇਸ ਮਾਡਲ ਦੀਆਂ ਆਪਣੀਆਂ ਭਵਿੱਖਬਾਣੀਆਂ ਇਸ ਦੇ ਪ੍ਰਮਾਣਿਕਤਾ ਡੇਟਾ ਉੱਤੇ ਕਿਵੇਂ ਫੈਲਾਈਆਂ ਗਈਆਂ ਸਨ, ਇਸ ਤੋਂ ਸੈੱਟ ਕੀਤਾ ਗਿਆ ਹੈ, ਹੱਥ ਨਾਲ ਨਹੀਂ ਚੁਣਿਆ ਗਿਆ।",
   "_meta": {
     "brand.home": {
       "src": "df5e2f6d1ccf",
@@ -3230,6 +3254,128 @@
     },
     "dash.map": {
       "src": "b1bfa6d7b765",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.step": {
+      "src": "b9d7045f6a52",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.sep": {
+      "src": "0a2d3f8f9b72",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.climbs": {
+      "src": "0e863f3c3ff0",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.opens": {
+      "src": "83af546d3b92",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.still": {
+      "src": "8a0615104b7c",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.driven": {
+      "src": "90ef7388fcd8",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.nowDriven": {
+      "src": "381c2254bb02",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.high1": {
+      "src": "445e08648c9a",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.highN": {
+      "src": "0bcd9500b89e",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.nowHigh1": {
+      "src": "ede9b3d6383a",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.nowHighN": {
+      "src": "cdcab7a50a17",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rs.climbs": {
+      "src": "152e00ce8e4b",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rs.eases": {
+      "src": "993f2dcbdce1",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rs.holds": {
+      "src": "d87778f31df1",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rs.peakLed": {
+      "src": "282d43a3345e",
+      "machine": true,
+      "reviewed": false,
+      "markup": "dropped",
+      "params": "as-numbers"
+    },
+    "srv.rs.peak": {
+      "src": "34998934a5f7",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rs.verified": {
+      "src": "4aaf9bf8531f",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rs.unverified": {
+      "src": "96365e5236c1",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.nat.climbs": {
+      "src": "e8a95d1fbf56",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.nat.falls": {
+      "src": "6957b7f318fe",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.band.low": {
+      "src": "90fe9b75da24",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.band.medium": {
+      "src": "1e4053031f39",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.band.high": {
+      "src": "923d35eb7a40",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.band.basis": {
+      "src": "a3044e35c1b0",
       "machine": true,
       "reviewed": false
     }

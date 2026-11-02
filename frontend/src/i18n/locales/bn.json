@@ -533,6 +533,30 @@
   "dash.nothing": "এই পূর্বাভাসের দিনের জন্য কিছুই দেখানোর নেই",
   "dash.watch": "দেখুন এটি একটি বাস্তব বাস্ট-এর পূর্বাভাস দেয় →",
   "dash.map": "জাতীয় মানচিত্র",
+  "srv.rp.step": "দিন {{lead}}-{{body}}।",
+  "srv.rp.sep": "; ",
+  "srv.rp.climbs": "বাস্ট-এর উপরে {{region}}-এর ঝুঁকি বেড়ে যায় {{from}} → {{to}}",
+  "srv.rp.opens": "{{region}} {{p}} এ সর্বোচ্চ বাস্ট ঝুঁকি নিয়ে খোলে",
+  "srv.rp.still": "{{region}} এখনও {{p}}-এ সর্বোচ্চ বাস্ট ঝুঁকি বহন করে",
+  "srv.rp.driven": "{{var}} ত্রুটি দ্বারা চালিত",
+  "srv.rp.nowDriven": "এখন {{var}} ত্রুটি দ্বারা চালিত",
+  "srv.rp.high1": "{{n}} অঞ্চল উচ্চ-ঝুঁকিপূর্ণ",
+  "srv.rp.highN": "{{n}} অঞ্চলগুলি উচ্চ ঝুঁকিপূর্ণ",
+  "srv.rp.nowHigh1": "{{n}} অঞ্চল এখন উচ্চ ঝুঁকিপূর্ণ",
+  "srv.rp.nowHighN": "{{n}} অঞ্চলগুলি এখন উচ্চ ঝুঁকিপূর্ণ",
+  "srv.rs.climbs": "প্রাথমিক {{date}}: গড় বাস্ট ঝুঁকি {{d0}} দিনে {{first}} থেকে {{d1}} দিনে {{last}} পর্যন্ত উঠে যায়।",
+  "srv.rs.eases": "প্রাথমিক {{date}}: গড় বাস্ট ঝুঁকি {{d0}} দিনে {{first}} থেকে {{d1}} দিনে {{last}} পর্যন্ত সহজ হয়।",
+  "srv.rs.holds": "প্রাথমিক {{date}}: গড় বাস্ট ঝুঁকি {{d0}} দিনে {{first}} থেকে {{d1}} দিনে {{last}} পর্যন্ত থাকে।",
+  "srv.rs.peakLed": " এটি {{var}} ত্রুটির কারণে {{lead}} দিনে {{region}}-এর উপরে {{p}}-এ শীর্ষে থাকে।",
+  "srv.rs.peak": " এটি {{lead}} দিনে {{region}}-এর উপরে {{p}}-এ শীর্ষে থাকে।",
+  "srv.rs.verified": " এর পূর্বাভাস বনাম পর্যবেক্ষিত ট্র্যাকটি নীচে তালিকাভুক্ত করা হয়েছে।",
+  "srv.rs.unverified": " এই চক্রটি এখনও যাচাই করা হয়নি, তাই কোনও পর্যবেক্ষিত ট্র্যাক টানা হয়নি।",
+  "srv.nat.climbs": "ঝুঁকি স্কোর সহ সমস্ত {{n}} অঞ্চলে গড় বাস্ট সম্ভাবনা {{d0}} দিনে {{first}} থেকে {{d1}} দিনে {{last}} এ উঠে যায়।",
+  "srv.nat.falls": "ঝুঁকি স্কোর সহ সমস্ত {{n}} অঞ্চলে গড় বাস্ট সম্ভাবনা {{d0}} দিনে {{first}} থেকে {{d1}} দিনে {{last}} এ নেমে আসে।",
+  "srv.band.low": "বাস্ট ঝুঁকি {{p}}% এর নিচে",
+  "srv.band.medium": "বাস্ট ঝুঁকি {{lo}}% থেকে {{hi}}%",
+  "srv.band.high": "বাস্ট ঝুঁকি {{p}}% বা তার বেশি",
+  "srv.band.basis": "ব্যান্ড প্রান্তগুলি সেট করা হয়েছে কিভাবে এই মডেলের নিজস্ব ভবিষ্যদ্বাণীগুলি এর বৈধতা ডেটাতে ছড়িয়ে দেওয়া হয়েছিল, হাত দ্বারা নির্বাচিত নয়।",
   "_meta": {
     "brand.home": {
       "src": "df5e2f6d1ccf",
@@ -3230,6 +3254,126 @@
     },
     "dash.map": {
       "src": "b1bfa6d7b765",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.step": {
+      "src": "b9d7045f6a52",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.sep": {
+      "src": "0a2d3f8f9b72",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.climbs": {
+      "src": "0e863f3c3ff0",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.opens": {
+      "src": "83af546d3b92",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.still": {
+      "src": "8a0615104b7c",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.driven": {
+      "src": "90ef7388fcd8",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.nowDriven": {
+      "src": "381c2254bb02",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.high1": {
+      "src": "445e08648c9a",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.highN": {
+      "src": "0bcd9500b89e",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.nowHigh1": {
+      "src": "ede9b3d6383a",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.nowHighN": {
+      "src": "cdcab7a50a17",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rs.climbs": {
+      "src": "152e00ce8e4b",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rs.eases": {
+      "src": "993f2dcbdce1",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rs.holds": {
+      "src": "d87778f31df1",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rs.peakLed": {
+      "src": "282d43a3345e",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rs.peak": {
+      "src": "34998934a5f7",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rs.verified": {
+      "src": "4aaf9bf8531f",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rs.unverified": {
+      "src": "96365e5236c1",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.nat.climbs": {
+      "src": "e8a95d1fbf56",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.nat.falls": {
+      "src": "6957b7f318fe",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.band.low": {
+      "src": "90fe9b75da24",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.band.medium": {
+      "src": "1e4053031f39",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.band.high": {
+      "src": "923d35eb7a40",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.band.basis": {
+      "src": "a3044e35c1b0",
       "machine": true,
       "reviewed": false
     }

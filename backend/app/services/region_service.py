@@ -10,6 +10,7 @@ from app.api import schemas
 from app.ingestion.canonical_schema import VARIABLE_UNITS, CanonicalVariable
 from app.ml import inference, registry
 from app.ml.explain import top_factors_for
+from app.services import server_text
 from app.utils import india_districts, india_state_codes
 
 NOT_TRAINED_MSG = (
@@ -67,6 +68,18 @@ def _risk_band_definitions(state) -> dict:
     }
 
 
+def _risk_band_parts(state) -> dict:
+    """_risk_band_definitions as translatable parts (app/services/server_text.py)."""
+    cuts = state.thresholds.risk_band_cuts
+    lo, hi = f"{cuts['medium'] * 100:.0f}", f"{cuts['high'] * 100:.0f}"
+    return {
+        "low": server_text.part("srv.band.low", p=lo),
+        "medium": server_text.part("srv.band.medium", lo=lo, hi=hi),
+        "high": server_text.part("srv.band.high", p=hi),
+        "basis": server_text.part("srv.band.basis"),
+    }
+
+
 def _not_trained_day(lead_time_days: int) -> schemas.RegionsResponse:
     return schemas.RegionsResponse(
         lead_time_days=lead_time_days, model_trained=False,
@@ -91,7 +104,8 @@ def _day_response(state, scored, available: list, lead_time_days: int) -> schema
             lead_time_days=lead_time_days, model_trained=True,
             current_run_id=state.run_id, last_trained_at=_last_trained_at(),
             init_date=scored.init_date.date(),
-            risk_band_definitions=_risk_band_definitions(state), regions=[],
+            risk_band_definitions=_risk_band_definitions(state),
+            risk_band_definitions_i18n=_risk_band_parts(state), regions=[],
             available_lead_days=available,
             message=f"The current forecast cycle has no day-{lead_time_days} data.{covered}",
         )
@@ -121,6 +135,7 @@ def _day_response(state, scored, available: list, lead_time_days: int) -> schema
         init_date=scored.init_date.date(),
         valid_date=pd.to_datetime(valid).date() if pd.notna(valid) else None,
         risk_band_definitions=_risk_band_definitions(state),
+        risk_band_definitions_i18n=_risk_band_parts(state),
         regions=regions,
         available_lead_days=available,
     )
@@ -161,6 +176,7 @@ def get_all_regions() -> schemas.AllRegionsResponse:
         last_trained_at=_last_trained_at(),
         init_date=scored.init_date.date(),
         risk_band_definitions=_risk_band_definitions(state),
+        risk_band_definitions_i18n=_risk_band_parts(state),
         available_lead_days=available,
         days=[_day_response(state, scored, available, d) for d in range(1, 11)],
     )
