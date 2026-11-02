@@ -79,7 +79,15 @@ here rather than discovered live.
   0.45 → 0.55 over Days 6-10). The 2026-09-25 map instead falls from 0.50 on Day 1 to
   about 0.23 on Days 6-10. SHAP on the live classifier over that cycle's served events
   (measured 2026-09-26) splits it three ways, and misses the main cause:
-  - **The model's own leak (found 2026-09-28).** The 2017 test-year figures above were
+  - **Every figure in this entry is from run_20260922T043925Z**, the model served in
+    September. run_20261006T200800Z replaced it and is trained without
+    `forecast_error_lag` (checked 2026-11-02 in its regressors' `feature_names`), so the
+    leak below no longer applies to the served map. The shape has not been re-measured on
+    the new run. The variable-count step below still applies, because it comes from the
+    archive, not the model, and the lead-day rail now marks it: `/api/regions/all` serves
+    `variable_max_lead_days` and the row for the first unscored day says which variable
+    stopped (added 2026-11-02).
+  - **The model's own leak (found 2026-09-28; not in the served model since run_20261006T200800Z).** The 2017 test-year figures above were
     scored with `forecast_error_lag` filled in. Scored as live, with it blank, the same
     September 2017 cycles fall from 0.399 on Day 1 to 0.313 on Day 10, while the real bust
     rate rises from 0.371 to 0.495. See the `forecast_error_lag` entry. SHAP on the

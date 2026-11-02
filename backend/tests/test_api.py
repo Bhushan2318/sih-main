@@ -334,6 +334,17 @@ def test_regions_all_matches_per_day_and_covers_1_to_10(trained_client):
     assert trained_client.get("/api/regions/all").status_code == 200
 
 
+def test_regions_all_says_where_each_variable_stops_being_scored(trained_client):
+    """The map can step down at Day 4 and Day 6 because soil moisture and wind stop being
+    scored there; the rail marks those days from this field rather than its own copy."""
+    from app import contracts
+
+    body = trained_client.get("/api/regions/all").json()
+    modelled = set(trained_client.get("/api/model/status").json()["modelled_variables"])
+    assert body["variable_max_lead_days"] == {
+        v: d for v, d in contracts.ARCHIVE_MAX_LEAD_DAYS.items() if v in modelled}
+
+
 def test_region_detail_served_from_real_model(trained_client):
     regions = trained_client.get("/api/regions?lead_time_days=1").json()["regions"]
     rid = regions[0]["region_id"]

@@ -84,6 +84,10 @@ class AllRegionsResponse(Schema):
     init_date: Optional[date] = None
     risk_band_definitions: dict = Field(default_factory=dict)
     available_lead_days: list = Field(default_factory=list)
+    # Modelled variables that stop short of Day 10, and their last scored day
+    # (contracts.ARCHIVE_MAX_LEAD_DAYS). Past it a variable cannot bust, so the map can
+    # step down there.
+    variable_max_lead_days: dict = Field(default_factory=dict)
     days: list = Field(default_factory=list)
     message: Optional[str] = None
 

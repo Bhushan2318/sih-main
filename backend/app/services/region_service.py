@@ -162,6 +162,8 @@ def get_all_regions() -> schemas.AllRegionsResponse:
         init_date=scored.init_date.date(),
         risk_band_definitions=_risk_band_definitions(state),
         available_lead_days=available,
+        variable_max_lead_days={v: d for v, d in contracts.ARCHIVE_MAX_LEAD_DAYS.items()
+                                if v in state.variables},
         days=[_day_response(state, scored, available, d) for d in range(1, 11)],
     )
 
