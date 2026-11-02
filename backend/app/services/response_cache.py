@@ -409,14 +409,7 @@ def _refuse_outside_the_catalogue(name: Optional[str], run_id: Optional[str]) ->
             f"Cycle {what} is not one Replay offers on this deployment (see /api/replay/cycles)."))
 
 
-def respond(request: Request, name: Optional[str], build: Callable,
-            patch: Optional[Callable[[object], object]] = None) -> Response:
-    """Serve `name` from CI's file, else from this box's memory, else build it.
-
-    `patch` adjusts the decoded body for this request - a slice, or a field that is live by
-    nature (connected websocket clients) - and is applied however the body was obtained, so
-    all three paths answer identically.
-    """
+def _gzipped_body(name: Optional[str], build: Callable) -> bytes:
     from app.ml import registry
 
     name = safe_name(name)
@@ -431,7 +424,24 @@ def respond(request: Request, name: Optional[str], build: Callable,
         body = read(name, run_id) or _memo_get((run_id, name))
     if body is None:
         body = _build_live(build, run_id, name, on_the_box)
+    return body
 
+
+def decoded(name: Optional[str], build: Callable) -> dict:
+    """The body `respond` would serve for `name`, decoded - by the same three paths, so a
+    view of it in another format (the CAP feed) reads the prebuilt file on the box."""
+    return json.loads(gzip.decompress(_gzipped_body(name, build)))
+
+
+def respond(request: Request, name: Optional[str], build: Callable,
+            patch: Optional[Callable[[object], object]] = None) -> Response:
+    """Serve `name` from CI's file, else from this box's memory, else build it.
+
+    `patch` adjusts the decoded body for this request - a slice, or a field that is live by
+    nature (connected websocket clients) - and is applied however the body was obtained, so
+    all three paths answer identically.
+    """
+    body = _gzipped_body(name, build)
     if patch is not None:
         return JSONResponse(patch(json.loads(gzip.decompress(body))))
     if "gzip" in request.headers.get("accept-encoding", "").lower():

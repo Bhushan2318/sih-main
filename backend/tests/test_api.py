@@ -129,6 +129,15 @@ def test_region_detail_empty_state(blank_client):
     assert body["message"]
 
 
+def test_cap_feed_on_a_blank_install_is_valid_and_empty(blank_client):
+    import xml.etree.ElementTree as ET
+
+    r = blank_client.get("/api/alerts.cap")
+    assert r.status_code == 200
+    root = ET.fromstring(r.content)
+    assert root.findall("{urn:oasis:names:tc:emergency:cap:1.2}info") == []
+
+
 def test_alerts_empty_state(blank_client):
     body = blank_client.get("/api/alerts").json()
     assert body["model_trained"] is False
@@ -377,6 +386,24 @@ def test_alerts_served_from_real_model(trained_client):
 
     high = trained_client.get("/api/alerts?risk_band=high").json()["alerts"]
     assert all(a["risk_band"] == "high" for a in high)
+
+
+def test_cap_feed_carries_exactly_the_high_band(trained_client):
+    import xml.etree.ElementTree as ET
+
+    r = trained_client.get("/api/alerts.cap")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("application/cap+xml")
+    ns = {"cap": "urn:oasis:names:tc:emergency:cap:1.2"}
+    root = ET.fromstring(r.content)
+    high = trained_client.get("/api/alerts?risk_band=high&limit=500").json()["alerts"]
+    infos = root.findall("cap:info", ns)
+    assert len(infos) == len(high)
+    got = [i.find("cap:area/cap:geocode/cap:value", ns).text for i in infos]
+    assert got == [a["region_id"] for a in high]
+    xmlschema = pytest.importorskip("xmlschema")
+    from pathlib import Path
+    xmlschema.XMLSchema(str(Path(__file__).parent / "data" / "CAP-v1.2.xsd")).validate(r.text)
 
 
 def test_model_status_reports_real_metrics(trained_client):
