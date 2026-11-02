@@ -533,6 +533,30 @@
   "dash.nothing": "ଏହି ପୂର୍ବାନୁମାନ ଦିବସ ପାଇଁ ଦେଖାଇବା ପାଇଁ କିଛି ନାହିଁ",
   "dash.watch": "ଦେଖନ୍ତୁ ଏହା ବାସ୍ତବ ବଷ୍ଟ ର ପୂର୍ବାନୁମାନ କରୁଛି →",
   "dash.map": "ଜାତୀଯ଼ ମାନଚିତ୍ର",
+  "srv.rp.step": "ଦିନ {{lead}}-{{body}}।",
+  "srv.rp.sep": ";;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; ",
+  "srv.rp.climbs": "ବଷ୍ଟ ଉପରେ ବିପଦ {{region}} ଉପରକୁ ଉଠିଥାଏ {{from}} → {{to}}",
+  "srv.rp.opens": "{{region}} {{p}} ରେ ସର୍ବାଧିକ ବଷ୍ଟ ବିପଦ ସହିତ ଖୋଲିଥାଏ",
+  "srv.rp.still": "{{region}} ତଥାପି {{p}} ରେ ସର୍ବାଧିକ ବଷ୍ଟ ବିପଦ ବହନ କରେ",
+  "srv.rp.driven": "{{var}} ତ୍ରୁଟି ଦ୍ୱାରା ପରିଚାଳିତ",
+  "srv.rp.nowDriven": "ବର୍ତ୍ତମାନ {{var}} ତ୍ରୁଟି ଦ୍ୱାରା ପରିଚାଳିତ",
+  "srv.rp.high1": "{{n}} ଅଞ୍ଚଳ ଉଚ୍ଚ-ବିପଦପୂର୍ଣ୍ଣ",
+  "srv.rp.highN": "{{n}} ଅଞ୍ଚଳଗୁଡ଼ିକ ଉଚ୍ଚ-ବିପଦପୂର୍ଣ୍ଣ",
+  "srv.rp.nowHigh1": "{{n}} ଅଞ୍ଚଳ ବର୍ତ୍ତମାନ ଅଧିକ ବିପଦପୂର୍ଣ୍ଣ",
+  "srv.rp.nowHighN": "{{n}} ଅଞ୍ଚଳଗୁଡ଼ିକ ବର୍ତ୍ତମାନ ଅଧିକ ବିପଦପୂର୍ଣ୍ଣ",
+  "srv.rs.climbs": "ପ୍ରାରମ୍ଭିକ {{date}}: ହାରାହାରି ବଷ୍ଟ ବିପଦ ଦିନ {{d0}} ରେ {{first}} ରୁ ଦିନ {{d1}} ରେ {{last}} କୁ ଉଠିଥାଏ।",
+  "srv.rs.eases": "ପ୍ରାରମ୍ଭିକ {{date}}: ହାରାହାରି ବଷ୍ଟ ବିପଦ ଦିନ {{d0}} ରେ {{first}} ରୁ ଦିନ {{d1}} ରେ {{last}} କୁ ହ୍ରାସ ପାଏ।",
+  "srv.rs.holds": "ପ୍ରାରମ୍ଭିକ {{date}}: ହାରାହାରି ବଷ୍ଟ ବିପଦ ଦିନ {{d0}} ରେ {{first}} ରୁ ଦିନ {{d1}} ରେ {{last}} ପର୍ଯ୍ଯ଼ନ୍ତ ରହିଥାଏ।",
+  "srv.rs.peakLed": " ଏହା ଦିନ {{lead}} ରେ {{region}} ଉପରେ {{p}} ରେ ଶୀର୍ଷରେ ଥାଏ, ଯାହା {{var}} ତ୍ରୁଟି ଦ୍ୱାରା ପରିଚାଳିତ ହୋଇଥାଏ।",
+  "srv.rs.peak": " ଏହା ଦିନ {{lead}} ରେ {{region}} ଉପରେ {{p}} ରେ ଶୀର୍ଷରେ ଥାଏ।",
+  "srv.rs.verified": " ଏହାର ପୂର୍ବାନୁମାନ-ବନାମ-ପର୍ଯ୍ଯ଼ବେକ୍ଷଣ ଟ୍ରାକ୍ ନିମ୍ନରେ ତାଲିକାଭୁକ୍ତ ହୋଇଛି।",
+  "srv.rs.unverified": " ଏହି ଚକ୍ର ଏପର୍ଯ୍ଯ଼ନ୍ତ ଯାଞ୍ଚ ହୋଇନାହିଁ, ତେଣୁ କୌଣସି ପର୍ଯ୍ଯ଼ବେକ୍ଷିତ ଟ୍ରାକ୍ ଅଙ୍କିତ ହୋଇନାହିଁ।",
+  "srv.nat.climbs": "ବିପଦ ସ୍କୋର ଥିବା ସମସ୍ତ {{n}} ଅଞ୍ଚଳରେ ହାରାହାରି ବଷ୍ଟ ସମ୍ଭାବନା ଦିନ {{d0}} ରେ {{first}} ରୁ ଦିନ {{d1}} ରେ {{last}} କୁ ବୃଦ୍ଧି ପାଇଥାଏ।",
+  "srv.nat.falls": "ହାରାହାରି ବଷ୍ଟ ସମ୍ଭାବନା ଦିନ {{d0}} ରେ {{first}} ରୁ ଦିନ {{d1}} ରେ {{last}} କୁ ଖସିଥାଏ, ଏକ ବିପଦ ସ୍କୋର ସହିତ ସମସ୍ତ {{n}} ଅଞ୍ଚଳରେ।",
+  "srv.band.low": "ବଷ୍ଟ ବିପଦ {{p}}% ରୁ କମ୍",
+  "srv.band.medium": "ବଷ୍ଟ ବିପଦ {{lo}}% ରୁ {{hi}}%",
+  "srv.band.high": "ବଷ୍ଟ ବିପଦ {{p}}% କିମ୍ବା ତା'ଠାରୁ ଅଧିକ",
+  "srv.band.basis": "ଏହି ମଡେଲର ନିଜସ୍ୱ ପୂର୍ବାନୁମାନ କିପରି ଏହାର ବୈଧିକରଣ ତଥ୍ଯ଼ରେ ପ୍ରସାରିତ ହୋଇଥିଲା, ହାତ ଦ୍ୱାରା ଚଯ଼ନ କରାଯାଇନଥିଲା, ସେଥିରୁ ବ୍ୟାଣ୍ଡ ଧାରଗୁଡିକ ସେଟ୍ ହୋଇଛି।",
   "_meta": {
     "brand.home": {
       "src": "df5e2f6d1ccf",
@@ -3224,6 +3248,126 @@
     },
     "dash.map": {
       "src": "b1bfa6d7b765",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.step": {
+      "src": "b9d7045f6a52",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.sep": {
+      "src": "0a2d3f8f9b72",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.climbs": {
+      "src": "0e863f3c3ff0",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.opens": {
+      "src": "83af546d3b92",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.still": {
+      "src": "8a0615104b7c",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.driven": {
+      "src": "90ef7388fcd8",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.nowDriven": {
+      "src": "381c2254bb02",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.high1": {
+      "src": "445e08648c9a",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.highN": {
+      "src": "0bcd9500b89e",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.nowHigh1": {
+      "src": "ede9b3d6383a",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.nowHighN": {
+      "src": "cdcab7a50a17",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rs.climbs": {
+      "src": "152e00ce8e4b",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rs.eases": {
+      "src": "993f2dcbdce1",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rs.holds": {
+      "src": "d87778f31df1",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rs.peakLed": {
+      "src": "282d43a3345e",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rs.peak": {
+      "src": "34998934a5f7",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rs.verified": {
+      "src": "4aaf9bf8531f",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rs.unverified": {
+      "src": "96365e5236c1",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.nat.climbs": {
+      "src": "e8a95d1fbf56",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.nat.falls": {
+      "src": "6957b7f318fe",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.band.low": {
+      "src": "90fe9b75da24",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.band.medium": {
+      "src": "1e4053031f39",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.band.high": {
+      "src": "923d35eb7a40",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.band.basis": {
+      "src": "a3044e35c1b0",
       "machine": true,
       "reviewed": false
     }

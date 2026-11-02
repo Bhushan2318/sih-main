@@ -15,6 +15,7 @@ from app.services.region_service import (
     _f,
     _region_name,
     _risk_band_definitions,
+    _risk_band_parts,
 )
 
 
@@ -29,6 +30,7 @@ def get_alerts(limit: int = 50, risk_band: Optional[str] = None) -> schemas.Aler
     if scored is None or scored.events.empty:
         return schemas.AlertsResponse(generated_at=now, model_trained=True, alerts=[],
                                       risk_band_definitions=_risk_band_definitions(state),
+                                      risk_band_definitions_i18n=_risk_band_parts(state),
                                       message=NO_SCORE_MSG)
 
     ev = scored.events.copy()
@@ -55,7 +57,8 @@ def get_alerts(limit: int = 50, risk_band: Optional[str] = None) -> schemas.Aler
     ]
     return schemas.AlertsResponse(
         generated_at=now, model_trained=True,
-        risk_band_definitions=_risk_band_definitions(state), alerts=alerts,
+        risk_band_definitions=_risk_band_definitions(state),
+        risk_band_definitions_i18n=_risk_band_parts(state), alerts=alerts,
     )
 
 

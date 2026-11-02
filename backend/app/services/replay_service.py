@@ -8,12 +8,13 @@ from app.api import schemas
 from app.ingestion.canonical_schema import CanonicalVariable
 from app.ingestion.canonical_schema import CIRCULAR_VARIABLES
 from app.ml import inference
-from app.services import replay_cases
+from app.services import replay_cases, server_text
 from app.services.region_service import (
     NOT_TRAINED_MSG,
     _f,
     _region_name,
     _risk_band_definitions,
+    _risk_band_parts,
     _unit,
 )
 
@@ -233,6 +234,7 @@ def get_replay(
             for r in g.itertuples()
         ]
         vd = g["valid_date"].iloc[0]
+        parts = _narrate(int(lead), g, prev, cur, cuts["high"], prev_dom)
         steps.append(
             schemas.ReplayLeadStep(
                 lead_time_days=int(lead),
@@ -241,7 +243,8 @@ def get_replay(
                 n_high=int((g["risk_band"] == "high").sum()),
                 n_medium=int((g["risk_band"] == "medium").sum()),
                 mean_bust_probability=_f(g["bust_probability"].mean()),
-                narration=_narrate(int(lead), g, prev, cur, cuts["high"], prev_dom),
+                narration=_step_english(int(lead), parts),
+                narration_parts=parts,
             )
         )
         prev = cur
@@ -254,6 +257,7 @@ def get_replay(
             prefer_variable={case.focus_region_id: case.focus_variable})
     else:
         default_focus, focus_options = _build_focus(sc, state, focus_region)
+    summary = _summarise(sc, steps)
     return schemas.ReplayResponse(
         model_trained=True,
         current_run_id=state.run_id,
@@ -263,7 +267,9 @@ def get_replay(
         focus=default_focus,
         focus_options=focus_options,
         risk_band_definitions=_risk_band_definitions(state),
-        summary_narration=_summarise(sc, steps),
+        risk_band_definitions_i18n=_risk_band_parts(state),
+        summary_narration="".join(server_text.english(p) for p in summary),
+        summary_parts=summary,
     )
 
 
@@ -280,10 +286,12 @@ def _pretty(var) -> str:
     return (head if head and tail in _UNIT_SUFFIXES else var).replace("_", " ")
 
 
-def _narrate(lead: int, g: pd.DataFrame, prev: dict, cur: dict, hi: float, prev_dom: str) -> str:
+def _narrate(lead: int, g: pd.DataFrame, prev: dict, cur: dict, hi: float,
+             prev_dom: str) -> list[schemas.TextPart]:
+    """One lead day's line, as parts; `server_text.english` of them is the English."""
     top = g.iloc[0]
     tname = _region_name(str(top["region_id"])) or str(top["region_id"])
-    bits: list[str] = []
+    bits: list[schemas.TextPart] = []
 
     if prev:
         deltas = {rid: cur[rid] - prev[rid] for rid in cur if rid in prev}
@@ -291,24 +299,34 @@ def _narrate(lead: int, g: pd.DataFrame, prev: dict, cur: dict, hi: float, prev_
             rid_up, dlt = max(deltas.items(), key=lambda kv: kv[1])
             if dlt >= 0.05:
                 nm = _region_name(rid_up) or rid_up
-                bits.append(f"bust risk over {nm} climbs {prev[rid_up]:.2f}→{cur[rid_up]:.2f}")
+                bits.append(server_text.part("srv.rp.climbs", region=nm, **{
+                    "from": f"{prev[rid_up]:.2f}", "to": f"{cur[rid_up]:.2f}"}))
     if not bits:
-        verb = "opens with" if not prev else "still carries"
-        bits.append(f"{tname} {verb} the highest bust risk at {float(top['bust_probability']):.2f}")
+        bits.append(server_text.part("srv.rp.still" if prev else "srv.rp.opens", region=tname,
+                                     p=f"{float(top['bust_probability']):.2f}"))
 
-    dom = _pretty(top.get("dominant_variable"))
+    dom_id = top.get("dominant_variable")
+    dom = _pretty(dom_id)
     if dom and dom != prev_dom:
-        bits.append(f"now driven by {dom} error" if prev_dom else f"driven by {dom} error")
+        bits.append(server_text.part("srv.rp.nowDriven" if prev_dom else "srv.rp.driven",
+                                     var=dom, var_id=dom_id))
 
     n_high = int((g["bust_probability"] >= hi).sum())
     if n_high:
-        verb = "" if not prev else "now "
-        bits.append(f"{n_high} region{'s' if n_high != 1 else ''} {verb}high-risk".replace("  ", " "))
+        key = ("srv.rp.nowHigh" if prev else "srv.rp.high") + ("1" if n_high == 1 else "N")
+        bits.append(server_text.part(key, n=n_high))
 
-    return f"Day {lead} — " + "; ".join(bits) + "."
+    return bits
 
 
-def _summarise(sc: inference.ScoredCycle, steps: list[schemas.ReplayLeadStep]) -> str:
+def _step_english(lead: int, parts: list[schemas.TextPart]) -> str:
+    body = server_text.TEMPLATES["srv.rp.sep"].join(server_text.english(b) for b in parts)
+    return server_text.english(server_text.part("srv.rp.step", lead=lead, body=body))
+
+
+def _summarise(sc: inference.ScoredCycle,
+               steps: list[schemas.ReplayLeadStep]) -> list[schemas.TextPart]:
+    """The cycle's summary, as parts concatenated in order."""
     ev = sc.events
     peak = ev.loc[ev["bust_probability"].idxmax()]
     pr = _region_name(str(peak["region_id"])) or str(peak["region_id"])
@@ -316,24 +334,23 @@ def _summarise(sc: inference.ScoredCycle, steps: list[schemas.ReplayLeadStep]) -
     first = steps[0].mean_bust_probability or 0.0
     last = steps[-1].mean_bust_probability or 0.0
     trend = "climbs" if last > first + 0.02 else ("eases" if last < first - 0.02 else "holds")
-    dom = _pretty(peak.get("dominant_variable"))
-    dtxt = f", led by {dom} error." if dom else "."
+    dom_id = peak.get("dominant_variable")
+    dom = _pretty(dom_id)
 
     verified = (
         not sc.per_variable.empty
         and "observed_value" in sc.per_variable.columns
         and sc.per_variable["observed_value"].notna().any()
     )
-    tail = (
-        " Its forecast-vs-observed track is charted below."
-        if verified
-        else " This cycle has not verified yet, so no observed track is drawn."
-    )
-    return (
-        f"Init {pd.Timestamp(sc.init_date).date()}: mean bust risk {trend} from "
-        f"{first:.2f} on Day {steps[0].lead_time_days} to {last:.2f} on Day {steps[-1].lead_time_days}. "
-        f"It peaks at {float(peak['bust_probability']):.2f} over {pr} on Day {pl}{dtxt}{tail}"
-    )
+    peak_args = dict(p=f"{float(peak['bust_probability']):.2f}", region=pr, lead=pl)
+    return [
+        server_text.part(f"srv.rs.{trend}", date=pd.Timestamp(sc.init_date).date(),
+                         first=f"{first:.2f}", d0=steps[0].lead_time_days,
+                         last=f"{last:.2f}", d1=steps[-1].lead_time_days),
+        (server_text.part("srv.rs.peakLed", var=dom, var_id=dom_id, **peak_args) if dom
+         else server_text.part("srv.rs.peak", **peak_args)),
+        server_text.part("srv.rs.verified" if verified else "srv.rs.unverified"),
+    ]
 
 
 def _focus_variable_for(v_region: pd.DataFrame, dominant: Optional[str], state) -> Optional[str]:
