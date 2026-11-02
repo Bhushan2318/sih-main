@@ -5,6 +5,22 @@ here rather than discovered live.
 
 ## Behaviour a visitor could notice
 
+- **The served model has no baseline comparison and no worst misses, added 2026-11-01.**
+  `/api/model/status` for run_20261006T200800Z answers `"baselines": {}` and
+  `"misses": {}`, so the About comparison table, the first screen's ladder card and the
+  Model tab's economic-value and CORP cards are hidden, and the misses card says they
+  have not been scored. The `serving-model` release bundle for that run holds neither
+  `baselines.json` nor `misses.json` (listed 2026-11-01), and `refresh-data.yml` skips
+  "Score the baseline ladder" whenever a pinned model is installed, so nothing fills them
+  in. Neither file is in `install_serving_model.REQUIRED_FILES`, so nothing refused the
+  publish either; `publish_serving_model` now warns when they are missing. Scoring them
+  needs no retrain - `train_pooled --emit-eval` and `--emit-baseline-fit` for the run,
+  then `run_baselines --run-id <run> --no-write --write-run-artifact`, then republishing
+  - but the two emit steps read the per-year caches `_pooled_cache/paired_2000..2017`,
+  which are not on the Mac: eighteen of them, at the 3.65 GB `pooled_training.cache_year`
+  records for `paired_2000.parquet`, is an estimated 50-66 GB against 48 GB free
+  (2026-11-01) - not measured, because it was not attempted. Deferred; the empty-state text says the comparison has
+  not been scored rather than that the model predates it.
 - **Indian-language screens are machine-translated and not yet reviewed.** Ten languages
   ship (Hindi, Tamil, Bengali, Marathi, Telugu, Gujarati, Kannada, Malayalam, Odia,
   Punjabi); the other twelve Eighth Schedule languages are listed in the code but have no
@@ -1281,6 +1297,11 @@ here rather than discovered live.
   (`tests/test_no_observation_inputs.py`). The engineered frame still carries the column,
   because the served run was trained with it and scores with its own saved feature list.
   It can go when a run trained without it is served.
+- **A run trained without it is now served (checked 2026-11-01).** None of
+  run_20261006T200800Z's seven `*_regressor.json` lists `forecast_error_lag` in its
+  `feature_names`, nor does its `feature_columns.json`. The column can now go from the
+  engineered frame once no older run needs scoring; the About page no longer says it is
+  "removed in the next retrain".
 - **Promotion compares like with like (decided 2026-09-29).** A run trained without the lag
   would be refused by the 0.05 gate against the served run's lag-filled test score.
   Instead, the served run is scored on the new run's test year as of issue time, and the

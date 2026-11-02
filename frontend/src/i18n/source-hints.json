@@ -119,9 +119,9 @@
   "det.maeExplainUnit": "Average error is how far this variable's forecast is from reality on a normal day, in {{u}}. It counts as a bust when the error is larger than the threshold.",
   "det.measured": "Measured on forecasts that this model never saw during training (the <0>{{split}}</0> split of the current model version).",
   "det.similarBody": "A search for similar past forecasts has not been built yet, so nothing is shown here instead of an invented match.",
-  "miss.notYet": "This model version was scored before these mistakes were recorded. They will appear after the next retraining.",
-  "corp.notYet": "This model version was scored before the CORP diagram existed. It will appear after the next retraining.",
-  "ev.notYet": "This model version was scored before this measurement existed. It will appear after the next retraining.",
+  "miss.notYet": "These mistakes have not been scored yet for the model version shown here. They are picked by the same step that scores the comparison table.",
+  "corp.notYet": "The comparison for this model version was scored before the CORP diagram existed. It will appear when the comparison is scored again.",
+  "ev.notYet": "The comparison for this model version was scored before this measurement existed. It will appear when the comparison is scored again.",
   "head.text": "Peak day {{date}} ({{day}}). The forecast gave {{district}} {{fc}}; ERA5 recorded {{obs}}. On that day, Sanket's bust risk was {{pct}} ({{band}}).",
   "ab.sub": "Sanket means “signal”. It predicts where a weather forecast will be wrong, and says why.",
   "ab.leadCorr": "Guessing from the forecast day alone gives almost zero skill, because busts do not simply become more likely further ahead. The measured link between the forecast day and a bust is only {{train}} on training data and {{test}} on set-aside test data.",
@@ -129,5 +129,5 @@
   "corp.busted": "a bust happened in {{p}}% of cases",
   "hero.tipBusted": "a bust actually happened in {{p}}% of cases",
   "rv.next": "Next step ›",
-  "ab.t3": "<0>Leakage is tested for, and a leak we found is written down.</0> Thresholds for a bust are fitted on the training split only; whole forecast runs are kept together so the model is never tested on a run it partly trained on; and no observed day appears on both sides of the split between training and test — each a test in the suite. A later audit still found one input that looked at an observation from after the forecast was issued; it is documented in the project’s known issues and removed in the next retrain, and scores are re-measured then."
+  "ab.t3": "<0>Leakage is tested for, and a leak we found is written down.</0> Thresholds for a bust are fitted on the training split only; whole forecast runs are kept together so the model is never tested on a run it partly trained on; and no observed day appears on both sides of the split between training and test — each a test in the suite. A later audit still found one input that looked at an observation from after the forecast was issued; it is documented in the project’s known issues, and the model version shown here was trained without it."
 }
