@@ -132,3 +132,11 @@ SPDX-FileCopyrightText = [
   "Map geometry: GADM (https://gadm.org)",
 ]
 SPDX-License-Identifier = "MIT AND LicenseRef-GADM"
+
+# The OASIS CAP 1.2 schema, vendored unmodified so the CAP feed's tests validate against
+# the standard itself.
+[[annotations]]
+path = "backend/tests/data/CAP-v1.2.xsd"
+precedence = "override"
+SPDX-FileCopyrightText = "OASIS Open 2010 (https://www.oasis-open.org)"
+SPDX-License-Identifier = "LicenseRef-OASIS"

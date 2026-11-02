@@ -2,12 +2,26 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, Query, Request, Response
 
 from app.api import schemas
-from app.services import alert_service, response_cache
+from app.services import alert_service, cap_service, response_cache
 
 router = APIRouter(prefix="/api/alerts", tags=["alerts"])
+# /api/alerts.cap is a sibling of /api/alerts, not a path under it, so it has no prefix.
+cap_router = APIRouter(tags=["alerts"])
+
+
+@cap_router.get("/api/alerts.cap", response_class=Response,
+                responses={200: {"content": {cap_service.MEDIA_TYPE: {}}}})
+def cap_feed():
+    """The high-risk alerts as a CAP 1.2 document (status Test: decision support, not an
+    issued warning). Built from the same prebuilt body as /api/alerts?risk_band=high."""
+    body = response_cache.decoded(
+        response_cache.alerts_name("high"),
+        lambda: alert_service.get_alerts(limit=response_cache.ALERTS_MAX_LIMIT,
+                                         risk_band="high"))
+    return Response(cap_service.to_cap(body), media_type=cap_service.MEDIA_TYPE)
 
 
 @router.get("", response_model=schemas.AlertsResponse)

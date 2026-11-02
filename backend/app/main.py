@@ -97,6 +97,7 @@ async def _cycle_not_precomputed(_request, exc: CycleNotPrecomputed) -> JSONResp
 app.include_router(upload.router)
 app.include_router(regions.router)
 app.include_router(alerts.router)
+app.include_router(alerts.cap_router)
 app.include_router(model_status.router)
 app.include_router(ingest.router)
 app.include_router(replay.router)
