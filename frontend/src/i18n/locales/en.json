@@ -93,6 +93,8 @@
   "rail.rowTitle": "{{day}}: {{bust}} bust, {{watch}} watch, {{low}} low",
   "rail.meta": "{{bust}} bust · {{watch}} watch",
   "rail.note": "How many regions fall in each band at each lead day, and their average bust risk.",
+  "rail.capRow": "from here {{list}} not scored",
+  "rail.capNote": "Some variables are scored only as far ahead as the training archive holds them; the rows say where each stops. An event is a bust if any scored variable busts, so where one stops there are fewer ways to bust, and the map can turn calmer for that reason alone.",
   "rail.oneCause": "{{v}} is the main cause at every lead day.",
   "rail.manyCauses": "The main cause changes {{n}} times across the ten days.",
   "rail.mostly": "Mostly driven by: {{list}}.",
