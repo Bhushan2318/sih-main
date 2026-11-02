@@ -18,6 +18,9 @@ Start with the [project README](../README.md). This folder holds everything behi
 | [boundary-geometry-licensing.md](boundary-geometry-licensing.md) | Where the district boundaries come from, what their licence allows, and India's rules for political maps |
 | [boundary-review.md](boundary-review.md) | The first pass of the boundary depiction and licensing review (research, not legal advice) |
 | [replay-coverage-review.md](replay-coverage-review.md) | Whether Replay covers the events, and the failures, it should |
+| [forecast-source-portability.md](forecast-source-portability.md) | Why the forecasts are GEFS, which code is tied to GEFS, and what NCMRWF's NEPS-G would take |
+| [demo-runbook.md](demo-runbook.md) | Keeping the free-tier box awake, the T-15 checklist, the demo order and the fallbacks |
+| [judge-qa.md](judge-qa.md) | The questions a panel will ask, with short answers and where each full answer lives |
 | [analysis/](analysis/) | Measured outputs the docs cite, such as how far ERA5 and other products agree |
 
 ## Licensing
