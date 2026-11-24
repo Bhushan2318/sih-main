@@ -56,10 +56,17 @@ export interface RegionsResponse {
   init_date: string | null;
   valid_date: string | null;
   risk_band_definitions: Record<string, string>;
+  risk_band_definitions_i18n?: Record<string, TextPart>;
   regions: RegionSummary[];
   message: string | null;
 
   available_lead_days: number[];
+}
+
+/** One translatable piece of a backend-written sentence (backend app/services/server_text.py). */
+export interface TextPart {
+  key: string;
+  params: Record<string, string>;
 }
 
 export interface AllRegionsResponse {
@@ -68,6 +75,7 @@ export interface AllRegionsResponse {
   current_run_id: string | null;
   init_date: string | null;
   risk_band_definitions: Record<string, string>;
+  risk_band_definitions_i18n?: Record<string, TextPart>;
   available_lead_days: number[];
   days: RegionsResponse[];
   message: string | null;
@@ -145,6 +153,7 @@ export interface AlertsResponse {
   generated_at: string;
   model_trained: boolean;
   risk_band_definitions: Record<string, string>;
+  risk_band_definitions_i18n?: Record<string, TextPart>;
   alerts: Alert[];
   message: string | null;
 }
@@ -344,6 +353,7 @@ export interface ReplayLeadStep {
   n_medium: number;
   mean_bust_probability: number | null;
   narration: string;
+  narration_parts?: TextPart[];
 }
 
 export interface ReplayFocusPoint {
@@ -373,7 +383,9 @@ export interface ReplayResponse {
   focus: ReplayFocusSeries | null;
   focus_options: ReplayFocusSeries[];
   risk_band_definitions: Record<string, string>;
+  risk_band_definitions_i18n?: Record<string, TextPart>;
   summary_narration: string | null;
+  summary_parts?: TextPart[];
   message: string | null;
 }
 
@@ -452,6 +464,7 @@ export interface EnsembleDivergenceResponse {
   national: NationalRiskPoint[];
   skill: ModelSkill | null;
   national_note: string | null;
+  national_note_parts?: TextPart[];
   eyebrow: string | null;
   headline_note: string | null;
   message: string | null;

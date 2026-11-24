@@ -533,6 +533,30 @@
   "dash.nothing": "या अंदाजित दिवसासाठी दाखवण्यासारखे काहीच नाही",
   "dash.watch": "पहा तो वास्तविक बस्ट चा अंदाज लावतो →",
   "dash.map": "राष्ट्रीय नकाशा",
+  "srv.rp.step": "दिवस {{lead}}-{{body}}.",
+  "srv.rp.sep": "; ",
+  "srv.rp.climbs": "बस्ट वरचा धोका {{region}} वर चढतो {{from}} → {{to}}",
+  "srv.rp.opens": "{{region}} हे {{p}} येथे सर्वोच्च बस्ट जोखमीसह उघडते",
+  "srv.rp.still": "{{region}} मध्ये अजूनही {{p}} वर सर्वाधिक बस्ट जोखीम असते",
+  "srv.rp.driven": "{{var}} त्रुटीद्वारे चालविलेले",
+  "srv.rp.nowDriven": "आता {{var}} त्रुटीद्वारे चालवले जाते",
+  "srv.rp.high1": "{{n}} उच्च-जोखीम असलेला प्रदेश",
+  "srv.rp.highN": "{{n}} उच्च-जोखीम असलेले प्रदेश",
+  "srv.rp.nowHigh1": "{{n}} प्रदेश आता उच्च जोखमीचा आहे",
+  "srv.rp.nowHighN": "{{n}} प्रदेशांना आता जास्त धोका आहे",
+  "srv.rs.climbs": "प्रारंभिक {{date}}: सरासरी बस्ट धोका हा दिवस {{d0}} रोजी {{first}} पासून दिवस {{d1}} रोजी {{last}} पर्यंत चढतो.",
+  "srv.rs.eases": "प्रारंभिक {{date}}: म्हणजे बस्ट चा धोका {{d0}} च्या दिवशी {{first}} पासून ते {{d1}} च्या दिवशी {{last}} पर्यंत कमी होतो.",
+  "srv.rs.holds": "प्रारंभिक {{date}}: सरासरी बस्ट धोका हा दिवस {{d0}} रोजी {{first}} पासून दिवस {{d1}} रोजी {{last}} पर्यंत असतो.",
+  "srv.rs.peakLed": " तो {{var}} त्रुटीच्या नेतृत्वाखाली, {{lead}} दिवशी {{region}} वर {{p}} वर शिखरावर आहे.",
+  "srv.rs.peak": " तो {{lead}} दिवशी {{region}} वर {{p}} वर शिखरावर असतो.",
+  "srv.rs.verified": " त्याचा फोरकास्ट-विरुद्ध-ऑब्झर्व्ड ट्रॅक खाली दिलेला आहे.",
+  "srv.rs.unverified": " या चक्राची अद्याप पडताळणी झालेली नाही, त्यामुळे कोणताही निरीक्षण केलेला मार्ग काढला जात नाही.",
+  "srv.nat.climbs": "जोखीम गुणांक असलेल्या सर्व {{n}} प्रदेशांमध्ये, सरासरी बस्ट संभाव्यता, दिवस {{d0}} मधील {{first}} पासून दिवस {{d1}} मधील {{last}} पर्यंत वाढते.",
+  "srv.nat.falls": "जोखीम गुणांक असलेल्या सर्व {{n}} प्रदेशांमध्ये, सरासरी बस्ट संभाव्यता, दिवस {{d0}} मधील {{first}} पासून दिवस {{d1}} मधील {{last}} पर्यंत खाली येते.",
+  "srv.band.low": "{{p}}% च्या खाली जोखीम बस्ट",
+  "srv.band.medium": "बस्ट धोका {{lo}}% ते {{hi}}%",
+  "srv.band.high": "बस्ट धोका {{p}}% किंवा त्याहून अधिक",
+  "srv.band.basis": "या प्रतिमानाचे स्वतःचे अंदाज त्याच्या प्रमाणीकरण डेटावर कसे पसरवले गेले यावरून बँड कडा निश्चित केल्या जातात, हाताने निवडलेल्या नाहीत.",
   "_meta": {
     "brand.home": {
       "src": "df5e2f6d1ccf",
@@ -3223,6 +3247,128 @@
     },
     "dash.map": {
       "src": "b1bfa6d7b765",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.step": {
+      "src": "b9d7045f6a52",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.sep": {
+      "src": "0a2d3f8f9b72",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.climbs": {
+      "src": "0e863f3c3ff0",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.opens": {
+      "src": "83af546d3b92",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.still": {
+      "src": "8a0615104b7c",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.driven": {
+      "src": "90ef7388fcd8",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.nowDriven": {
+      "src": "381c2254bb02",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.high1": {
+      "src": "445e08648c9a",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.highN": {
+      "src": "0bcd9500b89e",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.nowHigh1": {
+      "src": "ede9b3d6383a",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.nowHighN": {
+      "src": "cdcab7a50a17",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rs.climbs": {
+      "src": "152e00ce8e4b",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rs.eases": {
+      "src": "993f2dcbdce1",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rs.holds": {
+      "src": "d87778f31df1",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rs.peakLed": {
+      "src": "282d43a3345e",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rs.peak": {
+      "src": "34998934a5f7",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rs.verified": {
+      "src": "4aaf9bf8531f",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rs.unverified": {
+      "src": "96365e5236c1",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.nat.climbs": {
+      "src": "e8a95d1fbf56",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.nat.falls": {
+      "src": "6957b7f318fe",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.band.low": {
+      "src": "90fe9b75da24",
+      "machine": true,
+      "reviewed": false,
+      "markup": "dropped",
+      "params": "as-numbers"
+    },
+    "srv.band.medium": {
+      "src": "1e4053031f39",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.band.high": {
+      "src": "923d35eb7a40",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.band.basis": {
+      "src": "a3044e35c1b0",
       "machine": true,
       "reviewed": false
     }

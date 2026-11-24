@@ -10,6 +10,7 @@ import pandas as pd
 from app.api import schemas
 from app.ingestion.canonical_schema import CIRCULAR_VARIABLES
 from app.ml import inference
+from app.services import server_text
 from app.storage import parquet_store
 
 log = logging.getLogger(__name__)
@@ -111,7 +112,9 @@ def _build(state, scored, want_region: Optional[str]) -> schemas.EnsembleDiverge
     base.source = _provenance(observed)
     base.national = _national(ev)
     base.skill = _skill(state)
-    base.national_note = _national_note(base)
+    nat = _national_note(base)
+    base.national_note = server_text.english(nat) if nat else None
+    base.national_note_parts = [nat] if nat else []
     base.eyebrow = (
         _eyebrow(init, base.region_name or region_id, variable) if want_region
         else _national_eyebrow(init, base)
@@ -170,17 +173,15 @@ def _national_eyebrow(init: pd.Timestamp, r: schemas.EnsembleDivergenceResponse)
     return f"all india · {r.n_scored_regions} regions · cycle {init.date()}".upper()
 
 
-def _national_note(r: schemas.EnsembleDivergenceResponse) -> Optional[str]:
+def _national_note(r: schemas.EnsembleDivergenceResponse) -> Optional[schemas.TextPart]:
     if not r.national:
         return None
     first, last = r.national[0], r.national[-1]
     rise = last.mean_bust_probability - first.mean_bust_probability
-    direction = "climbs" if rise >= 0 else "falls"
-    return (
-        f"Mean bust probability {direction} from {first.mean_bust_probability:.2f} at Day "
-        f"{first.lead_time_days} to {last.mean_bust_probability:.2f} at Day "
-        f"{last.lead_time_days}, across all {last.n_regions} scored regions."
-    )
+    return server_text.part(
+        "srv.nat.climbs" if rise >= 0 else "srv.nat.falls",
+        first=f"{first.mean_bust_probability:.2f}", d0=first.lead_time_days,
+        last=f"{last.mean_bust_probability:.2f}", d1=last.lead_time_days, n=last.n_regions)
 
 
 def _pick_subject(ev: pd.DataFrame, per_variable: pd.DataFrame, want_region: Optional[str]):

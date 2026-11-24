@@ -26,9 +26,13 @@ here rather than discovered live.
   name with an `<ID1>` marker and did not restore it; it writes a colon as the script's
   visarga or aytham (`ஃ ः ঃ ః …`) and Odia's danda as an ASCII `|`. A string that still loses a
   number, tag or term is refused and shows in English - a handful per language, mostly
-  the longest About and Model paragraphs. Text the backend writes - Replay narration,
-  the hero's notes, risk-band definitions, API `message`s - is still English in every
-  language.
+  the longest About and Model paragraphs. Of the text the backend writes, Replay's
+  narration and summary, the hero's national line and the risk-band definitions are
+  translated since 2026-11-02: the API sends each as `{key, params}` parts beside its
+  English (`app/services/server_text.py`), and the site renders the parts through the same
+  catalogue, with the same unreviewed machine translation. Still English in every
+  language: the hero's other notes (`prior_note`, `headline_note`, the eyebrow), the
+  ensemble-disagreement line, and API `message`s.
 
 - **A box woken from sleep is slow to answer at all.** Render's free tier stops the
   instance after 15 minutes without traffic, and starting it again takes tens of seconds

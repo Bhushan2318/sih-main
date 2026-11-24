@@ -9,6 +9,7 @@ import type { EnsembleDivergenceResponse } from "../../api/types";
 import { dayLabel } from "../../lib/format";
 import { isScoredProbability, riskBandForProbability, type RiskCuts } from "../../lib/riskBands";
 import { CHART } from "../../theme";
+import { serverText } from "../../lib/serverText";
 
 type Tab = "national" | "skill";
 
@@ -60,7 +61,7 @@ export function HeroDivergence({ data, riskCuts }: {
             {rich(apart ? "hero.apart" : "hero.holds", undefined, [<em />])}
           </h1>
 
-          <p className="hero__sub">{data.national_note ?? data.headline_note}</p>
+          <p className="hero__sub">{data.national_note ? serverText(data.national_note_parts, data.national_note) : data.headline_note}</p>
 
           <p className="hero__why">
             {translate("hero.why")}
