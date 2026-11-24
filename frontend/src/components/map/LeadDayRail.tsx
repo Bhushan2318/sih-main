@@ -16,6 +16,7 @@ export function LeadDayRail({ all, value, onChange, riskCuts }: {
     [all, riskCuts],
   );
   const drivers = useMemo(() => driverRuns(rows), [rows]);
+  const dropped = useMemo(() => droppedFrom(all?.variable_max_lead_days), [all]);
 
   if (rows.length < 2) return null;
   const peak = Math.max(...rows.map((r) => r.mean));
@@ -49,6 +50,12 @@ export function LeadDayRail({ all, value, onChange, riskCuts }: {
             <span className="railrow__meta">
               {translate("rail.meta", { bust: r.bust, watch: r.watch })}{r.driver ? ` · ${variableLabel(r.driver)}` : ""}
             </span>
+
+            {dropped.has(r.lead) ? (
+              <span className="railrow__cap">
+                {translate("rail.capRow", { list: dropped.get(r.lead)!.map(pretty).join(", ") })}
+              </span>
+            ) : null}
           </button>
         ))}
       </div>
@@ -62,6 +69,8 @@ export function LeadDayRail({ all, value, onChange, riskCuts }: {
       <p className="rail__note">
         {translate("rail.note")}
       </p>
+
+      {dropped.size ? <p className="rail__note">{translate("rail.capNote")}</p> : null}
 
       {drivers ? <p className="rail__driver">{drivers}</p> : null}
     </aside>
@@ -125,6 +134,16 @@ function driverRuns(rows: Row[]): string | null {
 
   if (runs.length > 3) return translate("rail.manyCauses", { n: runs.length - 1 });
   return translate("rail.mostly", { list: runs.map((r) => translate("rail.item", { v: pretty(r.driver), span: span(r) })).join(translate("rail.then")) });
+}
+
+/** Lead day -> variables first left unscored on it (the day after each one's last). */
+function droppedFrom(caps?: Record<string, number>): Map<number, string[]> {
+  const out = new Map<number, string[]>();
+  for (const [v, last] of Object.entries(caps ?? {})) {
+    if (last >= 10) continue;
+    out.set(last + 1, [...(out.get(last + 1) ?? []), v].sort());
+  }
+  return out;
 }
 
 const span = (r: { from: number; to: number }) => (r.from === r.to ? translate("rail.on", { day: dayLabel(r.from) }) : dayRange(r.from, r.to));

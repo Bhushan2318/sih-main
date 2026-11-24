@@ -77,6 +77,8 @@ export interface AllRegionsResponse {
   risk_band_definitions: Record<string, string>;
   risk_band_definitions_i18n?: Record<string, TextPart>;
   available_lead_days: number[];
+  /** Last scored day of each modelled variable that stops short of Day 10. */
+  variable_max_lead_days?: Record<string, number>;
   days: RegionsResponse[];
   message: string | null;
 }
