@@ -105,18 +105,63 @@ def append_batch(batch_id: str, rows: Iterable[dict] | pd.DataFrame) -> int:
     return len(df)
 
 
+def _slice_filters(dataset: ds.Dataset) -> list:
+    """One filter per (value_type, variable) pair present in the store.
+
+    Both columns are in _DEDUPE_KEY, so rows in different pairs can never supersede one
+    another and each pair can be deduplicated on its own. Only these two narrow columns are
+    scanned, batch by batch, to find the pairs."""
+    pairs: set = set()
+    for rb in dataset.scanner(columns=["value_type", "variable"]).to_batches():
+        for vt, var in zip(rb.column(0).to_pylist(), rb.column(1).to_pylist()):
+            pairs.add((vt, var))
+    out = []
+    for vt, var in sorted(pairs, key=lambda p: (p[0] is not None, str(p[0]),
+                                                 p[1] is not None, str(p[1]))):
+        f_vt = ds.field("value_type").is_null() if vt is None else ds.field("value_type") == vt
+        f_var = ds.field("variable").is_null() if var is None else ds.field("variable") == var
+        out.append(f_vt & f_var)
+    return out
+
+
 def compact_store() -> dict:
+    """Drop superseded rows and rewrite each batch with what survives.
+
+    This used to read and deduplicate the whole store in one pandas frame. At ~17M rows
+    that needs far more than the 16 GB runner has and the Package step was OOM-killed
+    (exit 137) on every run from 2026-11-17. It now works one (value_type, variable) slice
+    at a time - the dedupe key contains both, so slices are independent and the result is
+    identical - staging each slice's survivors per batch, then rebuilding each batch from
+    its staged pieces. Peak memory is one slice, not the store."""
     before = _row_count_on_disk()
-    df = read_dataset()
-    if df.empty:
+    dataset = _dataset()
+    if dataset is None:
         return {"rows_before": before, "rows_after": before, "removed": 0, "batches": 0}
 
-    kept: set = set()
-    for batch_id, group in df.groupby("upload_batch_id", observed=True, dropna=False):
-        if pd.isna(batch_id):
-            continue
-        append_batch(str(batch_id), group.copy())
-        kept.add(str(batch_id))
+    staging = CANONICAL_DIR.parent / "_compact_staging"
+    shutil.rmtree(staging, ignore_errors=True)
+    staging.mkdir(parents=True)
+    try:
+        for i, filt in enumerate(_slice_filters(dataset)):
+            df = dataset.to_table(filter=filt).to_pandas()
+            df = _dedupe(df)
+            for batch_id, group in df.groupby("upload_batch_id", observed=True, dropna=True):
+                bdir = staging / str(batch_id)
+                bdir.mkdir(exist_ok=True)
+                pa_tbl = pa.Table.from_pandas(
+                    group[list(CANONICAL_COLUMNS)].reset_index(drop=True),
+                    preserve_index=False)
+                pq.write_table(pa_tbl, bdir / f"slice-{i}.parquet")
+            del df
+
+        kept: set = set()
+        for bdir in sorted(p for p in staging.iterdir() if p.is_dir()):
+            frame = pd.concat([pd.read_parquet(f) for f in sorted(bdir.glob("*.parquet"))],
+                              ignore_index=True)
+            append_batch(bdir.name, frame)
+            kept.add(bdir.name)
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
 
     for part in CANONICAL_DIR.glob("batch_id=*"):
         if part.is_dir() and part.name.split("=", 1)[1] not in kept:
