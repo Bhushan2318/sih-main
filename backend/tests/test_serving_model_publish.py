@@ -42,6 +42,17 @@ def test_a_run_without_its_shap_summary_is_not_publishable(tmp_path):
     assert inst.missing_files(_run_dir(tmp_path, "run_ok")) == []
 
 
+def test_a_run_without_its_ladder_is_named_before_it_is_published(tmp_path):
+    # run_20261006T200800Z was published without baselines.json or misses.json and the
+    # site's comparison table went blank with nothing saying so. A warning, not a refusal:
+    # serving still works without them, and refusing would block republishing that run.
+    d = _run_dir(tmp_path)
+    assert pub.missing_evidence(d) == ["baselines.json", "misses.json"]
+    (d / "baselines.json").write_text("{}")
+    (d / "misses.json").write_text("{}")
+    assert pub.missing_evidence(d) == []
+
+
 def test_a_bundle_whose_bytes_changed_is_refused(tmp_path):
     src = _run_dir(tmp_path / "src")
     bundle = pub.pack(src, tmp_path / "b.tar.gz")

@@ -45,6 +45,15 @@ BUNDLE_NAME = "sanket-model.tar.gz"
 MANIFEST_NAME = "model.json"
 DATA_TAG = "data-latest"
 DATA_ASSET = "sanket-data.tar.gz"
+# Written by scripts/run_baselines --write-run-artifact. Serving works without them, so they
+# are not REQUIRED_FILES - but CI does not score the ladder for a pinned model, so a run
+# published without them shows no comparison table and no worst misses until republished.
+EVIDENCE_FILES = ("baselines.json", "misses.json")
+
+
+def missing_evidence(run_dir: Path) -> list:
+    """The ladder files this run directory lacks."""
+    return [n for n in EVIDENCE_FILES if not (run_dir / n).is_file()]
 
 
 def _gh(*args: str, check: bool = True) -> subprocess.CompletedProcess:
@@ -240,6 +249,12 @@ def main() -> int:
               f"`python -m scripts.train_pooled --finalize {args.run_id}` writes the "
               f"SHAP summary.", file=sys.stderr)
         return 1
+    absent = missing_evidence(run_dir)
+    if absent:
+        print(f"WARNING: {args.run_id} has no {absent}. The site will show no baseline "
+              f"comparison and no worst misses for it, and CI will not score them for a "
+              f"pinned model. Run `python -m scripts.run_baselines --run-id {args.run_id} "
+              f"--no-write --write-run-artifact` first to include them.", file=sys.stderr)
 
     metrics = registry.load_metrics(args.run_id) or {}
     with tempfile.TemporaryDirectory() as td:
