@@ -129,6 +129,15 @@ def test_region_detail_empty_state(blank_client):
     assert body["message"]
 
 
+def test_cap_feed_on_a_blank_install_is_valid_and_empty(blank_client):
+    import xml.etree.ElementTree as ET
+
+    r = blank_client.get("/api/alerts.cap")
+    assert r.status_code == 200
+    root = ET.fromstring(r.content)
+    assert root.findall("{urn:oasis:names:tc:emergency:cap:1.2}info") == []
+
+
 def test_alerts_empty_state(blank_client):
     body = blank_client.get("/api/alerts").json()
     assert body["model_trained"] is False
@@ -334,6 +343,17 @@ def test_regions_all_matches_per_day_and_covers_1_to_10(trained_client):
     assert trained_client.get("/api/regions/all").status_code == 200
 
 
+def test_regions_all_says_where_each_variable_stops_being_scored(trained_client):
+    """The map can step down at Day 4 and Day 6 because soil moisture and wind stop being
+    scored there; the rail marks those days from this field rather than its own copy."""
+    from app import contracts
+
+    body = trained_client.get("/api/regions/all").json()
+    modelled = set(trained_client.get("/api/model/status").json()["modelled_variables"])
+    assert body["variable_max_lead_days"] == {
+        v: d for v, d in contracts.ARCHIVE_MAX_LEAD_DAYS.items() if v in modelled}
+
+
 def test_region_detail_served_from_real_model(trained_client):
     regions = trained_client.get("/api/regions?lead_time_days=1").json()["regions"]
     rid = regions[0]["region_id"]
@@ -377,6 +397,24 @@ def test_alerts_served_from_real_model(trained_client):
 
     high = trained_client.get("/api/alerts?risk_band=high").json()["alerts"]
     assert all(a["risk_band"] == "high" for a in high)
+
+
+def test_cap_feed_carries_exactly_the_high_band(trained_client):
+    import xml.etree.ElementTree as ET
+
+    r = trained_client.get("/api/alerts.cap")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("application/cap+xml")
+    ns = {"cap": "urn:oasis:names:tc:emergency:cap:1.2"}
+    root = ET.fromstring(r.content)
+    high = trained_client.get("/api/alerts?risk_band=high&limit=500").json()["alerts"]
+    infos = root.findall("cap:info", ns)
+    assert len(infos) == len(high)
+    got = [i.find("cap:area/cap:geocode/cap:value", ns).text for i in infos]
+    assert got == [a["region_id"] for a in high]
+    xmlschema = pytest.importorskip("xmlschema")
+    from pathlib import Path
+    xmlschema.XMLSchema(str(Path(__file__).parent / "data" / "CAP-v1.2.xsd")).validate(r.text)
 
 
 def test_model_status_reports_real_metrics(trained_client):

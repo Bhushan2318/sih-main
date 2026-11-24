@@ -26,6 +26,27 @@ describe("LeadDayRail", () => {
     expect(within(day1).getByText(/\d+ bust/)).toBeInTheDocument();
   });
 
+  it("marks the day each capped variable stops being scored, and only that day", () => {
+    // The caps as /api/regions/all serves them (contracts.ARCHIVE_MAX_LEAD_DAYS, filtered to
+    // what run_20261006T200800Z models - it has no wind direction regressor).
+    const all = { ...REAL_ALL_REGIONS_20260925,
+      variable_max_lead_days: { soil_moisture_pct: 3, wind_speed_ms: 5 } };
+    render(<LeadDayRail all={all} value={1} onChange={vi.fn()} />);
+    const rows = screen.getAllByRole("button");
+    const soil = new RegExp(variableLabel("soil_moisture_pct"), "i");
+    const wind = new RegExp(variableLabel("wind_speed_ms"), "i");
+    expect(within(rows[3]).getByText(/not scored/)).toHaveTextContent(soil);
+    expect(within(rows[5]).getByText(/not scored/)).toHaveTextContent(wind);
+    [0, 1, 2, 4, 6, 7, 8, 9].forEach((i) => expect(within(rows[i]).queryByText(/not scored/)).toBeNull());
+    expect(screen.getByText(/fewer ways to bust/)).toBeInTheDocument();
+  });
+
+  it("says nothing about caps when the response carries none", () => {
+    render(<LeadDayRail all={REAL_ALL_REGIONS_20260925} value={1} onChange={vi.fn()} />);
+    expect(screen.queryByText(/not scored/)).toBeNull();
+    expect(screen.queryByText(/fewer ways to bust/)).toBeNull();
+  });
+
   it("writes the driver summary in days, not D-numbers", () => {
     const { container } = render(<LeadDayRail all={REAL_ALL_REGIONS_20260925} value={1} onChange={vi.fn()} />);
     const note = container.querySelector(".rail__driver");

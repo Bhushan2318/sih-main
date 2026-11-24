@@ -21,6 +21,24 @@ here rather than discovered live.
   records for `paired_2000.parquet`, is an estimated 50-66 GB against 48 GB free
   (2026-11-01) - not measured, because it was not attempted. Deferred; the empty-state text says the comparison has
   not been scored rather than that the model predates it.
+
+- **The CAP feed is a test message with box-shaped areas, added 2026-11-02.**
+  `/api/alerts.cap` serves the high-risk alerts as CAP 1.2 (validated against the OASIS
+  schema in `backend/tests/data/`). Two choices an aggregator will notice:
+  - `status` is `Test`, never `Actual`. Sanket is decision support, not a warning
+    authority, and a CAP consumer treats `Actual` as an issued warning.
+  - Each `<area>` polygon is the district's **bounding box** from
+    `data/geo/india_districts.json`, not its outline, so it covers neighbouring land too.
+    `<geocode>` carries the exact district id (`SANKET_REGION_ID`). Real outlines would
+    mean loading the district GeoJSON on the box, which has not been measured.
+
+  `severity` is `Unknown`, because a bust probability says the forecast is unreliable,
+  not how severe the weather is. Nothing is pushed anywhere: a consumer has to poll the
+  URL. It is converted per request from the prebuilt high-band alerts body, not stored as
+  its own file. Measured 2026-11-02 on macOS with 500 alerts (the API's ceiling, real
+  district ids, made-up probabilities): 572,975 bytes (20,106 gzipped), and five builds
+  raised peak RSS by 6.3 MB. Not yet measured on the Linux box.
+
 - **Indian-language screens are machine-translated and not yet reviewed.** Ten languages
   ship (Hindi, Tamil, Bengali, Marathi, Telugu, Gujarati, Kannada, Malayalam, Odia,
   Punjabi); the other twelve Eighth Schedule languages are listed in the code but have no
@@ -42,9 +60,13 @@ here rather than discovered live.
   name with an `<ID1>` marker and did not restore it; it writes a colon as the script's
   visarga or aytham (`ஃ ः ঃ ః …`) and Odia's danda as an ASCII `|`. A string that still loses a
   number, tag or term is refused and shows in English - a handful per language, mostly
-  the longest About and Model paragraphs. Text the backend writes - Replay narration,
-  the hero's notes, risk-band definitions, API `message`s - is still English in every
-  language.
+  the longest About and Model paragraphs. Of the text the backend writes, Replay's
+  narration and summary, the hero's national line and the risk-band definitions are
+  translated since 2026-11-02: the API sends each as `{key, params}` parts beside its
+  English (`app/services/server_text.py`), and the site renders the parts through the same
+  catalogue, with the same unreviewed machine translation. Still English in every
+  language: the hero's other notes (`prior_note`, `headline_note`, the eyebrow), the
+  ensemble-disagreement line, and API `message`s.
 
 - **A box woken from sleep is slow to answer at all.** Render's free tier stops the
   instance after 15 minutes without traffic, and starting it again takes tens of seconds
@@ -95,7 +117,15 @@ here rather than discovered live.
   0.45 → 0.55 over Days 6-10). The 2026-09-25 map instead falls from 0.50 on Day 1 to
   about 0.23 on Days 6-10. SHAP on the live classifier over that cycle's served events
   (measured 2026-09-26) splits it three ways, and misses the main cause:
-  - **The model's own leak (found 2026-09-28).** The 2017 test-year figures above were
+  - **Every figure in this entry is from run_20260922T043925Z**, the model served in
+    September. run_20261006T200800Z replaced it and is trained without
+    `forecast_error_lag` (checked 2026-11-02 in its regressors' `feature_names`), so the
+    leak below no longer applies to the served map. The shape has not been re-measured on
+    the new run. The variable-count step below still applies, because it comes from the
+    archive, not the model, and the lead-day rail now marks it: `/api/regions/all` serves
+    `variable_max_lead_days` and the row for the first unscored day says which variable
+    stopped (added 2026-11-02).
+  - **The model's own leak (found 2026-09-28; not in the served model since run_20261006T200800Z).** The 2017 test-year figures above were
     scored with `forecast_error_lag` filled in. Scored as live, with it blank, the same
     September 2017 cycles fall from 0.399 on Day 1 to 0.313 on Day 10, while the real bust
     rate rises from 0.371 to 0.495. See the `forecast_error_lag` entry. SHAP on the

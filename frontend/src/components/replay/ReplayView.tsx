@@ -16,6 +16,7 @@ import { ReplayEventHeader } from "./ReplayEventHeader";
 import { ReplayFocusChart } from "./ReplayFocusChart";
 import { ReplayProbabilityChart } from "./ReplayProbabilityChart";
 import { TopDistrictsList } from "../common/TopDistrictsList";
+import { serverText, stepNarration } from "../../lib/serverText";
 
 const STEP_MS = 2200;
 
@@ -116,7 +117,7 @@ export function ReplayView({ topology }: { topology: Topology | null }) {
           onChange={setSelectedInit}
         />
         {replay.summary_narration ? (
-          <p className="replay__summary">{replay.summary_narration}</p>
+          <p className="replay__summary">{serverText(replay.summary_parts, replay.summary_narration)}</p>
         ) : null}
       </div>
 
@@ -159,7 +160,7 @@ export function ReplayView({ topology }: { topology: Topology | null }) {
       <div className="replay__body">
         <div className="replay__mapcol">
           {replay.risk_band_definitions ? (
-            <MapLegend definitions={replay.risk_band_definitions} />
+            <MapLegend definitions={replay.risk_band_definitions} parts={replay.risk_band_definitions_i18n} />
           ) : null}
           <IndiaChoroplethMap
             regions={mapRegions}
@@ -177,7 +178,7 @@ export function ReplayView({ topology }: { topology: Topology | null }) {
               <span className="replay__day">{translate("day.one", { n: step.lead_time_days })}</span>
               {step.valid_date ? <span className="muted small">{translate("rv.valid", { date: step.valid_date })}</span> : null}
             </div>
-            <p className="replay__narration">{step.narration}</p>
+            <p className="replay__narration">{stepNarration(step.lead_time_days, step.narration_parts, step.narration)}</p>
             <div className="replay__stats">
               <span>{rich("rv.avg", { pct: pct(step.mean_bust_probability) }, [<b />])}</span>
               <span className="chip chip--high">{translate("rv.nBust", { n: step.n_high })}</span>

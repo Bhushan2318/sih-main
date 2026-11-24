@@ -93,6 +93,8 @@
   "rail.rowTitle": "{{day}}: {{bust}} ਬਸਟ, {{watch}} ਵਾਚ, {{low}} ਘੱਟ",
   "rail.meta": "{{bust}} ਬਸਟ · {{watch}} ਵਾਚ",
   "rail.note": "ਹਰੇਕ ਭਵਿੱਖਬਾਣੀ ਵਾਲੇ ਦਿਨ ਹਰੇਕ ਬੈਂਡ ਵਿੱਚ ਕਿੰਨੇ ਖੇਤਰ ਆਉਂਦੇ ਹਨ, ਅਤੇ ਉਹਨਾਂ ਦਾ ਔਸਤ ਬਸਟ ਜੋਖਮ ਹੁੰਦਾ ਹੈ।",
+  "rail.capRow": "ਇੱਥੋਂ {{list}} ਸਕੋਰ ਨਹੀਂ ਕੀਤਾ ਗਿਆ",
+  "rail.capNote": "ਕੁੱਝ ਵੇਰੀਏਬਲਾਂ ਨੂੰ ਸਿਰਫ਼ ਸਿਖਲਾਈ ਪੁਰਾਲੇਖ ਦੇ ਅੱਗੇ ਹੀ ਸਕੋਰ ਕੀਤਾ ਜਾਂਦਾ ਹੈ; ਕਤਾਰਾਂ ਦੱਸਦੀਆਂ ਹਨ ਕਿ ਹਰੇਕ ਕਿੱਥੇ ਰੁਕਦਾ ਹੈ। ਇੱਕ ਈਵੈਂਟ ਬਸਟ ਹੈ ਜੇਕਰ ਕੋਈ ਸਕੋਰ ਕੀਤਾ ਵੇਰੀਏਬਲ ਬਸਟ ਹੈ, ਇਸ ਲਈ ਜਿੱਥੇ ਕੋਈ ਰੁਕਦਾ ਹੈ ਉੱਥੇ ਬਸਟ ਦੇ ਘੱਟ ਤਰੀਕੇ ਹੁੰਦੇ ਹਨ, ਅਤੇ ਨਕਸ਼ਾ ਸਿਰਫ਼ ਇਸ ਕਾਰਨ ਕਰਕੇ ਹੀ ਸ਼ਾਂਤ ਹੋ ਸਕਦਾ ਹੈ।",
   "rail.oneCause": "{{v}} ਹਰੇਕ ਭਵਿੱਖਬਾਣੀ ਵਾਲੇ ਦਿਨ ਦਾ ਮੁੱਖ ਕਾਰਨ ਹੁੰਦਾ ਹੈ।",
   "rail.manyCauses": "ਮੁੱਖ ਕਾਰਨ ਦਸ ਦਿਨਾਂ ਵਿੱਚ {{n}} ਵਾਰ ਬਦਲਦਾ ਹੈ।",
   "rail.mostly": "ਮੁੱਖ ਤੌਰ ਉੱਤੇ: {{list}} ਕਾਰਨ ਹੁੰਦਾ ਹੈ।",
@@ -384,6 +386,8 @@
   "al.sub": "ਮੌਜੂਦਾ ਭਵਿੱਖਬਾਣੀ ਵਿੱਚ ਵਾਚ ਦੇ ਪੱਧਰ ਤੋਂ ਉੱਪਰ ਦਾ ਹਰੇਕ ਖੇਤਰ, ਪਹਿਲਾਂ ਸਭ ਤੋਂ ਭੈਡ਼ੇ ਨਾਲ ਕ੍ਰਮਬੱਧ ਕੀਤਾ ਗਿਆ ਹੈ।",
   "al.capped": " ਸਿਰਫ਼ {{n}} ਸਭ ਤੋਂ ਗੰਭੀਰ ਦਰਸਾਈਆਂ ਗਈਆਂ ਹਨ।",
   "al.csv": "ਡਾਊਨਲੋਡ ਕਰੋ CSV",
+  "al.cap": "CAP ਫੀਡ",
+  "al.capTip": "ਕਾਮਨ ਅਲਰਟਿੰਗ ਪ੍ਰੋਟੋਕੋਲ (CAP 1.2) ਵਿੱਚ ਉੱਚ-ਜੋਖਮ ਚੇਤਾਵਨੀਆਂ, ਫਾਰਮੈਟ ਚੇਤਾਵਨੀ ਪ੍ਰਣਾਲੀਆਂ ਵਿੱਚ ਪਡ਼੍ਹੀਆਂ ਜਾਂਦੀਆਂ ਹਨ। ਹਰੇਕ ਨੂੰ ਇੱਕ ਟੈਸਟ ਸੰਦੇਸ਼ ਦੇ ਰੂਪ ਵਿੱਚ ਚਿੰਨ੍ਹਿਤ ਕੀਤਾ ਜਾਂਦਾ ਹੈ: ਫੈਸਲਾ ਸਮਰਥਨ, ਨਾ ਕਿ ਜਾਰੀ ਕੀਤੀ ਚੇਤਾਵਨੀ।",
   "al.loading": "ਚੇਤਾਵਨੀਆਂ ਲੋਡ ਕੀਤੀਆਂ ਜਾ ਰਹੀਆਂ ਹਨ",
   "al.noAlerts": "ਹਾਲੇ ਕੋਈ ਚੇਤਾਵਨੀ ਨਹੀਂ",
   "al.noneTitle": "ਵਾਚ ਜਾਂ ਬਸਟ ਪੱਧਰ ਉੱਤੇ ਕੋਈ ਖੇਤਰ ਨਹੀਂ ਹਨ",
@@ -500,7 +504,7 @@
   "ab.leadCorr": "ਇਕੱਲੇ ਭਵਿੱਖਬਾਣੀ ਵਾਲੇ ਦਿਨ ਤੋਂ ਅੰਦਾਜ਼ਾ ਲਗਾਉਣਾ ਲਗਭਗ ਜ਼ੀਰੋ ਹੁਨਰ ਦਿੰਦਾ ਹੈ, ਕਿਉਂਕਿ ਬਸਟ ਸਿਰਫ਼ ਅੱਗੇ ਵਧਣ ਦੀ ਜ਼ਿਆਦਾ ਸੰਭਾਵਨਾ ਨਹੀਂ ਰੱਖਦਾ। ਭਵਿੱਖਬਾਣੀ ਵਾਲੇ ਦਿਨ ਅਤੇ ਬਸਟ ਦੇ ਵਿਚਕਾਰ ਮਾਪਿਆ ਲਿੰਕ ਸਿਖਲਾਈ ਡੇਟਾ ਉੱਤੇ ਸਿਰਫ {{train}} ਅਤੇ ਸੈੱਟ-ਸਾਈਡ ਟੈਸਟ ਡੇਟਾ ਉੱਤੇ {{test}} ਹੈ।",
   "ab.noLadder": "ਸਧਾਰਨ ਬੇਸਲਾਈਨਾਂ ਦੀ ਤੁਲਨਾ ਵਿੱਚ ਇੱਥੇ ਪੇਸ਼ ਕੀਤੇ ਗਏ ਮਾਡਲ ਲਈ ਅਜੇ ਤੱਕ ਸਕੋਰ ਨਹੀਂ ਕੀਤਾ ਗਿਆ ਹੈ, ਇਸ ਲਈ ਇੱਕ ਵੱਖਰੇ ਮਾਡਲ ਦੀ ਬਜਾਏ ਕੋਈ ਟੇਬਲ ਨਹੀਂ ਦਿਖਾਇਆ ਗਿਆ ਹੈ।",
   "ab.svcTitle": "ਇਸ ਨੂੰ ਸਿਰਫ਼ ਇੱਕ ਸਫ਼ੇ ਦੇ ਰੂਪ ਵਿੱਚ ਨਹੀਂ, ਬਲਕਿ ਇੱਕ ਸੇਵਾ ਦੇ ਰੂਪ ਵਿੱਚ ਵਰਤੋਂ",
-  "ab.svc": "ਇਸ ਸਾਈਟ ਉੱਤੇ ਹਰੇਕ ਨੰਬਰ ਇੱਕ ਜਨਤਕ, ਦਸਤਾਵੇਜ਼ੀ HTTP API ਤੋਂ ਪਡ਼੍ਹਿਆ ਜਾਂਦਾ ਹੈ-ਉਹੀ ਜੋ ਇਹ ਪੰਨਾ ਵਰਤਦਾ ਹੈ। ਇੱਥੇ ਕੋਈ ਲੁਕਿਆ ਹੋਇਆ ਡਾਟਾ ਸਰੋਤ ਨਹੀਂ ਹੈ ਅਤੇ ਪੰਨੇ ਵਿੱਚ ਕੋਈ ਨੰਬਰ ਨਹੀਂ ਲਿਖਿਆ ਗਿਆ ਹੈ। <0>17 API ਅੰਤਮ ਬਿੰਦੂ</0>, Pydantic ਨਾਲ ਚੈੱਕ ਕੀਤਾ ਗਿਆ ਹੈ ਅਤੇ ਇੱਕ ਸਵੈਚਲਿਤ ਤੌਰ ਉੱਤੇ ਤਿਆਰ ਕੀਤੇ ਗਏ OpenAPI ਦਸਤਾਵੇਜ਼ ਦੁਆਰਾ ਦਰਸਾਇਆ ਗਿਆ ਹੈ, ਇਸ ਲਈ ਇੱਕ ਭਵਿੱਖਬਾਣੀ ਕਰਨ ਵਾਲਾ ਦਫ਼ਤਰ ਬਸਟ ਦੇ ਜੋਖਮ ਨੂੰ ਸਿੱਧੇ ਆਪਣੇ ਸਾੱਫਟਵੇਅਰ ਵਿੱਚ ਲੋਡ ਕਰ ਸਕਦਾ ਹੈ।",
+  "ab.svc": "ਇਸ ਸਾਈਟ ਉੱਤੇ ਹਰੇਕ ਨੰਬਰ ਇੱਕ ਜਨਤਕ, ਦਸਤਾਵੇਜ਼ੀ HTTP API ਤੋਂ ਪਡ਼੍ਹਿਆ ਜਾਂਦਾ ਹੈ-ਉਹੀ ਜੋ ਇਹ ਪੰਨਾ ਵਰਤਦਾ ਹੈ। ਇੱਥੇ ਕੋਈ ਲੁਕਿਆ ਹੋਇਆ ਡਾਟਾ ਸਰੋਤ ਨਹੀਂ ਹੈ ਅਤੇ ਪੰਨੇ ਵਿੱਚ ਕੋਈ ਨੰਬਰ ਨਹੀਂ ਲਿਖਿਆ ਗਿਆ ਹੈ। <0>18 API ਅੰਤਮ ਬਿੰਦੂ</0>, Pydantic ਨਾਲ ਚੈੱਕ ਕੀਤਾ ਗਿਆ ਹੈ ਅਤੇ ਇੱਕ ਸਵੈਚਲਿਤ ਤੌਰ ਉੱਤੇ ਤਿਆਰ ਕੀਤੇ ਗਏ OpenAPI ਦਸਤਾਵੇਜ਼ ਦੁਆਰਾ ਦਰਸਾਇਆ ਗਿਆ ਹੈ, ਇਸ ਲਈ ਇੱਕ ਭਵਿੱਖਬਾਣੀ ਕਰਨ ਵਾਲਾ ਦਫ਼ਤਰ ਬਸਟ ਦੇ ਜੋਖਮ ਨੂੰ ਸਿੱਧੇ ਆਪਣੇ ਸਾੱਫਟਵੇਅਰ ਵਿੱਚ ਲੋਡ ਕਰ ਸਕਦਾ ਹੈ।",
   "ab.docs": "<0>ਇੰਟਰਐਕਟਿਵ docs</0>-<1>/docs</1> (Swagger UI, ਬਰਾਊਜ਼ਰ ਤੋਂ ਕਾਲ ਕਰਨ ਯੋਗ ਹਰ ਅੰਤਮ ਬਿੰਦੂ-ਇੱਥੇ ਸ਼ੁਰੂ ਕਰੋ), ਅਤੇ <2>/openapi.json</2> (ਕੋਡ ਜਨਰੇਟਰਾਂ ਲਈ ਮਸ਼ੀਨ-ਪਡ਼੍ਹਨਯੋਗ-ਇਹ JSON ਦੀ ਇੱਕ ਲੰਬੀ ਲਾਈਨ ਦੇ ਰੂਪ ਵਿੱਚ ਖੁੱਲ੍ਹਦਾ ਹੈ)'ਤੇ ਕੱਚਾ ਸਕੀਮਾ।",
   "ab.endpoints": "<0>ਸ਼ੁਰੂ ਕਰਨ ਲਈ ਚੰਗੀਆਂ ਥਾਵਾਂ</0> (ਇਹ ਸਾੱਫਟਵੇਅਰ ਲਈ ਕੱਚਾ JSON ਵਾਪਸ ਕਰਦੇ ਹਨ, ਨਾ ਕਿ ਪਡ਼੍ਹਨਯੋਗ ਪੰਨਾ): <1>/api/regions/all</1> ਹਰੇਕ ਜ਼ਿਲ੍ਹੇ ਲਈ ਹਰ ਭਵਿੱਖਬਾਣੀ ਵਾਲੇ ਦਿਨ, <2>/api/alerts</2> ਹੁਣ ਵਾਚ ਦੇ ਪੱਧਰ ਤੋਂ ਉੱਪਰ ਦੇ ਖੇਤਰਾਂ ਲਈ, ਅਤੇ <3>/api/model/status</3> ਇਸ ਪੰਨੇ'ਤੇ ਅੰਕ ਲਈ, ਪਰੋਸੇ ਗਏ ਮਾਡਲ ਤੋਂ ਲਏ ਗਏ ਹਨ।",
   "ab.fair": "<0>ਕਿਰਪਾ ਕਰਕੇ ਨੋਟ ਕਰੋ</0>-ਇਹ ਇੱਕ ਮੁਫ਼ਤ ਸਰਵਰ ਉੱਤੇ ਹੋਸਟ ਕੀਤਾ ਗਿਆ ਹੈ ਜੋ ਬਿਨਾਂ ਵਰਤੋਂ ਦੇ 15 ਮਿੰਟ ਬਾਅਦ ਸੌਣ ਜਾਂਦਾ ਹੈ, ਇਸ ਲਈ ਪਹਿਲੀ ਬੇਨਤੀ ਸ਼ੁਰੂ ਹੋਣ ਵਿੱਚ 30-50 ਸਕਿੰਟ ਲੈ ਸਕਦੀ ਹੈ। ਇਹ ਇਸ ਲਈ ਹੈ ਕਿਉਂਕਿ ਹੋਸਟਿੰਗ ਮੁਫ਼ਤ ਹੈ; ਇਹ ਕੋਈ ਗਲਤੀ ਨਹੀਂ ਹੈ।",
@@ -533,6 +537,30 @@
   "dash.nothing": "ਇਸ ਭਵਿੱਖਬਾਣੀ ਵਾਲੇ ਦਿਨ ਲਈ ਕੁਝ ਵੀ ਨਹੀਂ ਦਿਖਾਉਣਾ ਹੈ",
   "dash.watch": "ਦੇਖੋ ਇਹ ਇੱਕ ਅਸਲੀ ਬਸਟ ਦੀ ਭਵਿੱਖਬਾਣੀ ਕਰਦਾ ਹੈ →",
   "dash.map": "ਰਾਸ਼ਟਰੀ ਨਕਸ਼ਾ",
+  "srv.rp.step": "ਦਿਨ {{lead}}-{{body}}।",
+  "srv.rp.sep": "; ",
+  "srv.rp.climbs": "ਬਸਟ ਉੱਤੇ ਜੋਖਮ {{region}} ਚਡ਼੍ਹਦਾ ਹੈ {{from}} → {{to}}",
+  "srv.rp.opens": "{{region}} ਸਭ ਤੋਂ ਵੱਧ ਬਸਟ ਜੋਖਮ ਦੇ ਨਾਲ {{p}}'ਤੇ ਖੁੱਲ੍ਹਦਾ ਹੈ",
+  "srv.rp.still": "{{region}} ਅਜੇ ਵੀ {{p}} ਉੱਤੇ ਸਭ ਤੋਂ ਵੱਧ ਬਸਟ ਜੋਖਮ ਰੱਖਦਾ ਹੈ",
+  "srv.rp.driven": "{{var}} ਗਲਤੀ ਦੁਆਰਾ ਚਲਾਇਆ ਗਿਆ",
+  "srv.rp.nowDriven": "ਹੁਣ {{var}} ਗਲਤੀ ਦੁਆਰਾ ਚਲਾਇਆ ਜਾਂਦਾ ਹੈ",
+  "srv.rp.high1": "{{n}} ਖੇਤਰ ਉੱਚ-ਜੋਖਮ ਵਾਲਾ",
+  "srv.rp.highN": "{{n}} ਖੇਤਰ ਉੱਚ-ਜੋਖਮ ਵਾਲੇ ਹਨ",
+  "srv.rp.nowHigh1": "{{n}} ਖੇਤਰ ਹੁਣ ਉੱਚ-ਜੋਖਮ ਵਾਲਾ ਹੈ",
+  "srv.rp.nowHighN": "{{n}} ਖੇਤਰ ਹੁਣ ਉੱਚ ਜੋਖਮ ਵਾਲੇ ਹਨ",
+  "srv.rs.climbs": "ਸ਼ੁਰੂਆਤੀ {{date}}: ਮਤਲਬ ਬਸਟ ਜੋਖਮ ਦਿਨ {{d0}} ਨੂੰ {{first}} ਤੋਂ ਦਿਨ {{d1}} ਨੂੰ {{last}} ਤੱਕ ਚਡ਼੍ਹ ਜਾਂਦਾ ਹੈ।",
+  "srv.rs.eases": "ਸ਼ੁਰੂਆਤੀ {{date}}: ਮਤਲਬ ਬਸਟ ਜੋਖਮ ਦਿਨ {{d0}} ਨੂੰ {{first}} ਤੋਂ ਦਿਨ {{d1}} ਨੂੰ {{last}} ਤੱਕ ਘੱਟ ਜਾਂਦਾ ਹੈ।",
+  "srv.rs.holds": "ਸ਼ੁਰੂਆਤੀ {{date}}: ਮਤਲਬ ਬਸਟ ਜੋਖਮ ਦਿਨ {{d0}} ਨੂੰ {{first}} ਤੋਂ ਦਿਨ {{d1}} ਨੂੰ {{last}} ਤੱਕ ਹੁੰਦਾ ਹੈ।",
+  "srv.rs.peakLed": " ਇਹ ਦਿਨ {{lead}} ਨੂੰ {{p}} ਉੱਤੇ {{region}} ਉੱਤੇ ਸਿਖਰ ਉੱਤੇ ਪਹੁੰਚ ਗਿਆ, ਜਿਸ ਦੀ ਅਗਵਾਈ {{var}} ਗਲਤੀ ਨੇ ਕੀਤੀ।",
+  "srv.rs.peak": " ਇਹ ਦਿਨ {{lead}} ਨੂੰ {{region}} ਉੱਤੇ {{p}} ਉੱਤੇ ਸਿਖਰ ਉੱਤੇ ਹੈ।",
+  "srv.rs.verified": " ਇਸ ਦਾ ਭਵਿੱਖਬਾਣੀ-ਬਨਾਮ-ਨਿਰੀਖਤ ਟਰੈਕ ਹੇਠਾਂ ਦਿੱਤਾ ਗਿਆ ਹੈ।",
+  "srv.rs.unverified": " ਇਹ ਚੱਕਰ ਅਜੇ ਤੱਕ ਤਸਦੀਕ ਨਹੀਂ ਕੀਤਾ ਗਿਆ ਹੈ, ਇਸ ਲਈ ਕੋਈ ਨਿਰੀਖਤ ਟਰੈਕ ਨਹੀਂ ਖਿੱਚਿਆ ਗਿਆ ਹੈ।",
+  "srv.nat.climbs": "ਜੋਖਮ ਅੰਕ ਵਾਲੇ ਸਾਰੇ {{n}} ਖੇਤਰਾਂ ਵਿੱਚ, ਔਸਤ ਬਸਟ ਸੰਭਾਵਨਾ ਦਿਨ {{d0}} ਉੱਤੇ {{first}} ਤੋਂ ਦਿਨ {{d1}} ਉੱਤੇ {{last}} ਤੱਕ ਚਡ਼੍ਹਦੀ ਹੈ।",
+  "srv.nat.falls": "ਜੋਖਮ ਅੰਕ ਵਾਲੇ ਸਾਰੇ {{n}} ਖੇਤਰਾਂ ਵਿੱਚ, ਔਸਤ ਬਸਟ ਸੰਭਾਵਨਾ ਦਿਨ {{d0}} ਉੱਤੇ {{first}} ਤੋਂ ਦਿਨ {{d1}} ਉੱਤੇ {{last}} ਤੱਕ ਡਿੱਗਦੀ ਹੈ।",
+  "srv.band.low": "ਬਸਟ ਜੋਖਮ {{p}}% ਤੋਂ ਘੱਟ ਹੈ",
+  "srv.band.medium": "ਬਸਟ ਜੋਖਮ {{lo}}% ਤੋਂ {{hi}}% ਤੱਕ",
+  "srv.band.high": "ਬਸਟ ਜੋਖਮ {{p}}% ਜਾਂ ਇਸ ਤੋਂ ਉੱਪਰ",
+  "srv.band.basis": "ਬੈਂਡ ਕਿਨਾਰਿਆਂ ਨੂੰ ਇਸ ਮਾਡਲ ਦੀਆਂ ਆਪਣੀਆਂ ਭਵਿੱਖਬਾਣੀਆਂ ਇਸ ਦੇ ਪ੍ਰਮਾਣਿਕਤਾ ਡੇਟਾ ਉੱਤੇ ਕਿਵੇਂ ਫੈਲਾਈਆਂ ਗਈਆਂ ਸਨ, ਇਸ ਤੋਂ ਸੈੱਟ ਕੀਤਾ ਗਿਆ ਹੈ, ਹੱਥ ਨਾਲ ਨਹੀਂ ਚੁਣਿਆ ਗਿਆ।",
   "_meta": {
     "brand.home": {
       "src": "df5e2f6d1ccf",
@@ -1001,6 +1029,16 @@
     },
     "rail.note": {
       "src": "ca212c46b964",
+      "machine": true,
+      "reviewed": false
+    },
+    "rail.capRow": {
+      "src": "ea0f794d6b70",
+      "machine": true,
+      "reviewed": false
+    },
+    "rail.capNote": {
+      "src": "4b4fb89acfbd",
       "machine": true,
       "reviewed": false
     },
@@ -2470,6 +2508,16 @@
       "machine": true,
       "reviewed": false
     },
+    "al.cap": {
+      "src": "b050d3a4141e",
+      "machine": true,
+      "reviewed": false
+    },
+    "al.capTip": {
+      "src": "e4563a69948c",
+      "machine": true,
+      "reviewed": false
+    },
     "al.loading": {
       "src": "4246f49e52b3",
       "machine": true,
@@ -3056,7 +3104,7 @@
       "reviewed": false
     },
     "ab.svc": {
-      "src": "27d8f9f02a59",
+      "src": "6283c5fd7952",
       "machine": true,
       "reviewed": false
     },
@@ -3230,6 +3278,128 @@
     },
     "dash.map": {
       "src": "b1bfa6d7b765",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.step": {
+      "src": "b9d7045f6a52",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.sep": {
+      "src": "0a2d3f8f9b72",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.climbs": {
+      "src": "0e863f3c3ff0",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.opens": {
+      "src": "83af546d3b92",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.still": {
+      "src": "8a0615104b7c",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.driven": {
+      "src": "90ef7388fcd8",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.nowDriven": {
+      "src": "381c2254bb02",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.high1": {
+      "src": "445e08648c9a",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.highN": {
+      "src": "0bcd9500b89e",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.nowHigh1": {
+      "src": "ede9b3d6383a",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.nowHighN": {
+      "src": "cdcab7a50a17",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rs.climbs": {
+      "src": "152e00ce8e4b",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rs.eases": {
+      "src": "993f2dcbdce1",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rs.holds": {
+      "src": "d87778f31df1",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rs.peakLed": {
+      "src": "282d43a3345e",
+      "machine": true,
+      "reviewed": false,
+      "markup": "dropped",
+      "params": "as-numbers"
+    },
+    "srv.rs.peak": {
+      "src": "34998934a5f7",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rs.verified": {
+      "src": "4aaf9bf8531f",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rs.unverified": {
+      "src": "96365e5236c1",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.nat.climbs": {
+      "src": "e8a95d1fbf56",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.nat.falls": {
+      "src": "6957b7f318fe",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.band.low": {
+      "src": "90fe9b75da24",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.band.medium": {
+      "src": "1e4053031f39",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.band.high": {
+      "src": "923d35eb7a40",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.band.basis": {
+      "src": "a3044e35c1b0",
       "machine": true,
       "reviewed": false
     }

@@ -27,6 +27,7 @@ uvicorn app.main:app --reload --port 8000
 | `GET` | `/api/regions/{region_id}` | detail panel: per-variable series, bust curve, top factors. Takes a district (`IN-MH-NAGPUR`) or a state (`IN-MH`) |
 | `GET` | `/api/ensemble?init_date&region_id` | the hero's ensemble divergence across lead days; both parameters optional (latest cycle, a chartable region) |
 | `GET` | `/api/alerts?limit&risk_band` | medium/high-risk (region, lead) events, riskiest first |
+| `GET` | `/api/alerts.cap` | the high-risk alerts as a CAP 1.2 document (`application/cap+xml`, `status` Test), built from the same body as `/api/alerts?risk_band=high` |
 | `GET` | `/api/model/status` | what is trained, on how much data, and how well it scored |
 | `GET` | `/api/model/runs` | every persisted run id + the current one |
 | `GET` | `/api/replay/cycles` | every scoreable forecast cycle, most demo-worthy (a real verified bust that grows into the medium range) first |
@@ -51,6 +52,10 @@ Every response distinguishes "no model / no data" from "a real number":
   observed line.
 - `risk_band_definitions.basis` states that the bands are percentiles of the current run's
   validation-split probabilities, not fixed cutoffs.
+- Backend-written sentences also come as translatable parts: `steps[].narration_parts`,
+  `summary_parts`, `national_note_parts` and `risk_band_definitions_i18n`, each a
+  `{key, params}` whose English template is in `app/services/server_text.py` and, word for
+  word, in the frontend catalogue. The plain English fields are unchanged.
 - `/api/model/status.validation_metrics` reports which `split` each number came from,
   preferring the held-out `test` split.
 

@@ -93,6 +93,8 @@
   "rail.rowTitle": "{{day}}: {{bust}} बस्ट, {{watch}} वॉच, {{low}} कम",
   "rail.meta": "{{bust}} बस्ट · {{watch}} वॉच",
   "rail.note": "प्रत्येक पूर्वानुमान दिवस पर प्रत्येक बैंड में कितने क्षेत्र आते हैं, और उनका औसत बस्ट जोखिम।",
+  "rail.capRow": "यहाँ से {{list}} स्कोर नहीं किया गया है",
+  "rail.capNote": "कुछ चर को केवल उतना ही आगे स्कोर किया जाता है जितना कि प्रशिक्षण संग्रह उन्हें रखता है; पंक्तियाँ बताती हैं कि प्रत्येक कहाँ रुकता है। एक घटना बस्ट है यदि कोई भी अंकित चर बस्ट है, तो जहाँ कोई रुकता है वहाँ बस्ट के लिए कम तरीके हैं, और मानचित्र केवल उसी कारण से शांत हो सकता है।",
   "rail.oneCause": "{{v}} प्रत्येक पूर्वानुमान दिवस पर मुख्य कारण है।",
   "rail.manyCauses": "मुख्य कारण दस दिनों में {{n}} बार बदलता है।",
   "rail.mostly": "मुख्य रूप से इसके कारण: {{list}}।",
@@ -384,6 +386,8 @@
   "al.sub": "वर्तमान पूर्वानुमान में वॉच स्तर से ऊपर का प्रत्येक क्षेत्र, सबसे खराब पहले के साथ क्रमबद्ध किया गया है।",
   "al.capped": " केवल {{n}} सबसे गंभीर दिखाया गया है।",
   "al.csv": "डाउनलोड करें CSV",
+  "al.cap": "सी. ए. पी. फ़ीड",
+  "al.capTip": "कॉमन अलर्ट प्रोटोकॉल (सीएपी 1.2) में उच्च जोखिम वाले अलर्ट, प्रारूप चेतावनी प्रणाली में पढ़े जाते हैं। प्रत्येक को एक परीक्षण संदेश के रूप में चिह्नित किया जाता है: निर्णय समर्थन, न कि जारी की गई चेतावनी।",
   "al.loading": "चेतावनी लोड किया जा रहा है",
   "al.noAlerts": "अभी तक कोई चेतावनी नहीं",
   "al.noneTitle": "वॉच या बस्ट स्तर पर कोई क्षेत्र नहीं हैं",
@@ -500,7 +504,7 @@
   "ab.leadCorr": "अकेले पूर्वानुमान दिन से अनुमान लगाने से लगभग शून्य कौशल मिलता है, क्योंकि बस्ट बस आगे बढ़ने की अधिक संभावना नहीं है। पूर्वानुमान दिन और बस्ट के बीच मापा गया लिंक केवल प्रशिक्षण डेटा पर {{train}} और सेट-साइड परीक्षण डेटा पर {{test}} है।",
   "ab.noLadder": "यहाँ दिए गए मॉडल के लिए सरल आधार रेखाओं की तुलना में तुलना अभी तक नहीं की गई है, इसलिए एक अलग मॉडल से एक के बजाय कोई तालिका नहीं दिखाई गई है।",
   "ab.svcTitle": "इसे केवल एक पृष्ठ के रूप में नहीं, बल्कि एक सेवा के रूप में उपयोग करें",
-  "ab.svc": "इस साइट पर प्रत्येक संख्या को एक सार्वजनिक, प्रलेखित HTTP API से पढ़ा जाता है-वही जो इस पृष्ठ का उपयोग करता है। कोई छिपा हुआ डेटा स्रोत नहीं है और पृष्ठ में कोई संख्या नहीं लिखी गई है। <0>17 API अंतिम बिंदु</0>, Pydantic के साथ जाँच की गई और स्वचालित रूप से उत्पन्न OpenAPI दस्तावेज़ द्वारा वर्णित है, ताकि एक पूर्वानुमान कार्यालय सीधे अपने स्वयं के सॉफ़्टवेयर में बस्ट के जोखिम को लोड कर सके।",
+  "ab.svc": "इस साइट पर प्रत्येक संख्या को एक सार्वजनिक, प्रलेखित HTTP API से पढ़ा जाता है-वही जो इस पृष्ठ का उपयोग करता है। कोई छिपा हुआ डेटा स्रोत नहीं है और पृष्ठ में कोई संख्या नहीं लिखी गई है। <0>18 API अंतिम बिंदु</0>, Pydantic के साथ जाँच की गई और स्वचालित रूप से उत्पन्न OpenAPI दस्तावेज़ द्वारा वर्णित है, ताकि एक पूर्वानुमान कार्यालय सीधे अपने स्वयं के सॉफ़्टवेयर में बस्ट के जोखिम को लोड कर सके।",
   "ab.docs": "<0>अंतःक्रियात्मक डॉक्स</0>-<1>/docs</1> (Swagger यू. आई., ब्राउज़र से कॉल करने योग्य प्रत्येक अंतिम बिंदु-यहाँ से शुरू करें), और <2>/openapi.json</2> (कोड जनरेटर के लिए मशीन-पठनीय-यह JSON की एक लंबी पंक्ति के रूप में खुलता है) पर कच्चा स्कीमा।",
   "ab.endpoints": "<0>शुरू करने के लिए अच्छी जगहें</0> (ये सॉफ्टवेयर के लिए कच्चा JSON लौटाते हैं, न कि एक पठनीय पृष्ठ): प्रत्येक पूर्वानुमान दिवस पर प्रत्येक जिले के लिए <1>/api/regions/all</1>, अब वॉच स्तर से ऊपर के क्षेत्रों के लिए <2>/api/alerts</2>, और इस पृष्ठ पर दिए गए अंकों के लिए <3>/api/model/status</3>, परोसे गए मॉडल से लिए गए हैं।",
   "ab.fair": "<0>कृपया ध्यान दें</0>-यह एक मुफ्त सर्वर पर होस्ट किया जाता है जो बिना उपयोग के 15 मिनट के बाद सो जाता है, इसलिए पहला अनुरोध शुरू होने में 30-50 सेकंड ले सकता है। ऐसा इसलिए है क्योंकि होस्टिंग मुफ़्त है; यह कोई गलती नहीं है।",
@@ -533,6 +537,30 @@
   "dash.nothing": "इस पूर्वानुमान दिवस के लिए दिखाने के लिए कुछ भी नहीं है",
   "dash.watch": "देखें कि यह एक वास्तविक बस्ट की भविष्यवाणी करता है →",
   "dash.map": "राष्ट्रीय मानचित्र",
+  "srv.rp.step": "दिन {{lead}}-{{body}}।",
+  "srv.rp.sep": "; ",
+  "srv.rp.climbs": "बस्ट पर जोखिम {{region}} चढ़ता है {{from}} → {{to}}",
+  "srv.rp.opens": "{{region}} {{p}} पर उच्चतम बस्ट जोखिम के साथ खुलता है",
+  "srv.rp.still": "{{region}} अभी भी {{p}} पर उच्चतम बस्ट जोखिम रखता है",
+  "srv.rp.driven": "{{var}} त्रुटि द्वारा संचालित",
+  "srv.rp.nowDriven": "अब {{var}} त्रुटि द्वारा संचालित",
+  "srv.rp.high1": "{{n}} क्षेत्र उच्च जोखिम वाला",
+  "srv.rp.highN": "{{n}} उच्च जोखिम वाले क्षेत्र",
+  "srv.rp.nowHigh1": "{{n}} क्षेत्र अब उच्च जोखिम वाला है",
+  "srv.rp.nowHighN": "{{n}} क्षेत्र अब उच्च जोखिम वाले हैं",
+  "srv.rs.climbs": "प्रारंभिक {{date}}: माध्य बस्ट जोखिम दिन {{d0}} पर {{first}} से दिन {{d1}} पर {{last}} तक चढ़ जाता है।",
+  "srv.rs.eases": "प्रारंभिक {{date}}: मतलब बस्ट जोखिम दिन {{d0}} पर {{first}} से दिन {{d1}} पर {{last}} तक कम हो जाता है।",
+  "srv.rs.holds": "प्रारंभिक {{date}}: माध्य बस्ट जोखिम दिन {{d0}} पर {{first}} से दिन {{d1}} पर {{last}} तक रहता है।",
+  "srv.rs.peakLed": " यह दिन {{lead}} पर {{region}} के ऊपर {{p}} पर चरम पर है, जो {{var}} त्रुटि के कारण होता है।",
+  "srv.rs.peak": " यह दिन {{lead}} पर {{region}} के ऊपर {{p}} पर चरम पर है।",
+  "srv.rs.verified": " इसका पूर्वानुमान बनाम अवलोकन ट्रैक नीचे दिया गया है।",
+  "srv.rs.unverified": " यह चक्र अभी तक सत्यापित नहीं हुआ है, इसलिए कोई अवलोकन ट्रैक नहीं खींचा गया है।",
+  "srv.nat.climbs": "जोखिम स्कोर वाले सभी {{n}} क्षेत्रों में औसत बस्ट संभावना दिन {{d0}} पर {{first}} से दिन {{d1}} पर {{last}} तक चढ़ जाती है।",
+  "srv.nat.falls": "औसत बस्ट संभावना दिन {{d0}} पर {{first}} से दिन {{d1}} पर {{last}} तक गिरती है, जोखिम स्कोर वाले सभी {{n}} क्षेत्रों में।",
+  "srv.band.low": "बस्ट {{p}}% से नीचे का जोखिम",
+  "srv.band.medium": "बस्ट जोखिम {{lo}}% से {{hi}}%",
+  "srv.band.high": "बस्ट जोखिम {{p}}% या उससे अधिक",
+  "srv.band.basis": "बैंड किनारों को इस बात से निर्धारित किया जाता है कि कैसे इस मॉडल की अपनी भविष्यवाणियों को इसके सत्यापन डेटा पर फैलाया गया था, न कि हाथ से चुना गया था।",
   "_meta": {
     "brand.home": {
       "src": "df5e2f6d1ccf",
@@ -1001,6 +1029,16 @@
     },
     "rail.note": {
       "src": "ca212c46b964",
+      "machine": true,
+      "reviewed": false
+    },
+    "rail.capRow": {
+      "src": "ea0f794d6b70",
+      "machine": true,
+      "reviewed": false
+    },
+    "rail.capNote": {
+      "src": "4b4fb89acfbd",
       "machine": true,
       "reviewed": false
     },
@@ -2470,6 +2508,16 @@
       "machine": true,
       "reviewed": false
     },
+    "al.cap": {
+      "src": "b050d3a4141e",
+      "machine": true,
+      "reviewed": false
+    },
+    "al.capTip": {
+      "src": "e4563a69948c",
+      "machine": true,
+      "reviewed": false
+    },
     "al.loading": {
       "src": "4246f49e52b3",
       "machine": true,
@@ -3054,7 +3102,7 @@
       "reviewed": false
     },
     "ab.svc": {
-      "src": "27d8f9f02a59",
+      "src": "6283c5fd7952",
       "machine": true,
       "reviewed": false
     },
@@ -3228,6 +3276,128 @@
     },
     "dash.map": {
       "src": "b1bfa6d7b765",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.step": {
+      "src": "b9d7045f6a52",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.sep": {
+      "src": "0a2d3f8f9b72",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.climbs": {
+      "src": "0e863f3c3ff0",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.opens": {
+      "src": "83af546d3b92",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.still": {
+      "src": "8a0615104b7c",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.driven": {
+      "src": "90ef7388fcd8",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.nowDriven": {
+      "src": "381c2254bb02",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.high1": {
+      "src": "445e08648c9a",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.highN": {
+      "src": "0bcd9500b89e",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.nowHigh1": {
+      "src": "ede9b3d6383a",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rp.nowHighN": {
+      "src": "cdcab7a50a17",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rs.climbs": {
+      "src": "152e00ce8e4b",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rs.eases": {
+      "src": "993f2dcbdce1",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rs.holds": {
+      "src": "d87778f31df1",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rs.peakLed": {
+      "src": "282d43a3345e",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rs.peak": {
+      "src": "34998934a5f7",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rs.verified": {
+      "src": "4aaf9bf8531f",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.rs.unverified": {
+      "src": "96365e5236c1",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.nat.climbs": {
+      "src": "e8a95d1fbf56",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.nat.falls": {
+      "src": "6957b7f318fe",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.band.low": {
+      "src": "90fe9b75da24",
+      "machine": true,
+      "reviewed": false,
+      "markup": "dropped",
+      "params": "as-numbers"
+    },
+    "srv.band.medium": {
+      "src": "1e4053031f39",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.band.high": {
+      "src": "923d35eb7a40",
+      "machine": true,
+      "reviewed": false
+    },
+    "srv.band.basis": {
+      "src": "a3044e35c1b0",
       "machine": true,
       "reviewed": false
     }
