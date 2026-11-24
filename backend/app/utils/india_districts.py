@@ -57,6 +57,8 @@ class DistrictRecord:
     state_name: str
     centroid_lat: float
     centroid_lon: float
+    # (min_lon, min_lat, max_lon, max_lat), as india_districts.json stores it.
+    bbox: tuple[float, float, float, float] | None = None
 
     @property
     def display_name(self) -> str:
@@ -92,6 +94,7 @@ def load_registry() -> tuple[DistrictRecord, ...]:
             state_name=r["state_name"],
             centroid_lat=float(r["centroid"][0]),
             centroid_lon=float(r["centroid"][1]),
+            bbox=tuple(float(v) for v in r["bbox"]) if r.get("bbox") else None,
         )
         for r in raw
     )

@@ -5,6 +5,23 @@ here rather than discovered live.
 
 ## Behaviour a visitor could notice
 
+- **The CAP feed is a test message with box-shaped areas, added 2026-11-02.**
+  `/api/alerts.cap` serves the high-risk alerts as CAP 1.2 (validated against the OASIS
+  schema in `backend/tests/data/`). Two choices an aggregator will notice:
+  - `status` is `Test`, never `Actual`. Sanket is decision support, not a warning
+    authority, and a CAP consumer treats `Actual` as an issued warning.
+  - Each `<area>` polygon is the district's **bounding box** from
+    `data/geo/india_districts.json`, not its outline, so it covers neighbouring land too.
+    `<geocode>` carries the exact district id (`SANKET_REGION_ID`). Real outlines would
+    mean loading the district GeoJSON on the box, which has not been measured.
+
+  `severity` is `Unknown`, because a bust probability says the forecast is unreliable,
+  not how severe the weather is. Nothing is pushed anywhere: a consumer has to poll the
+  URL. It is converted per request from the prebuilt high-band alerts body, not stored as
+  its own file. Measured 2026-11-02 on macOS with 500 alerts (the API's ceiling, real
+  district ids, made-up probabilities): 572,975 bytes (20,106 gzipped), and five builds
+  raised peak RSS by 6.3 MB. Not yet measured on the Linux box.
+
 - **Indian-language screens are machine-translated and not yet reviewed.** Ten languages
   ship (Hindi, Tamil, Bengali, Marathi, Telugu, Gujarati, Kannada, Malayalam, Odia,
   Punjabi); the other twelve Eighth Schedule languages are listed in the code but have no

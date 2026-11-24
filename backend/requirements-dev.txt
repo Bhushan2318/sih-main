@@ -13,3 +13,6 @@ httpx>=0.27,<0.28
 # this file but not requirements-train.txt - keeping it here, not requirements.txt, means
 # the serving Docker image is untouched.
 psutil>=5.9,<8.0
+
+# tests/test_cap_feed.py validates the CAP feed against the OASIS CAP 1.2 schema.
+xmlschema>=4.2,<5.0

@@ -27,6 +27,7 @@ uvicorn app.main:app --reload --port 8000
 | `GET` | `/api/regions/{region_id}` | detail panel: per-variable series, bust curve, top factors. Takes a district (`IN-MH-NAGPUR`) or a state (`IN-MH`) |
 | `GET` | `/api/ensemble?init_date&region_id` | the hero's ensemble divergence across lead days; both parameters optional (latest cycle, a chartable region) |
 | `GET` | `/api/alerts?limit&risk_band` | medium/high-risk (region, lead) events, riskiest first |
+| `GET` | `/api/alerts.cap` | the high-risk alerts as a CAP 1.2 document (`application/cap+xml`, `status` Test), built from the same body as `/api/alerts?risk_band=high` |
 | `GET` | `/api/model/status` | what is trained, on how much data, and how well it scored |
 | `GET` | `/api/model/runs` | every persisted run id + the current one |
 | `GET` | `/api/replay/cycles` | every scoreable forecast cycle, most demo-worthy (a real verified bust that grows into the medium range) first |

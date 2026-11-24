@@ -10,6 +10,7 @@ import { bandLabel } from "../../theme";
 import { variableLabel } from "../../lib/displayNames";
 import { dayLabel } from "../../lib/format";
 import { alertsToCsv, csvFilename } from "../../lib/alertsCsv";
+import { API_BASE } from "../../api/client";
 import { alertTotals } from "../../lib/alertTotals";
 import { groupAlertsByDistrict, type GroupedAlert } from "../../lib/alertGroups";
 import { stateIdOf } from "../../lib/stateNames";
@@ -130,6 +131,9 @@ export function AlertsPage({ onSelect, filter, onFilter, stateNames }: {
               {translate("al.csv")}
             </button>
           ) : null}
+          <a className="chip" href={`${API_BASE}/api/alerts.cap`} title={translate("al.capTip")}>
+            {translate("al.cap")}
+          </a>
           {(["high", "medium"] as RiskBand[]).map((b) => (
             <button
               key={b}
